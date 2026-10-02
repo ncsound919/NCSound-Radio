@@ -332,6 +332,52 @@ export type ArtistEntry = {
   sharePct: number
 }
 
+/** One track row inside the artist detail profile. */
+export type ArtistTrackRow = {
+  trackId: string
+  title: string
+  rightsId: string
+  playlist: string
+  explicit: boolean
+  /** Spins in the trailing 7 days. */
+  spins7d: number
+  /** Every logged spin since launch. */
+  totalSpins: number
+  /** Listener shouts in the trailing 7 days. */
+  shouts7d: number
+  /** Rank on this week's Wave Chart (null = not charting this week). */
+  chartRank: number | null
+  /** True when this track is spinning on the wheel right now. */
+  onAirNow: boolean
+  lastPlayedAt: string | null
+}
+
+/** A recent on-air spin for the artist detail profile. */
+export type ArtistRecentSpin = {
+  title: string
+  playedAt: string
+  source: string
+}
+
+/** Public artist profile behind the Wave Chart — earned entirely from the ledger. */
+export type ArtistDetailResponse = {
+  /** The canonical artist string as stored on the tracks (may differ in case from the request). */
+  artist: string
+  found: boolean
+  trackCount: number
+  spins7d: number
+  totalSpins: number
+  /** Share of all music spins in the trailing 7 days, 0..100. */
+  sharePct: number
+  firstPlayedAt: string | null
+  lastPlayedAt: string | null
+  /** The artist's cleared tracks, most-spun first. */
+  tracks: ArtistTrackRow[]
+  /** The 8 most recent ledger spins of their music. */
+  recent: ArtistRecentSpin[]
+  serverTime: string
+}
+
 /** The entry that climbed the most versus the previous window. */
 export type ChartMover = {
   trackId: string

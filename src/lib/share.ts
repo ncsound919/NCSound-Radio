@@ -31,3 +31,27 @@ export async function shareStation(
     return 'failed'
   }
 }
+
+/**
+ * Share (or copy) a "now playing" shout-out for the on-air spin. Same Web
+ * Share API → clipboard fallback as the station share, but the text carries
+ * the track so friends know what they're tuning into. Never throws.
+ */
+export async function shareNowPlaying(trackTitle: string, artist: string): Promise<ShareResult> {
+  if (typeof window === 'undefined') return 'failed'
+  const text = `Now playing on WAVC 91.3 FM: “${trackTitle}” by ${artist}. Tune in:`
+  try {
+    if (typeof navigator.share === 'function') {
+      await navigator.share({ title: `${trackTitle} — ${artist} · WAVC 91.3 FM`, text, url: STATION_URL })
+      return 'shared'
+    }
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') return 'shared'
+  }
+  try {
+    await navigator.clipboard.writeText(`${text} ${STATION_URL}`)
+    return 'copied'
+  } catch {
+    return 'failed'
+  }
+}

@@ -8,10 +8,12 @@
  */
 
 import { motion } from 'framer-motion'
-import { Crown, Flame, Mic, Radio, TrendingUp, Trophy, Users } from 'lucide-react'
+import { ChevronRight, Crown, Flame, Mic, Radio, TrendingUp, Trophy, Users } from 'lucide-react'
+import { useState } from 'react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ArtistDetailDialog } from '@/components/station/artist-detail-dialog'
 import { ErrorLine } from '@/components/station/error-line'
 import { useJson } from '@/hooks/use-json'
 import type { ChartsResponse } from '@/lib/station-types'
@@ -65,6 +67,7 @@ const RANK_STYLES: Record<number, string> = {
 
 export function WaveChartCard() {
   const { data, error, retry } = useJson<ChartsResponse>('/api/charts')
+  const [detailArtist, setDetailArtist] = useState<string | null>(null)
   const rows = data?.week ?? []
   const maxSpins = rows.length ? Math.max(...rows.map((r) => r.spins7d), 1) : 1
   const serverMs = data ? new Date(data.serverTime).getTime() : Date.now()
@@ -182,7 +185,14 @@ export function WaveChartCard() {
                     )}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {row.artist}
+                    <button
+                      type="button"
+                      onClick={() => setDetailArtist(row.artist)}
+                      title={`Open ${row.artist}'s ledger profile`}
+                      className="max-w-[16ch] truncate text-left underline-offset-2 transition-colors hover:text-primary hover:underline focus-visible:outline focus-visible:outline-1 focus-visible:outline-primary sm:max-w-none"
+                    >
+                      {row.artist}
+                    </button>
                     <span className="mx-1.5 text-border">·</span>
                     <span className="font-mono text-[10px]">{row.rightsId}</span>
                     {row.lastPlayedAt && (
@@ -241,29 +251,42 @@ export function WaveChartCard() {
                           initial={{ opacity: 0, x: -8 }}
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ duration: 0.3, delay: 0.25 + idx * 0.05, ease: 'easeOut' }}
-                          className="flex items-center gap-2 rounded px-1.5 py-1 transition-colors hover:bg-accent/40"
                         >
-                          <span
-                            aria-hidden="true"
-                            className={cn(
-                              'flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border font-mono text-[10px] font-bold',
-                              e.rank === 1
-                                ? 'border-primary/50 bg-primary/15 text-primary'
-                                : 'border-border bg-background/60 text-muted-foreground',
-                            )}
+                          <button
+                            type="button"
+                            onClick={() => setDetailArtist(e.artist)}
+                            title={`Open ${e.artist}'s ledger profile`}
+                            className="group/a flex w-full items-center gap-2 rounded px-1.5 py-1 text-left transition-colors hover:bg-accent/40 focus-visible:outline focus-visible:outline-1 focus-visible:outline-primary"
                           >
-                            {e.rank}
-                          </span>
-                          <span className="min-w-0 flex-1 truncate text-xs">
-                            <span className="font-medium">{e.title}</span>
-                            <span className="text-muted-foreground"> — {e.artist}</span>
-                          </span>
-                          <span
-                            title={`First spun ${e.firstPlayedAt ? new Date(e.firstPlayedAt).toLocaleDateString() : 'unknown'}`}
-                            className="shrink-0 font-mono text-[10px] text-primary"
-                          >
-                            {e.totalSpins.toLocaleString()}
-                          </span>
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                'flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border font-mono text-[10px] font-bold',
+                                e.rank === 1
+                                  ? 'border-primary/50 bg-primary/15 text-primary'
+                                  : 'border-border bg-background/60 text-muted-foreground',
+                              )}
+                            >
+                              {e.rank}
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-xs">
+                              <span className="font-medium">{e.title}</span>
+                              <span className="text-muted-foreground transition-colors group-hover/a:text-foreground">
+                                {' '}
+                                — {e.artist}
+                              </span>
+                            </span>
+                            <span
+                              title={`First spun ${e.firstPlayedAt ? new Date(e.firstPlayedAt).toLocaleDateString() : 'unknown'}`}
+                              className="shrink-0 font-mono text-[10px] text-primary"
+                            >
+                              {e.totalSpins.toLocaleString()}
+                            </span>
+                            <ChevronRight
+                              aria-hidden="true"
+                              className="h-3 w-3 shrink-0 text-muted-foreground/0 transition-colors group-hover/a:text-muted-foreground"
+                            />
+                          </button>
                         </motion.li>
                       ))}
                     </ol>
@@ -285,28 +308,39 @@ export function WaveChartCard() {
                           initial={{ opacity: 0, x: -8 }}
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ duration: 0.3, delay: 0.25 + idx * 0.05, ease: 'easeOut' }}
-                          className="group/a relative flex items-center gap-2 overflow-hidden rounded px-1.5 py-1 transition-colors hover:bg-accent/40"
                         >
-                          <span
-                            aria-hidden="true"
-                            className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-500/10 to-transparent transition-[width] duration-700 ease-out"
-                            style={{ width: `${Math.max(4, a.sharePct)}%` }}
-                          />
-                          <span className="relative min-w-0 flex-1 truncate text-xs">
-                            <span className="font-medium">{a.artist}</span>
-                            <span className="text-muted-foreground">
-                              {' '}· {a.trackCount} track{a.trackCount === 1 ? '' : 's'}
-                            </span>
-                          </span>
-                          <span
-                            title={`Top spin: ${a.topTrackTitle}`}
-                            className="relative hidden max-w-28 truncate text-[10px] text-muted-foreground/80 sm:inline"
+                          <button
+                            type="button"
+                            onClick={() => setDetailArtist(a.artist)}
+                            title={`Open ${a.artist}'s ledger profile`}
+                            aria-label={`${a.artist} — ${a.trackCount} tracks, ${a.sharePct}% of this week's spins. Open profile.`}
+                            className="group/a relative flex w-full items-center gap-2 overflow-hidden rounded px-1.5 py-1 text-left transition-colors hover:bg-accent/40 focus-visible:outline focus-visible:outline-1 focus-visible:outline-primary"
                           >
-                            {a.topTrackTitle}
-                          </span>
-                          <span className="relative shrink-0 font-mono text-[10px] text-red-400/90">
-                            {a.sharePct}%
-                          </span>
+                            <span
+                              aria-hidden="true"
+                              className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-500/10 to-transparent transition-[width] duration-700 ease-out"
+                              style={{ width: `${Math.max(4, a.sharePct)}%` }}
+                            />
+                            <span className="relative min-w-0 flex-1 truncate text-xs">
+                              <span className="font-medium">{a.artist}</span>
+                              <span className="text-muted-foreground">
+                                {' '}· {a.trackCount} track{a.trackCount === 1 ? '' : 's'}
+                              </span>
+                            </span>
+                            <span
+                              title={`Top spin: ${a.topTrackTitle}`}
+                              className="relative hidden max-w-28 truncate text-[10px] text-muted-foreground/80 sm:inline"
+                            >
+                              {a.topTrackTitle}
+                            </span>
+                            <span className="relative shrink-0 font-mono text-[10px] text-red-400/90">
+                              {a.sharePct}%
+                            </span>
+                            <ChevronRight
+                              aria-hidden="true"
+                              className="relative h-3 w-3 shrink-0 text-muted-foreground/0 transition-colors group-hover/a:text-muted-foreground"
+                            />
+                          </button>
                         </motion.li>
                       ))}
                     </ol>
@@ -323,9 +357,11 @@ export function WaveChartCard() {
         </p>
         <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground/70">
           Movement compares against the previous seven days (ending 24h ago), read from the same
-          ledger — nothing is hand-picked.
+          ledger — nothing is hand-picked. Click any artist for their ledger profile.
         </p>
       </CardContent>
+
+      <ArtistDetailDialog artist={detailArtist} onClose={() => setDetailArtist(null)} />
     </Card>
   )
 }

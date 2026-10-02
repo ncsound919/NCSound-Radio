@@ -30,7 +30,7 @@ import { Progress } from '@/components/ui/progress'
 import { Slider } from '@/components/ui/slider'
 import { useNowPlaying } from '@/hooks/use-nowplaying'
 import { useStationPlayer, type StreamQuality } from '@/hooks/use-station-player'
-import { shareStation } from '@/lib/share'
+import { shareNowPlaying, shareStation } from '@/lib/share'
 import { cn } from '@/lib/utils'
 
 function fmtTime(sec: number): string {
@@ -138,9 +138,17 @@ export function PlayerBar() {
   }
 
   const handleShare = async () => {
-    const result = await shareStation()
+    // Music on air → share the track itself; imaging/ad/talk → share the station.
+    const isMusic = elementKind === 'MUSIC' && !!track
+    const result = isMusic
+      ? await shareNowPlaying(track!.title, track!.artist)
+      : await shareStation()
     if (result === 'copied') {
-      toast.success('Stream link copied — pass it on.')
+      toast.success(
+        isMusic
+          ? `“${track!.title}” shout-out copied — pass it on.`
+          : 'Stream link copied — pass it on.',
+      )
     } else if (result === 'failed') {
       toast.error('Could not share — copy wavc.fm from the address bar.')
     }
@@ -408,11 +416,20 @@ export function PlayerBar() {
                 sleepMode === 'end-of-track' && (
                   <span
                     role="timer"
-                    aria-label="Sleep timer — after this track"
+                    aria-label={
+                      current && isPlaying
+                        ? `Sleep timer — after this track, about ${fmtTime(remaining)} left`
+                        : 'Sleep timer — after this track'
+                    }
                     title="Sleep timer — fades when this spin ends"
-                    className="hidden h-5 cursor-pointer select-none items-center rounded-sm border border-primary/40 bg-primary/10 px-1.5 text-[10px] font-bold uppercase tracking-wide text-primary sm:inline-flex"
+                    className="hidden h-5 cursor-pointer select-none items-center gap-1 rounded-sm border border-primary/40 bg-primary/10 px-1.5 text-[10px] font-bold uppercase tracking-wide text-primary sm:inline-flex"
                   >
                     track end
+                    {current && isPlaying && (
+                      <span className="font-mono tabular-nums normal-case tracking-normal">
+                        {fmtTime(remaining)}
+                      </span>
+                    )}
                   </span>
                 )
               )}
@@ -437,6 +454,11 @@ export function PlayerBar() {
                   role="status"
                 >
                   Fading at the end of this spin.
+                  {current && isPlaying && (
+                    <span className="ml-1 font-mono tabular-nums">
+                      {fmtTime(remaining)} left
+                    </span>
+                  )}
                 </div>
               )}
               {[15, 30, 45, 60, 90].map((m) => (
@@ -473,15 +495,23 @@ export function PlayerBar() {
           </DropdownMenu>
         </div>
 
-        {/* Share the station */}
+        {/* Share — the on-air track when music is spinning, the station otherwise */}
         <Button
           type="button"
           variant="ghost"
           size="icon"
           className="hidden h-8 w-8 md:inline-flex"
           onClick={handleShare}
-          aria-label="Share the station"
-          title="Share the station"
+          aria-label={
+            elementKind === 'MUSIC' && track
+              ? `Share “${track.title}” by ${track.artist}`
+              : 'Share the station'
+          }
+          title={
+            elementKind === 'MUSIC' && track
+              ? `Share “${track.title}” by ${track.artist}`
+              : 'Share the station'
+          }
         >
           <Share2 className="h-4 w-4" aria-hidden="true" />
         </Button>
