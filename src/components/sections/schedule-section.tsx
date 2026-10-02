@@ -11,11 +11,13 @@ import {
   ChevronRight,
   AlertCircle,
   RefreshCw,
+  History,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ListenBackDialog } from '@/components/station/listen-back-dialog'
 import {
   Select,
   SelectContent,
@@ -69,7 +71,15 @@ function ExplicitBadge() {
   )
 }
 
-function ShowCard({ show, isCurrent }: { show: ShowDTO; isCurrent: boolean }) {
+function ShowCard({
+  show,
+  isCurrent,
+  onListenBack,
+}: {
+  show: ShowDTO
+  isCurrent: boolean
+  onListenBack: (show: ShowDTO) => void
+}) {
   return (
     <div
       className={`rounded-lg border p-2 transition-colors ${
@@ -95,12 +105,25 @@ function ShowCard({ show, isCurrent }: { show: ShowDTO; isCurrent: boolean }) {
       <p className="mt-0.5 font-mono text-[10px] text-foreground/80">
         {fmtTime(show.startHour, show.startMinute)} · {show.durationMin}m
       </p>
-      {isCurrent && (
-        <span className="mt-1 inline-flex items-center gap-1 rounded-full border border-red-500/40 bg-red-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-red-400">
-          <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-onair" />
-          On Air Now
-        </span>
-      )}
+      <div className="mt-1 flex items-center justify-between gap-1">
+        {isCurrent ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-red-500/40 bg-red-500/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-red-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-onair" />
+            On Air Now
+          </span>
+        ) : (
+          <span aria-hidden="true" />
+        )}
+        <button
+          type="button"
+          onClick={() => onListenBack(show)}
+          title="Open the program log of a past airing"
+          className="inline-flex items-center gap-1 rounded-sm border border-border/60 bg-background/50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+        >
+          <History className="h-2.5 w-2.5" aria-hidden />
+          Log
+        </button>
+      </div>
     </div>
   )
 }
@@ -110,6 +133,7 @@ export function ScheduleSection({ onNavigate }: { onNavigate?: (tab: string) => 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedDay, setSelectedDay] = useState<string>('')
+  const [listenShow, setListenShow] = useState<ShowDTO | null>(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -268,7 +292,12 @@ export function ScheduleSection({ onNavigate }: { onNavigate?: (tab: string) => 
                     </div>
                   )}
                   {dayShows.map((show) => (
-                    <ShowCard key={show.id} show={show} isCurrent={show.id === currentShowId} />
+                    <ShowCard
+                      key={show.id}
+                      show={show}
+                      isCurrent={show.id === currentShowId}
+                      onListenBack={setListenShow}
+                    />
                   ))}
                 </div>
               )
@@ -331,6 +360,17 @@ export function ScheduleSection({ onNavigate }: { onNavigate?: (tab: string) => 
                           <ListMusic className="mr-1 h-3 w-3" aria-hidden /> PLAYLIST
                         </Badge>
                       )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-7 gap-1.5 px-2 text-[11px]"
+                        onClick={() => setListenShow(show)}
+                        aria-label={`Open the program log for ${show.name}`}
+                      >
+                        <History className="h-3 w-3" aria-hidden />
+                        Listen back
+                      </Button>
                       {show.explicit && <ExplicitBadge />}
                     </div>
                   </CardContent>
@@ -378,6 +418,8 @@ export function ScheduleSection({ onNavigate }: { onNavigate?: (tab: string) => 
           </Card>
         </>
       )}
+
+      <ListenBackDialog show={listenShow} onClose={() => setListenShow(null)} />
     </motion.section>
   )
 }

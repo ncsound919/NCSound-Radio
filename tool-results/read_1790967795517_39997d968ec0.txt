@@ -1,0 +1,661 @@
+   700→          <div
+   701→            className={cn(
+   702→              'relative aspect-video overflow-hidden rounded-lg border',
+   703→              live
+   704→                ? liveIsShow
+   705→                  ? 'border-red-500/50'
+   706→                  : 'border-primary/50'
+   707→                : 'border-border/60',
+   708→            )}
+   709→          >
+   710→            <Image
+   711→              src="/station-texture.jpg"
+   712→              alt=""
+   713→              fill
+   714→              priority
+   715→              sizes="(max-width: 1024px) 100vw, 768px"
+   716→              className="object-cover"
+   717→            />
+   718→            {/* live-show broadcast bug — top strip like a TV station lower-third */}
+   719→            {live && (
+   720→              <div
+   721→                className={cn(
+   722→                  'absolute inset-x-0 top-0 z-10 flex items-center gap-2 bg-gradient-to-b from-background/95 to-transparent px-3 pb-4 pt-2 backdrop-blur-[2px] sm:px-4',
+   723→                  liveIsShow ? 'from-red-950/80' : 'from-amber-950/70',
+   724→                )}
+   725→                role="status"
+   726→              >
+   727→                <span
+   728→                  className={cn(
+   729→                    'animate-onair h-2 w-2 shrink-0 rounded-full',
+   730→                    liveIsShow ? 'bg-red-500' : 'bg-primary',
+   731→                  )}
+   732→                  aria-hidden="true"
+   733→                />
+   734→                <span
+   735→                  className={cn(
+   736→                    'truncate text-[10px] font-extrabold uppercase tracking-[0.22em] sm:text-[11px]',
+   737→                    liveIsShow ? 'text-red-300' : 'text-primary',
+   738→                  )}
+   739→                >
+   740→                  {liveIsShow ? 'Live' : 'Playlist hour'} — {live.name}
+   741→                  <span className="ml-2 hidden font-semibold normal-case tracking-normal text-muted-foreground sm:inline">
+   742→                    {liveIsShow ? 'with' : 'hosted by'} {live.host} · {live.minutesLeft}m left
+   743→                  </span>
+   744→                </span>
+   745→              </div>
+   746→            )}
+   747→            {/* element wash: music = deterministic hue · ID = neutral · ad = amber/red */}
+   748→            <div
+   749→              className="absolute inset-0"
+   750→              style={{
+   751→                backgroundColor: isSponsorSpot
+   752→                  ? 'oklch(0.62 0.17 40 / 0.68)'
+   753→                  : isHousePromo
+   754→                    ? 'oklch(0.35 0.03 80 / 0.82)'
+   755→                    : kind === 'STATION_ID'
+   756→                      ? 'oklch(0.42 0.02 80 / 0.78)'
+   757→                      : isTalk
+   758→                        ? 'oklch(0.5 0.12 70 / 0.6)'
+   759→                        : `oklch(0.55 0.19 ${hue} / 0.55)`,
+   760→              }}
+   761→              aria-hidden="true"
+   762→            />
+   763→            <div
+   764→              className="absolute inset-0 bg-gradient-to-t from-background/95 via-background/30 to-background/10"
+   765→              aria-hidden="true"
+   766→            />
+   767→            <div className="bg-noise absolute inset-0 opacity-[0.05]" aria-hidden="true" />
+   768→
+   769→            {/* element stamp */}
+   770→            {kind !== 'MUSIC' && (
+   771→              <div className="absolute right-3 top-3 flex items-center gap-1.5">
+   772→                {isSponsorSpot ? (
+   773→                  <span className="inline-flex items-center gap-1 rounded-sm border border-red-400/50 bg-red-500/25 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-red-100 backdrop-blur">
+   774→                    <Megaphone className="h-3 w-3" aria-hidden="true" />
+   775→                    Ad Break
+   776→                  </span>
+   777→                ) : isHousePromo ? (
+   778→                  <span className="inline-flex items-center gap-1 rounded-sm border border-border/60 bg-background/70 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-muted-foreground backdrop-blur">
+   779→                    <Megaphone className="h-3 w-3" aria-hidden="true" />
+   780→                    House Promo
+   781→                  </span>
+   782→                ) : isTalk ? (
+   783→                  <span className="inline-flex items-center gap-1 rounded-sm border border-amber-400/50 bg-amber-500/25 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-amber-100 backdrop-blur">
+   784→                    <MessageSquareQuote className="h-3 w-3" aria-hidden="true" />
+   785→                    Spotlight
+   786→                  </span>
+   787→                ) : (
+   788→                  <span className="inline-flex items-center gap-1 rounded-sm border border-primary/50 bg-primary/20 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-primary backdrop-blur">
+   789→                    <Mic className="h-3 w-3" aria-hidden="true" />
+   790→                    Station ID
+   791→                  </span>
+   792→                )}
+   793→              </div>
+   794→            )}
+   795→
+   796→            {/* metadata chips */}
+   797→            <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
+   798→              {kind === 'MUSIC' && (
+   799→                <>
+   800→                  <Badge
+   801→                    variant="outline"
+   802→                    className="border-border/70 bg-background/70 text-[10px] backdrop-blur"
+   803→                  >
+   804→                    {track.playlist}
+   805→                  </Badge>
+   806→                  <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
+   807→                    {track.rightsId}
+   808→                  </span>
+   809→                  {track.bpm !== null && (
+   810→                    <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
+   811→                      {track.bpm} BPM
+   812→                    </span>
+   813→                  )}
+   814→                  {track.explicit && (
+   815→                    <span
+   816→                      title="Explicit lyrics"
+   817→                      className="rounded border border-red-500/40 bg-red-500/15 px-1.5 py-0.5 text-[10px] font-bold text-red-400"
+   818→                    >
+   819→                      E
+   820→                    </span>
+   821→                  )}
+   822→                </>
+   823→              )}
+   824→              {kind === 'STATION_ID' && (
+   825→                <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
+   826→                  {track.rightsId}
+   827→                </span>
+   828→              )}
+   829→              {isTalk && (
+   830→                <span className="rounded border border-amber-400/50 bg-background/70 px-1.5 py-0.5 text-[10px] font-semibold text-amber-500 backdrop-blur">
+   831→                  Produced in-house · talk segment
+   832→                </span>
+   833→              )}
+   834→              {isSponsorSpot && (
+   835→                <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
+   836→                  ADSPOT · proof-of-play logged
+   837→                </span>
+   838→              )}
+   839→            </div>
+   840→
+   841→            {/* big spectrum strip along the bottom — REAL audio: driven by the
+   842→                studio-preview synth's master-chain analyser, not a keyframe */}
+   843→            <div
+   844→              className="pointer-events-none absolute inset-x-0 bottom-0 h-12 px-6 pb-1 opacity-80 sm:h-14"
+   845→              aria-hidden="true"
+   846→            >
+   847→              <SpectrumCanvas active={isPlaying} bars={40} />
+   848→            </div>
+   849→
+   850→            {/* title overlay */}
+   851→            <div className="absolute inset-x-0 bottom-0 p-4 pb-14 sm:p-5 sm:pb-16">
+   852→              <Progress
+   853→                value={progress * 100}
+   854→                className="h-1"
+   855→                aria-label="On-air progress"
+   856→              />
+   857→              <div className="mt-2 flex items-end justify-between gap-3">
+   858→                <div className="min-w-0">
+   859→                  {kind === 'MUSIC' ? (
+   860→                    <>
+   861→                      <h3 className="truncate text-2xl font-bold">{track.title}</h3>
+   862→                      <p className="truncate text-sm text-muted-foreground">{track.artist}</p>
+   863→                    </>
+   864→                  ) : isSponsorSpot ? (
+   865→                    <>
+   866→                      <h3 className="truncate text-2xl font-bold">
+   867→                        {data?.element?.sponsorName}
+   868→                      </h3>
+   869→                      <p className="truncate text-sm text-muted-foreground">
+   870→                        {data?.element?.creativeName} — paid sponsor spot
+   871→                      </p>
+   872→                    </>
+   873→                  ) : isHousePromo ? (
+   874→                    <>
+   875→                      <h3 className="truncate text-2xl font-bold">House Promo</h3>
+   876→                      <p className="truncate text-sm text-muted-foreground">
+   877→                        {data?.element?.creativeName ?? 'Unsold inventory — your brand could be here'}
+   878→                      </p>
+   879→                    </>
+   880→                  ) : isTalk ? (
+   881→                    <>
+   882→                      <h3 className="truncate text-xl font-bold">Spotlight</h3>
+   883→                      <p className="truncate text-sm text-muted-foreground">{track.title}</p>
+   884→                    </>
+   885→                  ) : (
+   886→                    <>
+   887→                      <h3 className="truncate text-xl font-bold">{track.title}</h3>
+   888→                      <p className="truncate text-sm text-muted-foreground">{track.artist}</p>
+   889→                    </>
+   890→                  )}
+   891→                </div>
+   892→                <div className="flex shrink-0 items-center gap-1.5">
+   893→                  {kind === 'MUSIC' && <FavoriteHeartButton track={track} alwaysVisible />}
+   894→                  <span className="font-mono text-xs text-muted-foreground">
+   895→                    -{fmtTime(remaining)}
+   896→                  </span>
+   897→                </div>
+   898→              </div>
+   899→            </div>
+   900→          </div>
+   901→        )}
+   902→      </CardContent>
+   903→    </Card>
+   904→  )
+   905→}
+   906→
+   907→// ----------------------------------------------------------------- up next
+   908→
+   909→function UpNextCard({
+   910→  data,
+   911→  onSelect,
+   912→}: {
+   913→  data: NowPlayingResponse | null
+   914→  onSelect: (entry: QueueEntry) => void
+   915→}) {
+   916→  const duration = data?.current.duration ?? 0
+   917→  const remaining = data?.current.remaining ?? 0
+   918→  const toNextPct = duration > 0 ? Math.min(100, Math.max(0, ((duration - remaining) / duration) * 100)) : 0
+   919→  const cueing = remaining <= 0
+   920→
+   921→  return (
+   922→    <Card className="border-border/60 bg-card/70">
+   923→      <CardHeader>
+   924→        <CardTitle className="flex items-center gap-2 text-base font-semibold">
+   925→          <ListMusic className="h-4 w-4 text-primary" aria-hidden="true" />
+   926→          Up Next
+   927→        </CardTitle>
+   928→        <CardDescription>AutoDJ program clock — music, IDs, ad breaks</CardDescription>
+   929→      </CardHeader>
+   930→      <CardContent className="space-y-3">
+   931→        {/* countdown to the next element — fills as the current one plays out */}
+   932→        <div className="rounded-md border border-border/50 bg-background/40 px-3 py-2">
+   933→          <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+   934→            <span>{cueing ? 'Cueing up next…' : 'Next spin in'}</span>
+   935→            <span
+   936→              className={cn(
+   937→                'font-mono',
+   938→                cueing ? 'animate-pulse text-red-400' : 'text-primary',
+   939→              )}
+   940→            >
+   941→              ~{fmtTime(remaining)}
+   942→            </span>
+   943→          </div>
+   944→          <Progress
+   945→            value={toNextPct}
+   946→            className={cn('mt-1.5 h-1', cueing && 'animate-pulse')}
+   947→            aria-label="Time until the next element"
+   948→          />
+   949→        </div>
+   950→
+   951→        {!data ? (
+   952→          <div className="space-y-2">
+   953→            {[0, 1, 2].map((i) => (
+   954→              <Skeleton key={i} className="h-12 w-full rounded-md" />
+   955→            ))}
+   956→          </div>
+   957→        ) : data.next.length === 0 ? (
+   958→          <p className="py-6 text-center text-sm text-muted-foreground">Queue is empty.</p>
+   959→        ) : (
+   960→          <div className="space-y-1">
+   961→            {data.next.map((t, i) => {
+   962→              const heat = data.heat?.[t.id] ?? 0
+   963→              const requesters = data.requestedBy?.[t.id] ?? []
+   964→              const isId = t.elementKind === 'STATION_ID'
+   965→              const isAd = t.elementKind === 'AD_SPOT'
+   966→              const isTalk = t.elementKind === 'TALK'
+   967→              const isPseudo = isAd || t.id.startsWith('adspot-') || t.id.startsWith('fallback-')
+   968→              const RowTag = isPseudo ? 'div' : 'button'
+   969→              return (
+   970→                <RowTag
+   971→                  key={`${t.id}-${i}`}
+   972→                  {...(isPseudo
+   973→                    ? {}
+   974→                    : {
+   975→                        type: 'button' as const,
+   976→                        onClick: () => onSelect(t),
+   977→                        'aria-label': `Details for ${t.title}`,
+   978→                      })}
+   979→                  className={cn(
+   980→                    'flex w-full items-start gap-3 rounded-md border border-transparent px-2 py-2 text-left transition-colors hover:border-border hover:bg-accent/40',
+   981→                    isAd && 'bg-red-500/[0.04]',
+   982→                    (isId || isTalk) && 'border-dashed border-border/60 bg-background/30',
+   983→                  )}
+   984→                >
+   985→                  <span
+   986→                    className={cn(
+   987→                      'flex h-6 w-6 shrink-0 items-center justify-center rounded border font-mono text-[10px]',
+   988→                      isAd
+   989→                        ? 'border-red-500/40 bg-red-500/10 text-red-400'
+   990→                        : isId
+   991→                          ? 'border-primary/40 bg-primary/10 text-primary'
+   992→                          : isTalk
+   993→                            ? 'border-amber-500/40 bg-amber-500/10 text-amber-500'
+   994→                            : 'border-border bg-background/60 text-muted-foreground',
+   995→                    )}
+   996→                  >
+   997→                    {isAd ? (
+   998→                      <Megaphone className="h-3 w-3" aria-hidden="true" />
+   999→                    ) : isId ? (
+  1000→                      <Mic className="h-3 w-3" aria-hidden="true" />
+  1001→                    ) : isTalk ? (
+  1002→                      <MessageSquareQuote className="h-3 w-3" aria-hidden="true" />
+  1003→                    ) : (
+  1004→                      i + 1
+  1005→                    )}
+  1006→                  </span>
+  1007→                  <div className="min-w-0 flex-1">
+  1008→                    <p
+  1009→                      className={cn(
+  1010→                        'truncate text-sm font-medium',
+  1011→                        isAd && 'text-red-300',
+  1012→                      )}
+  1013→                    >
+  1014→                      {t.title}
+  1015→                    </p>
+  1016→                    <p className="truncate text-xs text-muted-foreground">{t.artist}</p>
+  1017→                    {t.elementKind === 'MUSIC' && requesters.length > 0 && (
+  1018→                      <p className="mt-0.5 truncate text-[10px] text-amber-500/90">
+  1019→                        shouted by {requesters.map((n) => `@${n}`).join(', ')}
+  1020→                      </p>
+  1021→                    )}
+  1022→                  </div>
+  1023→                  {heat > 0 && (
+  1024→                    <span
+  1025→                      title={`${heat} listener request${heat === 1 ? '' : 's'} this week — hot tracks jump the wheel`}
+  1026→                      className="inline-flex shrink-0 items-center gap-0.5 rounded border border-red-500/30 bg-red-500/10 px-1 py-0.5 text-[10px] font-bold text-red-400"
+  1027→                    >
+  1028→                      <Flame className="h-3 w-3" aria-hidden="true" />
+  1029→                      {heat}
+  1030→                    </span>
+  1031→                  )}
+  1032→                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
+  1033→                    {fmtTime(t.durationSec)}
+  1034→                  </span>
+  1035→                  <Badge
+  1036→                    variant="outline"
+  1037→                    className={cn(
+  1038→                      'hidden shrink-0 border-border/70 text-[10px] font-medium text-muted-foreground sm:inline-flex',
+  1039→                      isAd && 'border-red-500/30 text-red-400',
+  1040→                      isTalk && 'border-amber-500/30 text-amber-500',
+  1041→                    )}
+  1042→                  >
+  1043→                    {isAd
+  1044→                      ? t.sponsorName
+  1045→                        ? 'Sponsor Spot'
+  1046→                        : 'House Promo'
+  1047→                      : isTalk
+  1048→                        ? 'Spotlight'
+  1049→                        : t.playlist}
+  1050→                  </Badge>
+  1051→                </RowTag>
+  1052→              )
+  1053→            })}
+  1054→          </div>
+  1055→        )}
+  1056→        <p className="text-[10px] leading-relaxed text-muted-foreground">
+  1057→          Listener shouts bump the hottest tracks up the wheel — station IDs, spotlight segments
+  1058→          and ad breaks air between blocks, per the program clock.
+  1059→        </p>
+  1060→      </CardContent>
+  1061→    </Card>
+  1062→  )
+  1063→}
+  1064→
+  1065→// --------------------------------------------------------- recently played
+  1066→
+  1067→function RecentlyPlayedCard({
+  1068→  trackKey,
+  1069→  onSelect,
+  1070→}: {
+  1071→  trackKey?: string
+  1072→  onSelect: (entry: QueueEntry) => void
+  1073→}) {
+  1074→  const { data, error, retry } = useJson<HistoryResponse>('/api/history?limit=10', trackKey)
+  1075→  const { data: np } = useNowPlaying()
+  1076→  const serverMs = np ? new Date(np.serverTime).getTime() : Date.now()
+  1077→
+  1078→  return (
+  1079→    <Card className="border-border/60 bg-card/70">
+  1080→      <CardHeader>
+  1081→        <CardTitle className="flex items-center gap-2 text-base font-semibold">
+  1082→          <History className="h-4 w-4 text-primary" aria-hidden="true" />
+  1083→          Recently Played
+  1084→        </CardTitle>
+  1085→        <CardDescription>Last ten spins from the play-log ledger</CardDescription>
+  1086→      </CardHeader>
+  1087→      <CardContent>
+  1088→        {error ? (
+  1089→          <ErrorLine onRetry={retry} />
+  1090→        ) : !data ? (
+  1091→          <div className="space-y-2">
+  1092→            {[0, 1, 2, 3, 4].map((i) => (
+  1093→              <Skeleton key={i} className="h-12 w-full rounded-md" />
+  1094→            ))}
+  1095→          </div>
+  1096→        ) : data.plays.length === 0 ? (
+  1097→          <p className="py-6 text-center text-sm text-muted-foreground">
+  1098→            No spins logged yet — the AutoDJ is warming up.
+  1099→          </p>
+  1100→        ) : (
+  1101→          <ul className="max-h-96 space-y-1 overflow-y-auto pr-1 scrollbar-thin">
+  1102→            {data.plays.map((play, idx) => (
+  1103→              <li
+  1104→                key={play.id}
+  1105→                className={cn(
+  1106→                  'group flex items-center gap-3 rounded-md px-2 py-2 transition-colors hover:bg-accent/40',
+  1107→                  idx === 0 &&
+  1108→                    'border-l-2 border-primary bg-gradient-to-r from-primary/10 to-transparent hover:from-primary/15'
+  1109→                )}
+  1110→              >
+  1111→                <button
+  1112→                  type="button"
+  1113→                  onClick={() =>
+  1114→                    onSelect({
+  1115→                      ...play.track,
+  1116→                      elementKind: 'MUSIC',
+  1117→                      sponsorName: null,
+  1118→                    })
+  1119→                  }
+  1120→                  aria-label={`Details for ${play.track.title}`}
+  1121→                  className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left"
+  1122→                >
+  1123→                  <span
+  1124→                    aria-hidden="true"
+  1125→                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-gradient-to-br from-primary/30 via-primary/15 to-red-500/20 text-sm font-bold text-primary transition-transform group-hover:scale-105"
+  1126→                  >
+  1127→                    {(play.track.title.charAt(0) || '?').toUpperCase()}
+  1128→                  </span>
+  1129→                  <div className="min-w-0 flex-1">
+  1130→                    <p className="truncate text-sm font-medium">
+  1131→                      {play.track.title}
+  1132→                      {idx === 0 && (
+  1133→                        <span className="ml-2 rounded-sm bg-primary/15 px-1 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wider text-primary">
+  1134→                          Last spin
+  1135→                        </span>
+  1136→                      )}
+  1137→                    </p>
+  1138→                    <p className="truncate text-xs text-muted-foreground">{play.track.artist}</p>
+  1139→                  </div>
+  1140→                </button>
+  1141→                <FavoriteHeartButton track={play.track} />
+  1142→                <Badge
+  1143→                  variant="outline"
+  1144→                  className="hidden shrink-0 border-border/70 text-[10px] text-muted-foreground md:inline-flex"
+  1145→                >
+  1146→                  {play.track.playlist}
+  1147→                </Badge>
+  1148→                <span className="hidden shrink-0 font-mono text-[10px] text-muted-foreground sm:inline">
+  1149→                  {play.track.rightsId}
+  1150→                </span>
+  1151→                <span className="w-20 shrink-0 text-right text-[10px] text-muted-foreground">
+  1152→                  {timeAgo(new Date(play.playedAt).getTime(), serverMs)}
+  1153→                </span>
+  1154→              </li>
+  1155→            ))}
+  1156→          </ul>
+  1157→        )}
+  1158→      </CardContent>
+  1159→    </Card>
+  1160→  )
+  1161→}
+  1162→
+  1163→// -------------------------------------------------------------- live stats
+  1164→
+  1165→function AnimatedStat({
+  1166→  value,
+  1167→  format = (n: number) => Math.round(n).toLocaleString(),
+  1168→}: {
+  1169→  value: number
+  1170→  format?: (n: number) => string
+  1171→}) {
+  1172→  const animated = useCountUp(value)
+  1173→  return <>{format(animated)}</>
+  1174→}
+  1175→
+  1176→function StatsStrip() {
+  1177→  const { data, error, retry } = useJson<StatsResponse>('/api/stats')
+  1178→  const { data: listenerHistory } = useJson<ListenersHistoryResponse>('/api/listeners/history')
+  1179→  const trend = listenerHistory ? listenerHistory.points.map((p) => p.v) : []
+  1180→
+  1181→  const tiles = data
+  1182→    ? [
+  1183→        {
+  1184→          icon: Users,
+  1185→          label: 'Listeners Now',
+  1186→          value: <AnimatedStat value={data.listeners.current} />,
+  1187→          sub: 'listener trend · last 24h',
+  1188→          spark: true,
+  1189→        },
+  1190→        {
+  1191→          icon: TrendingUp,
+  1192→          label: 'Peak 24h',
+  1193→          value: <AnimatedStat value={data.listeners.peak24h} />,
+  1194→          sub: 'evening peak · ~8 PM ET',
+  1195→          spark: false,
+  1196→        },
+  1197→        {
+  1198→          icon: ShieldCheck,
+  1199→          label: 'Cleared Tracks',
+  1200→          value: (
+  1201→            <>
+  1202→              <AnimatedStat value={data.library.cleared} />/{data.library.tracks}
+  1203→            </>
+  1204→          ),
+  1205→          sub: 'every spin rights-checked',
+  1206→          spark: false,
+  1207→        },
+  1208→        {
+  1209→          icon: Disc3,
+  1210→          label: 'Programming',
+  1211→          value: <AnimatedStat value={data.library.totalHours} format={(n) => `${n.toFixed(1)} hrs`} />,
+  1212→          sub: 'on the AutoDJ wheel',
+  1213→          spark: false,
+  1214→        },
+  1215→      ]
+  1216→    : null
+  1217→
+  1218→  return (
+  1219→    <section aria-label="Live station stats" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+  1220→      {error ? (
+  1221→        <div className="sm:col-span-2 lg:col-span-4">
+  1222→          <ErrorLine onRetry={retry} />
+  1223→        </div>
+  1224→      ) : !tiles ? (
+  1225→        [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-24 rounded-xl" />)
+  1226→      ) : (
+  1227→        tiles.map((tile) => (
+  1228→          <div
+  1229→            key={tile.label}
+  1230→            className="card-glow flex flex-col rounded-xl border border-border/60 bg-card/60 p-4 transition-shadow"
+  1231→          >
+  1232→            <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground">
+  1233→              <tile.icon className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
+  1234→              {tile.label}
+  1235→            </div>
+  1236→            <p className="mt-2 break-words text-2xl font-bold text-primary">{tile.value}</p>
+  1237→            <div className="mt-auto border-t border-border/40 pt-2">
+  1238→              {tile.spark ? (
+  1239→                trend.length > 1 ? (
+  1240→                  <Sparkline
+  1241→                    values={trend}
+  1242→                    width={220}
+  1243→                    height={36}
+  1244→                    className="h-9 w-full"
+  1245→                    ariaLabel="Listeners over the last 24 hours"
+  1246→                  />
+  1247→                ) : (
+  1248→                  <Skeleton className="h-9 w-full" />
+  1249→                )
+  1250→              ) : null}
+  1251→              <p className="mt-1 text-[10px] text-muted-foreground">{tile.sub}</p>
+  1252→            </div>
+  1253→          </div>
+  1254→        ))
+  1255→      )}
+  1256→    </section>
+  1257→  )
+  1258→}
+  1259→
+  1260→// -------------------------------------------------------------- studio line
+  1261→
+  1262→function StudioLineCard() {
+  1263→  return (
+  1264→    <Card className="border-border/60 bg-card/70">
+  1265→      <CardHeader>
+  1266→        <CardTitle className="flex items-center gap-2 text-base font-semibold">
+  1267→          <MessageSquare className="h-4 w-4 text-primary" aria-hidden="true" />
+  1268→          Studio Line — listener chat
+  1269→          <span className="inline-flex items-center gap-1 rounded-sm bg-red-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase text-red-400">
+  1270→            <span className="animate-onair h-1.5 w-1.5 rounded-full bg-red-500" aria-hidden="true" />
+  1271→            live
+  1272→          </span>
+  1273→        </CardTitle>
+  1274→        <CardDescription>Text the studio in real time — powered by the listener relay.</CardDescription>
+  1275→      </CardHeader>
+  1276→      <CardContent>
+  1277→        {/* soften the inner card chrome so it reads as a panel inside this card */}
+  1278→        <div className="[&_[data-slot=card]]:border-border/60 [&_[data-slot=card]]:bg-background/40 [&_[data-slot=card-header]]:bg-transparent">
+  1279→          <LiveChat />
+  1280→        </div>
+  1281→      </CardContent>
+  1282→    </Card>
+  1283→  )
+  1284→}
+  1285→
+  1286→// ---------------------------------------------------------- sponsor ticker
+  1287→
+  1288→function SponsorTicker({ onNavigate }: { onNavigate: (tab: string) => void }) {
+  1289→  const { data, error, retry } = useJson<SponsorsResponse>('/api/sponsors')
+  1290→  const active = data ? data.sponsors.filter((s) => s.status === 'ACTIVE') : null
+  1291→
+  1292→  return (
+  1293→    <Card className="overflow-hidden border-border/60 bg-card/70">
+  1294→      <CardContent className="flex items-center gap-4 p-4">
+  1295→        <span className="shrink-0 border-r border-border/60 pr-4 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+  1296→          Supporting
+  1297→        </span>
+  1298→        {error ? (
+  1299→          <div className="flex-1">
+  1300→            <ErrorLine onRetry={retry} />
+  1301→          </div>
+  1302→        ) : !active ? (
+  1303→          <Skeleton className="h-5 w-64" />
+  1304→        ) : active.length === 0 ? (
+  1305→          <button
+  1306→            type="button"
+  1307→            onClick={() => onNavigate('sponsors')}
+  1308→            className="text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-primary hover:underline"
+  1309→          >
+  1310→            Your brand could be here →
+  1311→          </button>
+  1312→        ) : (
+  1313→          <div className="relative min-w-0 flex-1 overflow-hidden" aria-label="Current sponsors">
+  1314→            <div className="animate-ticker flex w-max items-center gap-10">
+  1315→              {[...active, ...active].map((sponsor, i) => (
+  1316→                <span key={`${sponsor.id}-${i}`} className="flex items-center gap-10">
+  1317→                  <span className="whitespace-nowrap text-xs uppercase tracking-widest text-muted-foreground">
+  1318→                    {sponsor.name}
+  1319→                  </span>
+  1320→                  <Megaphone className="h-3 w-3 shrink-0 text-primary/60" aria-hidden="true" />
+  1321→                </span>
+  1322→              ))}
+  1323→            </div>
+  1324→          </div>
+  1325→        )}
+  1326→      </CardContent>
+  1327→    </Card>
+  1328→  )
+  1329→}
+  1330→
+  1331→// -------------------------------------------------------------- trust note
+  1332→
+  1333→function TrustNote({ onNavigate }: { onNavigate: (tab: string) => void }) {
+  1334→  return (
+  1335→    <section
+  1336→      aria-label="Rights gate note"
+  1337→      className="flex flex-col gap-4 rounded-xl border border-border/60 bg-card/60 p-4 sm:flex-row sm:items-center sm:p-5"
+  1338→    >
+  1339→      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-primary/10">
+  1340→        <ShieldCheck className="h-5 w-5 text-primary" aria-hidden="true" />
+  1341→      </span>
+  1342→      <p className="flex-1 text-sm leading-relaxed text-muted-foreground">
+  1343→        <span className="font-semibold text-foreground">The Rights Gate</span> — every track airs
+  1344→        only after its rights record reads CLEARED. Browse the public ledger.
+  1345→      </p>
+  1346→      <Button
+  1347→        type="button"
+  1348→        variant="ghost"
+  1349→        size="sm"
+  1350→        onClick={() => onNavigate('rights')}
+  1351→        className="text-primary hover:text-primary"
+  1352→      >
+  1353→        Browse the ledger
+  1354→        <ArrowRight aria-hidden="true" />
+  1355→      </Button>
+  1356→    </section>
+  1357→  )
+  1358→}
+
+[showing lines 700-1358 of 1359; use offset=1359 with limit to continue reading]

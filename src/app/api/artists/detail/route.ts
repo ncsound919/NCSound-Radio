@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { db } from '@/lib/db'
-import type { ArtistDetailResponse, ArtistRecentSpin, ArtistTrackRow } from '@/lib/station-types'
+import type {
+  ArtistDetailResponse,
+  ArtistProfile,
+  ArtistRecentSpin,
+  ArtistTrackRow,
+} from '@/lib/station-types'
 
 export const dynamic = 'force-dynamic'
 
@@ -170,6 +175,42 @@ export async function GET(request: NextRequest) {
       source: r.source,
     }))
 
+    // Roster + submission extras — joined case-insensitively (artist name is
+    // free text on both Artist and Submission). No email / ops data here.
+    const lower = canonical.toLowerCase()
+    const [roster, submissions] = await Promise.all([
+      db.artist.findMany({
+        select: { name: true, city: true, state: true, instagram: true, soundcloud: true, createdAt: true },
+        take: 500,
+      }),
+      db.submission.findMany({
+        orderBy: { createdAt: 'desc' },
+        select: { artistName: true, genre: true, city: true, state: true, createdAt: true },
+        take: 300,
+      }),
+    ])
+    const rosterRow = roster.find((a) => a.name.toLowerCase() === lower) ?? null
+    const ownSubs = submissions.filter((s) => s.artistName.toLowerCase() === lower)
+
+    const genreCounts = new Map<string, number>()
+    for (const s of ownSubs) {
+      const g = s.genre.trim()
+      if (g) genreCounts.set(g, (genreCounts.get(g) ?? 0) + 1)
+    }
+    const firstSubMs = ownSubs.reduce<number | null>(
+      (acc, s) => (acc === null || s.createdAt.getTime() < acc ? s.createdAt.getTime() : acc),
+      null,
+    )
+    const profile: ArtistProfile = {
+      genres: [...genreCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([g]) => g),
+      city: rosterRow?.city ?? ownSubs.find((s) => s.city)?.city ?? null,
+      state: rosterRow?.state ?? ownSubs.find((s) => s.state)?.state ?? null,
+      instagram: rosterRow?.instagram ?? null,
+      soundcloud: rosterRow?.soundcloud ?? null,
+      submissions: ownSubs.length,
+      firstSeenAt: firstSubMs !== null ? new Date(firstSubMs).toISOString() : null,
+    }
+
     const body: ArtistDetailResponse = {
       artist: canonical,
       found: true,
@@ -181,6 +222,7 @@ export async function GET(request: NextRequest) {
       lastPlayedAt: lastMs !== null ? new Date(lastMs).toISOString() : null,
       tracks: trackRows,
       recent,
+      profile,
       serverTime: new Date(nowMs).toISOString(),
     }
     return NextResponse.json(body)

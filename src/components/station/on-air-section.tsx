@@ -50,6 +50,7 @@ import { LiveChat } from '@/components/sections/live-chat'
 import { RequestLine, REQUEST_PREFILL_EVENT } from '@/components/station/request-line'
 import { ErrorLine } from '@/components/station/error-line'
 import { MyWavesCard } from '@/components/station/my-waves-card'
+import { ProgramClockRing } from '@/components/station/program-clock-ring'
 import { SpectrumCanvas } from '@/components/station/spectrum-canvas'
 import { WaveChartCard } from '@/components/station/wave-chart-card'
 import { useFavorites } from '@/hooks/use-favorites'
@@ -58,7 +59,7 @@ import { useJson } from '@/hooks/use-json'
 import { useNowPlaying } from '@/hooks/use-nowplaying'
 import { useStationPlayer } from '@/hooks/use-station-player'
 import { useAudioLevel } from '@/hooks/use-audio-level'
-import { shareStation } from '@/lib/share'
+import { shareNowPlaying, shareStation } from '@/lib/share'
 import type {
   HistoryResponse,
   ListenersHistoryResponse,
@@ -86,6 +87,23 @@ function hueForRightsId(rightsId: string): number {
 function fmtTime(sec: number): string {
   const s = Math.max(0, Math.round(sec))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+/**
+ * Share the current spin — music gets the track shout-out (Web Share →
+ * clipboard), other elements share the station. Toasts the outcome.
+ */
+async function shareSpin(kind: string, title: string, artist: string): Promise<void> {
+  if (kind === 'MUSIC') {
+    const result = await shareNowPlaying(title, artist)
+    if (result === 'copied') toast.success(`“${title}” shout-out copied — pass it on.`)
+    else if (result === 'failed')
+      toast.error('Could not share — try copying the link from the address bar.')
+  } else {
+    const result = await shareStation()
+    if (result === 'copied') toast.success('Stream link copied — pass it on.')
+    else if (result === 'failed') toast.error('Could not share — copy wavc.fm from the address bar.')
+  }
 }
 
 function timeAgo(playedAtMs: number, serverMs: number): string {
@@ -266,6 +284,16 @@ function TrackDialog({
                     aria-hidden="true"
                   />
                   {isFav ? 'Saved' : 'My Waves'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void shareSpin(entry.elementKind, entry.title, entry.artist)}
+                  aria-label={`Share ${entry.title}`}
+                >
+                  <Share2 aria-hidden="true" />
+                  Share
                 </Button>
                 <Button
                   type="button"
@@ -891,6 +919,21 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
                 </div>
                 <div className="flex shrink-0 items-center gap-1.5">
                   {kind === 'MUSIC' && <FavoriteHeartButton track={track} alwaysVisible />}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => void shareSpin(kind, track.title, track.artist)}
+                    aria-label={
+                      kind === 'MUSIC'
+                        ? `Share “${track.title}” by ${track.artist}`
+                        : 'Share the station'
+                    }
+                    title={kind === 'MUSIC' ? 'Share this spin' : 'Share the station'}
+                    className="h-7 w-7 shrink-0 text-muted-foreground transition-all hover:bg-primary/10 hover:text-primary"
+                  >
+                    <Share2 className="h-3.5 w-3.5" aria-hidden="true" />
+                  </Button>
                   <span className="font-mono text-xs text-muted-foreground">
                     -{fmtTime(remaining)}
                   </span>
@@ -917,6 +960,7 @@ function UpNextCard({
   const remaining = data?.current.remaining ?? 0
   const toNextPct = duration > 0 ? Math.min(100, Math.max(0, ((duration - remaining) / duration) * 100)) : 0
   const cueing = remaining <= 0
+  const elProgress = duration > 0 ? Math.min(1, Math.max(0, (duration - remaining) / duration)) : 0
 
   return (
     <Card className="border-border/60 bg-card/70">
@@ -928,24 +972,39 @@ function UpNextCard({
         <CardDescription>AutoDJ program clock — music, IDs, ad breaks</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* countdown to the next element — fills as the current one plays out */}
-        <div className="rounded-md border border-border/50 bg-background/40 px-3 py-2">
-          <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            <span>{cueing ? 'Cueing up next…' : 'Next spin in'}</span>
-            <span
-              className={cn(
-                'font-mono',
-                cueing ? 'animate-pulse text-red-400' : 'text-primary',
-              )}
-            >
-              ~{fmtTime(remaining)}
-            </span>
+        {/* program-clock ring + countdown — the needle is where the wheel is now */}
+        <div className="flex items-center gap-3 rounded-md border border-border/50 bg-background/40 p-3">
+          {data && Array.isArray(data.wheel) && data.wheel.length > 0 ? (
+            <ProgramClockRing
+              wheel={data.wheel}
+              cycleIndex={data.cycleIndex ?? 0}
+              progress={elProgress}
+              size={76}
+            />
+          ) : null}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <span>{cueing ? 'Cueing up next…' : 'Next spin in'}</span>
+              <span
+                className={cn(
+                  'font-mono',
+                  cueing ? 'animate-pulse text-red-400' : 'text-primary',
+                )}
+              >
+                ~{fmtTime(remaining)}
+              </span>
+            </div>
+            <Progress
+              value={toNextPct}
+              className={cn('mt-1.5 h-1', cueing && 'animate-pulse')}
+              aria-label="Time until the next element"
+            />
+            <p className="mt-1.5 truncate text-[10px] text-muted-foreground">
+              {data?.cycleSec
+                ? `Full wheel pass ≈ ${Math.round(data.cycleSec / 60)} min — the needle marks this spin.`
+                : 'Program clock warming up…'}
+            </p>
           </div>
-          <Progress
-            value={toNextPct}
-            className={cn('mt-1.5 h-1', cueing && 'animate-pulse')}
-            aria-label="Time until the next element"
-          />
         </div>
 
         {!data ? (

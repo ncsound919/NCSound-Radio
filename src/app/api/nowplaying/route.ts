@@ -282,6 +282,11 @@ export async function GET() {
       next,
       heat,
       requestedBy,
+      // Full program-clock wheel (compact slices) + where we are in the pass —
+      // powers the cycle ring in the Up Next panel.
+      wheel: elements.map((el) => ({ kind: el.kind as ElementKind, durSec: el.durSec })),
+      cycleIndex: onAir.index,
+      cycleSec,
       listeners,
       mode: streamUrl ? ('live' as const) : ('simulated' as const),
       streamUrl,

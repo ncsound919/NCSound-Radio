@@ -75,6 +75,12 @@ export type NowPlayingResponse = {
   heat: Record<string, number>
   /** Who shouted for the current/upcoming music tracks (max 3 names each). */
   requestedBy: Record<string, string[]>
+  /** The full program-clock wheel as compact slices (for the cycle ring). */
+  wheel: WheelSlice[]
+  /** Index of the current element inside the wheel. */
+  cycleIndex: number
+  /** Total seconds of one full wheel pass (slots incl. inter-track gaps). */
+  cycleSec: number
   listeners: {
     current: number
     peak24h: number
@@ -83,6 +89,9 @@ export type NowPlayingResponse = {
   streamUrl: string | null
   serverTime: string
 }
+
+/** One slice of the AutoDJ program-clock wheel (compact, for the cycle ring). */
+export type WheelSlice = { kind: ElementKind; durSec: number }
 
 export type ListenerPoint = { t: string; v: number }
 
@@ -119,6 +128,31 @@ export type ScheduleResponse = {
   now: { dayOfWeek: number; minutes: number; label: string }
   shows: ShowDTO[]
   currentShowId: string | null
+}
+
+/** One row of a past show's program log (the "listen back" ledger view). */
+export type ListenBackEntry = {
+  /** ISO instant the element started. */
+  at: string
+  kind: ElementKind
+  title: string
+  /** Music/ID/talk artist; for ad spots this is the sponsor name. */
+  artist?: string
+  /** PlayLog source (AUTODJ / LIVE DJ / PRODUCED) or AD-LEDGER for spots. */
+  source?: string
+  campaignName?: string | null
+}
+
+/** GET /api/shows/listenback — what actually aired during a past show window. */
+export type ListenBackResponse = {
+  show: { slug: string; name: string; host: string; kind: 'LIVE' | 'PLAYLIST' }
+  /** ET calendar date of the occurrence (YYYY-MM-DD). */
+  date: string
+  windowStart: string
+  windowEnd: string
+  entries: ListenBackEntry[]
+  counts: { music: number; ids: number; talk: number; ads: number }
+  serverTime: string
 }
 
 /** Minimal public status row for the artist "track my submission" lookup. */
@@ -375,7 +409,26 @@ export type ArtistDetailResponse = {
   tracks: ArtistTrackRow[]
   /** The 8 most recent ledger spins of their music. */
   recent: ArtistRecentSpin[]
+  /** Roster + submission extras (genres, home, socials, first seen). */
+  profile?: ArtistProfile | null
   serverTime: string
+}
+
+/**
+ * Station-identity extras behind an artist profile — joined from the Artist
+ * roster + their submissions (never ops data, never email).
+ */
+export type ArtistProfile = {
+  /** Distinct submission genres, most common first (cap 4). */
+  genres: string[]
+  city: string | null
+  state: string | null
+  instagram: string | null
+  soundcloud: string | null
+  /** How many submissions they've sent through the pipeline. */
+  submissions: number
+  /** Earliest submission instant — "on the waves since". */
+  firstSeenAt: string | null
 }
 
 /** The entry that climbed the most versus the previous window. */

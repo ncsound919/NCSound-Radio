@@ -8,7 +8,20 @@
  */
 
 import { motion } from 'framer-motion'
-import { ChartBar, Disc3, Flame, ListMusic, Radio, ScrollText, Timer } from 'lucide-react'
+import {
+  AudioLines,
+  CalendarDays,
+  ChartBar,
+  Disc3,
+  Flame,
+  Instagram,
+  ListMusic,
+  MapPin,
+  Radio,
+  ScrollText,
+  Send,
+  Timer,
+} from 'lucide-react'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ErrorLine } from '@/components/station/error-line'
@@ -23,6 +36,13 @@ function timeAgoShort(iso: string, serverMs: number): string {
   const hrs = Math.floor(min / 60)
   if (hrs < 24) return `${hrs}h ago`
   return `${Math.floor(hrs / 24)}d ago`
+}
+
+/** Handle-or-URL → absolute link (roster socials may be stored either way). */
+function socialUrl(kind: 'instagram' | 'soundcloud', value: string): string {
+  const v = value.trim()
+  if (/^https?:\/\//i.test(v)) return v
+  return `https://${kind}.com/${v.replace(/^@/, '').replace(/\/$/, '')}`
 }
 
 const RANK_CHIP: Record<number, string> = {
@@ -146,6 +166,82 @@ export function ArtistDetailDialog({
                 />
                 <StatCell icon={ListMusic} label="Tracks" value={String(data.trackCount)} />
               </div>
+
+              {/* Roster + submission profile — genres, home, first seen, socials */}
+              {data.profile &&
+                (data.profile.genres.length > 0 ||
+                  data.profile.city ||
+                  data.profile.state ||
+                  data.profile.firstSeenAt ||
+                  data.profile.instagram ||
+                  data.profile.soundcloud) && (
+                  <section
+                    aria-label="Artist profile"
+                    className="rounded-md border border-primary/25 bg-primary/[0.06] p-3"
+                  >
+                    {data.profile.genres.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {data.profile.genres.map((g) => (
+                          <span
+                            key={g}
+                            className="rounded-full border border-primary/30 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary"
+                          >
+                            {g}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                      {(data.profile.city || data.profile.state) && (
+                        <span className="inline-flex items-center gap-1">
+                          <MapPin className="h-3 w-3 text-primary/70" aria-hidden="true" />
+                          {data.profile.city}
+                          {data.profile.city && data.profile.state ? ', ' : ''}
+                          {data.profile.state}
+                        </span>
+                      )}
+                      {data.profile.firstSeenAt && (
+                        <span className="inline-flex items-center gap-1">
+                          <CalendarDays className="h-3 w-3 text-primary/70" aria-hidden="true" />
+                          First submission{' '}
+                          {new Date(data.profile.firstSeenAt).toLocaleDateString('en-US', {
+                            month: 'short',
+                            year: 'numeric',
+                          })}
+                        </span>
+                      )}
+                      {data.profile.submissions > 0 && (
+                        <span className="inline-flex items-center gap-1">
+                          <Send className="h-3 w-3 text-primary/70" aria-hidden="true" />
+                          {data.profile.submissions} submission
+                          {data.profile.submissions === 1 ? '' : 's'} through the door
+                        </span>
+                      )}
+                      {data.profile.instagram && (
+                        <a
+                          href={socialUrl('instagram', data.profile.instagram)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 font-medium text-foreground/80 underline-offset-2 transition-colors hover:text-primary hover:underline"
+                        >
+                          <Instagram className="h-3 w-3" aria-hidden="true" />
+                          Instagram
+                        </a>
+                      )}
+                      {data.profile.soundcloud && (
+                        <a
+                          href={socialUrl('soundcloud', data.profile.soundcloud)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 font-medium text-foreground/80 underline-offset-2 transition-colors hover:text-primary hover:underline"
+                        >
+                          <AudioLines className="h-3 w-3" aria-hidden="true" />
+                          SoundCloud
+                        </a>
+                      )}
+                    </div>
+                  </section>
+                )}
 
               {/* Their cleared tracks */}
               <section aria-label="Tracks on the ledger">
