@@ -193,3 +193,30 @@ Stage Summary:
 - App is fully functional and browser-verified on desktop + mobile. All golden paths pass: play/pause synth, chat, submit->approve->rights issuance, ad-sync proof-of-play, schedule, ledger editing, validation.
 - Known cosmetic notes: "Cleared tracks 23/22" tile reflects cleared rights records vs tracks on the wheel (real-world accurate: approved tracks await upload). Sandbox clock is 2026 (dates in seeds/UI reflect that).
 - Chat relay running on :3003 (setsid, bun --hot). Restart cmd: cd mini-services/chat-service && setsid --fork bun run dev > chat.log 2>&1 &
+
+---
+Task ID: 4
+Agent: main (Z.ai Code) — cron webDevReview round
+Task: QA assessment + new features (request line, quality switcher, keyboard shortcuts) + styling polish.
+
+Work Log (Current project status):
+- QA pass first: all API routes 200, fresh page load with ZERO console errors, footer sticky verified (footer bottom == viewport height), AutoDJ rotation still advancing correctly. No blocking bugs found → proceeded to feature work.
+
+Work Log (Changes):
+- FEATURE 1 — Listener Request Line (the flagship addition):
+  * prisma/schema.prisma: new TrackRequest model { trackId → Track (relation), listenerName, note?, createdAt } with @@unique([trackId, listenerName]) (one shout per listener per track) + createdAt index. db:push applied.
+  * GET /api/requests → { top (6 most-requested CLEARED tracks, 7d window, groupBy+track join), recent (8 latest shouts w/ notes), totalToday (ET day), totalAllTime }.
+  * POST /api/requests { trackId, listenerName(1-32), note?(≤140) } → rights-gate enforced (403 if track's rights record ≠ CLEARED), 409 on duplicate listener+track (P2002), 201 otherwise with live count.
+  * GET /api/tracks → cleared-library picker feed (only rights with CLEARED status exposed; imaging excluded).
+  * src/components/station/request-line.tsx: composer card (searchable track picker with outside-click close + explicit E chips + rightsId, on-air name remembered in localStorage 'wavc-onair-name', optional shout-out) + "Most wanted" leaderboard (Flame counts, #1 highlighted) + "Fresh shouts" feed. Mounted on On Air tab between Recently Played and stats.
+  * API contract extended in src/lib/station-types.ts (RequestsResponse, TrackRequestResponse, TracksResponse, RequestTopEntry, RequestRecentEntry).
+- FEATURE 2 — Stream mount switcher in player bar: 128k (Mount 1, SignalHigh) / 64k (Mount 2 HE-AAC, SignalLow) segmented control (xl+ screens), persisted to localStorage 'wavc-stream-quality' via new quality/setQuality in use-station-player store (StreamQuality type exported).
+- FEATURE 3 — Keyboard shortcuts: new src/hooks/use-keyboard-shortcuts.ts (Space = play/pause with typing-target guard, 1-6 = tabs, ? = help dialog, Esc = close) wired in app-shell; new src/components/station/shortcuts-dialog.tsx (kbd-styled help card); footer keyboard hint button opens it.
+- STYLING (mandatory polish): .signal-wave animated amber/red sine-line divider atop the footer (SVG data-URI, wave-drift keyframes); .card-glow hover halo on interactive cards (used on request composer); amber ::selection; smooth scrolling; request-line flame accents.
+- Fixed during round: TrackRequest↔Track relation initially missing (Prisma include failed) — added relation + regenerated client + restarted dev server.
+- Verified via agent-browser E2E: request submitted ("CronReviewer → Sweet Tea Ceremonies", toast + count 8→9 + fresh shout + leaderboard update), duplicate correctly rejected (count stayed 9, 409 path), Space toggled play (Pause button + STUDIO PREVIEW badge), quality switch to Mount 2 active, "?" dialog opened, "2"/"1" tab jumps work, signal wave renders. lint clean, tsc clean.
+
+Stage Summary (current goals/completed/verification):
+- App now has 6 station surfaces + request line + mount switcher + full keyboard control. All 13 API routes healthy.
+- Unresolved/risks: none blocking. Notes: (1) stale-Prisma-client after schema change requires dev-server restart — flagged for future rounds; (2) 64k switch is a UI preference (real bitrate comes from AZURACAST_STREAM_URL mount when connected); (3) request-line spam safety = unique constraint + 32-char names; consider per-IP rate limit if exposed publicly.
+- Next-phase recommendations: listener count sparkline history, "up next" voting weights into AutoDJ ordering, share/copy-stream-link buttons, mobile sheet shortcut hint, admin auth for Ops tab.

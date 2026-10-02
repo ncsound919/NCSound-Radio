@@ -1,12 +1,12 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Pause, Play, Volume2, VolumeX } from 'lucide-react'
+import { Pause, Play, SignalHigh, SignalLow, Volume2, VolumeX } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Slider } from '@/components/ui/slider'
 import { useNowPlaying } from '@/hooks/use-nowplaying'
-import { useStationPlayer } from '@/hooks/use-station-player'
+import { useStationPlayer, type StreamQuality } from '@/hooks/use-station-player'
 import { cn } from '@/lib/utils'
 
 function fmtTime(sec: number): string {
@@ -19,6 +19,8 @@ export function PlayerBar() {
   const isPlaying = useStationPlayer((s) => s.isPlaying)
   const volume = useStationPlayer((s) => s.volume)
   const previewSynth = useStationPlayer((s) => s.previewSynth)
+  const quality = useStationPlayer((s) => s.quality)
+  const setQuality = useStationPlayer((s) => s.setQuality)
   const toggle = useStationPlayer((s) => s.toggle)
   const setVolume = useStationPlayer((s) => s.setVolume)
 
@@ -168,6 +170,37 @@ export function PlayerBar() {
             Studio Preview
           </span>
         )}
+
+        {/* Stream mount switcher — Mount 1 / Mount 2 from the stack plan */}
+        <div
+          role="group"
+          aria-label="Stream quality"
+          className="hidden shrink-0 items-center rounded-md border border-border/80 p-0.5 xl:flex"
+        >
+          {(
+            [
+              { id: 'hi' as StreamQuality, label: '128k', icon: SignalHigh, title: 'Mount 1 — 128 kbps AAC (full quality)' },
+              { id: 'mobile' as StreamQuality, label: '64k', icon: SignalLow, title: 'Mount 2 — 64 kbps HE-AAC (data saver)' },
+            ]
+          ).map(({ id, label, icon: Icon, title }) => (
+            <button
+              key={id}
+              type="button"
+              title={title}
+              aria-pressed={quality === id}
+              onClick={() => setQuality(id)}
+              className={cn(
+                'flex h-6 items-center gap-1 rounded px-1.5 text-[10px] font-semibold transition-colors',
+                quality === id
+                  ? 'bg-primary/20 text-primary'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <Icon className="h-3 w-3" aria-hidden="true" />
+              {label}
+            </button>
+          ))}
+        </div>
 
         {/* LIVE */}
         <span className="flex shrink-0 items-center gap-1.5" aria-label="Live broadcast">

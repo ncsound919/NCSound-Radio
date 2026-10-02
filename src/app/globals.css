@@ -111,6 +111,12 @@
   }
   body {
     @apply bg-background text-foreground;
+    scroll-behavior: smooth;
+  }
+  /* amber text selection — board-op flashlight vibes */
+  ::selection {
+    background: oklch(0.77 0.16 70 / 0.85);
+    color: oklch(0.15 0.02 70);
   }
 }
 
@@ -121,6 +127,14 @@
   }
   .box-glow {
     box-shadow: 0 0 24px oklch(0.77 0.16 70 / 0.28), inset 0 0 12px oklch(0.77 0.16 70 / 0.08);
+  }
+  /* interactive cards: border + halo warm up on hover */
+  .card-glow {
+    transition: border-color 0.25s ease, box-shadow 0.25s ease;
+  }
+  .card-glow:hover {
+    border-color: oklch(0.77 0.16 70 / 0.35);
+    box-shadow: 0 0 28px oklch(0.77 0.16 70 / 0.12), inset 0 0 14px oklch(0.77 0.16 70 / 0.05);
   }
   /* thin amber scrollbars for long lists */
   .scrollbar-thin {
@@ -147,6 +161,21 @@
       radial-gradient(ellipse 80% 50% at 50% -10%, oklch(0.77 0.16 70 / 0.14), transparent),
       radial-gradient(ellipse 50% 40% at 90% 110%, oklch(0.62 0.22 25 / 0.08), transparent);
   }
+  /* footer broadcast wave — drifting sine lines */
+  .signal-wave {
+    height: 26px;
+    width: 100%;
+    opacity: 0.55;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='26' viewBox='0 0 120 26'%3E%3Cpath d='M0 13 Q 15 3 30 13 T 60 13 T 90 13 T 120 13' fill='none' stroke='%23f59e0b' stroke-opacity='0.5' stroke-width='1.5'/%3E%3Cpath d='M0 13 Q 15 20 30 13 T 60 13 T 90 13 T 120 13' fill='none' stroke='%23ef4444' stroke-opacity='0.35' stroke-width='1.5'/%3E%3C/svg%3E");
+    background-repeat: repeat-x;
+    background-position: 0 50%;
+    animation: wave-drift 6s linear infinite;
+  }
+}
+
+@keyframes wave-drift {
+  from { background-position: 0 50%; }
+  to { background-position: -120px 50%; }
 }
 
 /* ON AIR pulsing dot */

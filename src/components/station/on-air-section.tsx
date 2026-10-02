@@ -32,6 +32,7 @@ import {
 import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
 import { LiveChat } from '@/components/sections/live-chat'
+import { RequestLine } from '@/components/station/request-line'
 import { useNowPlaying } from '@/hooks/use-nowplaying'
 import { useStationPlayer } from '@/hooks/use-station-player'
 import type {
@@ -183,6 +184,10 @@ export function OnAirSection({ onNavigate }: { onNavigate: (tab: string) => void
 
       <FadeIn delay={0.15}>
         <RecentlyPlayedCard trackKey={data?.current.track.id} />
+      </FadeIn>
+
+      <FadeIn delay={0.18}>
+        <RequestLine />
       </FadeIn>
 
       <FadeIn delay={0.2}>

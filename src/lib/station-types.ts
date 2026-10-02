@@ -177,6 +177,52 @@ export type PlayerState = {
   previewSynth: boolean // true = WebAudio studio preview, false = silent UI
 }
 
+// ---- Listener request line ----
+export type RequestTopEntry = {
+  trackId: string
+  title: string
+  artist: string
+  rightsId: string
+  explicit: boolean
+  count: number
+  lastRequestedAt: string
+}
+
+export type RequestRecentEntry = {
+  id: string
+  listenerName: string
+  note: string | null
+  trackTitle: string
+  trackArtist: string
+  createdAt: string
+}
+
+export type RequestsResponse = {
+  top: RequestTopEntry[]
+  recent: RequestRecentEntry[]
+  totalToday: number
+  totalAllTime: number
+}
+
+export type TrackRequestResponse = {
+  ok: true
+  request: { id: string; trackId: string; listenerName: string; note: string | null; createdAt: string }
+  count: number
+  message: string
+}
+
+export type TracksResponse = {
+  tracks: Array<{
+    id: string
+    title: string
+    artist: string
+    playlist: string
+    durationSec: number
+    explicit: boolean
+    rightsId: string
+  }>
+}
+
 export const TAB_IDS = ['on-air', 'schedule', 'submit', 'rights', 'sponsors', 'ops'] as const
 export type TabId = (typeof TAB_IDS)[number]
 

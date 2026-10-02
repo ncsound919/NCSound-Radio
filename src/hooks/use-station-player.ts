@@ -16,13 +16,29 @@
 import { create } from 'zustand'
 import type { SynthEngine } from '@/lib/synth-engine'
 
+export type StreamQuality = 'hi' | 'mobile'
+
+const QUALITY_KEY = 'wavc-stream-quality'
+
+function initialQuality(): StreamQuality {
+  if (typeof window === 'undefined') return 'hi'
+  try {
+    const v = localStorage.getItem(QUALITY_KEY)
+    return v === 'mobile' ? 'mobile' : 'hi'
+  } catch {
+    return 'hi'
+  }
+}
+
 type StationPlayerStore = {
   isPlaying: boolean
   volume: number // 0..1
   previewSynth: boolean // true = WebAudio studio preview, false = silent UI
+  quality: StreamQuality // hi = Mount 1 (128 kbps AAC), mobile = Mount 2 (64 kbps HE-AAC)
   toggle: () => void
   setVolume: (v: number) => void
   setPreviewSynth: (b: boolean) => void
+  setQuality: (q: StreamQuality) => void
 }
 
 let enginePromise: Promise<SynthEngine | null> | null = null
@@ -83,6 +99,7 @@ export const useStationPlayer = create<StationPlayerStore>()((set, get) => ({
   isPlaying: false,
   volume: 0.8,
   previewSynth: true,
+  quality: 'hi',
 
   toggle: () => {
     const next = !get().isPlaying
@@ -99,5 +116,14 @@ export const useStationPlayer = create<StationPlayerStore>()((set, get) => ({
   setPreviewSynth: (b: boolean) => {
     set({ previewSynth: b })
     syncAudio(get().isPlaying, b, get().volume)
+  },
+
+  setQuality: (q: StreamQuality) => {
+    set({ quality: q })
+    try {
+      localStorage.setItem(QUALITY_KEY, q)
+    } catch {
+      /* private mode */
+    }
   },
 }))

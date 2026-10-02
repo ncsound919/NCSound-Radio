@@ -128,7 +128,8 @@ model Track {
   seedOrder   Int      @unique
   createdAt   DateTime @default(now())
 
-  playLogs PlayLog[]
+  playLogs      PlayLog[]
+  trackRequests TrackRequest[]
 }
 
 model PlayLog {
@@ -140,6 +141,18 @@ model PlayLog {
 
   @@unique([trackId, playedAt])
   @@index([playedAt])
+}
+
+model TrackRequest {
+  id           String   @id @default(cuid())
+  trackId      String
+  track        Track    @relation(fields: [trackId], references: [id])
+  listenerName String
+  note         String?
+  createdAt    DateTime @default(now())
+
+  @@unique([trackId, listenerName])
+  @@index([createdAt])
 }
 
 model StationSetting {
