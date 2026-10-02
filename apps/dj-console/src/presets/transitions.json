@@ -1,0 +1,11 @@
+[
+  {"id":"auto","name":"Auto-DJ Variety","bars":4,"curve":"equal-power","style":"auto"},
+  {"id":"quick","name":"Drop Slam / Cut","bars":1,"curve":"cut","style":"drop-cut"},
+  {"id":"bass-swap","name":"Club Bass Swap","bars":4,"curve":"equal-power","bassSwap":true,"style":"bass-swap"},
+  {"id":"filter","name":"Filter Riser","bars":4,"curve":"equal-power","filterSweep":true,"style":"filter-riser"},
+  {"id":"vinyl-brake","name":"Vinyl Brake","bars":2,"curve":"cut","style":"vinyl-brake"},
+  {"id":"backspin","name":"Backspin Whip","bars":2,"curve":"cut","style":"backspin"},
+  {"id":"echo-out","name":"Echo Out Wash","bars":2,"curve":"equal-power","style":"echo-out"},
+  {"id":"smooth","name":"Smooth Blend","bars":4,"curve":"equal-power","bassSwap":true,"style":"blend"},
+  {"id":"long","name":"8-Bar Club Mix","bars":8,"curve":"equal-power","filterSweep":true,"bassSwap":true,"style":"blend"}
+]

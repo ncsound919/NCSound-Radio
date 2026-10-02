@@ -1,0 +1,22 @@
+{
+  "name": "@wavc/dj-console",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 3000",
+    "start": "vite --host 0.0.0.0 --port 3000",
+    "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx test/analysis.test.ts && tsx test/sync.test.ts && tsx test/sentence.test.ts && tsx test/radio.test.ts && tsx test/radio_advanced.test.ts && tsx test/timePitch.test.ts && tsx test/dj_mixer.test.ts && tsx test/marathon_crate.test.ts && tsx test/midi.test.ts"
+  },
+  "dependencies": {
+    "@wavc/station-core": "workspace:*",
+    "@wavc/scratch-agent": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15",
+    "typescript": "^5.5.0",
+    "vite": "^5.4.0"
+  }
+}

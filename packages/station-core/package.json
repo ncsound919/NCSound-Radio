@@ -1,0 +1,27 @@
+{
+  "name": "@wavc/station-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Single source of truth for the WAVC station broadcast, control and analysis contract. Zero runtime dependencies.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contract": "./src/contract/index.ts",
+    "./analysis": "./src/contract/analysis.ts",
+    "./control": "./src/contract/control.ts",
+    "./schema": "./src/schema/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test ./test/contract.test.ts"
+  },
+  "peerDependencies": {
+    "zod": "^4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "zod": {
+      "optional": true
+    }
+  }
+}
