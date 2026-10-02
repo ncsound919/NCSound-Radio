@@ -2,7 +2,8 @@
 
 /**
  * useAudioLevel — drives a CSS custom property (`--audio-level`, 0..1) on the
- * given element from the SynthEngine's master-chain analyser.
+ * given element AND on `document.documentElement` (so the player bar, or any
+ * other surface, can consume the same beat without a second rAF loop).
  *
  * Zero React re-renders: the loop writes the style property directly, rAF is
  * throttled to ~30 fps, and the level is attack-fast / release-slow smoothed
@@ -49,6 +50,7 @@ export function useAudioLevel(
         if (missFrames > 20 && level > 0.001) {
           level *= 0.85
           el.style.setProperty(cssVar, level.toFixed(3))
+          document.documentElement.style.setProperty(cssVar, level.toFixed(3))
         }
         return
       }
@@ -64,7 +66,9 @@ export function useAudioLevel(
         const norm = Math.min(1, sum / buffer.length / 140)
         const smoothing = norm > level ? ATTACK_SMOOTHING : RELEASE_SMOOTHING
         level += (norm - level) * smoothing
-        el.style.setProperty(cssVar, level.toFixed(3))
+        const value = level.toFixed(3)
+        el.style.setProperty(cssVar, value)
+        document.documentElement.style.setProperty(cssVar, value)
       } catch {
         /* analyser torn down mid-frame — try again next frame */
       }
@@ -73,9 +77,10 @@ export function useAudioLevel(
     raf = requestAnimationFrame(tick)
     return () => {
       cancelAnimationFrame(raf)
-      // Leave the surface at rest when the loop unmounts.
+      // Leave the surfaces at rest when the loop unmounts.
       try {
         targetRef.current?.style.setProperty(cssVar, '0')
+        document.documentElement.style.setProperty(cssVar, '0')
       } catch {
         /* element gone */
       }

@@ -332,7 +332,7 @@ export function OpsSection() {
             ))}
           </div>
 
-          <div className="grid gap-6 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
             {/* ---- Review queue ---- */}
             <Card className="lg:col-span-2">
               <CardHeader className="pb-3">

@@ -356,7 +356,7 @@ export function OnAirSection({ onNavigate }: { onNavigate: (tab: string) => void
     <div className="space-y-6">
       <Hero data={data} npError={error} onNavigate={onNavigate} />
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <FadeIn delay={0.05} className="lg:col-span-2">
           <NowPlayingCard data={data} progress={progress} />
         </FadeIn>
@@ -369,7 +369,7 @@ export function OnAirSection({ onNavigate }: { onNavigate: (tab: string) => void
         <RecentlyPlayedCard trackKey={data?.current.track.id} onSelect={setDialogEntry} />
       </FadeIn>
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <FadeIn delay={0.17} className="lg:col-span-2">
           <WaveChartCard />
         </FadeIn>
@@ -1310,7 +1310,7 @@ function SponsorTicker({ onNavigate }: { onNavigate: (tab: string) => void }) {
             Your brand could be here →
           </button>
         ) : (
-          <div className="relative flex-1 overflow-hidden" aria-label="Current sponsors">
+          <div className="relative min-w-0 flex-1 overflow-hidden" aria-label="Current sponsors">
             <div className="animate-ticker flex w-max items-center gap-10">
               {[...active, ...active].map((sponsor, i) => (
                 <span key={`${sponsor.id}-${i}`} className="flex items-center gap-10">

@@ -201,7 +201,7 @@ export function RequestLine() {
           </button>
         </div>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {/* ---- request composer ---- */}
           <motion.div
             initial={{ opacity: 0, y: 10 }}

@@ -1,6 +1,12 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import type { ChartEntry, ChartMover, ChartsResponse } from '@/lib/station-types'
+import type {
+  AllTimeEntry,
+  ArtistEntry,
+  ChartEntry,
+  ChartMover,
+  ChartsResponse,
+} from '@/lib/station-types'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,14 +27,14 @@ export async function GET() {
     const sincePrev = new Date(nowMs - 8 * 86_400_000)
     const untilPrev = new Date(nowMs - 1 * 86_400_000)
 
-    const [spinsByTrack, shoutsByTrack, totalSpins7d, currentSpins, prevSpins] = await Promise.all([
+    const [spinsByTrack, shoutsByTrack, totalSpins7d, currentSpins, prevSpins, allTimeSpins, musicSpins7d] = await Promise.all([
       db.playLog.groupBy({
         by: ['trackId'],
         _count: { _all: true },
         _max: { playedAt: true },
         where: { playedAt: { gte: since7d } },
         orderBy: { _count: { trackId: 'desc' } },
-        take: 8,
+        take: 40,
       }),
       db.trackRequest.groupBy({
         by: ['trackId'],
@@ -48,6 +54,22 @@ export async function GET() {
         where: { playedAt: { gte: sincePrev, lt: untilPrev } },
         orderBy: { _count: { trackId: 'desc' } },
         take: 40,
+      }),
+      // Hall of Fame: every spin since launch, per track.
+      db.playLog.groupBy({
+        by: ['trackId'],
+        _count: { _all: true },
+        _min: { playedAt: true },
+        _max: { playedAt: true },
+        orderBy: { _count: { trackId: 'desc' } },
+        take: 5,
+      }),
+      // Denominator for the artist share bars: all music rows this week.
+      db.playLog.count({
+        where: {
+          playedAt: { gte: since7d },
+          track: { playlist: { not: 'Imaging' } },
+        },
       }),
     ])
 
@@ -118,10 +140,69 @@ export async function GET() {
       }
     }
 
+    // Artists of the Week: aggregate this week's music spins by artist over
+    // the same rows the weekly chart ranks (imaging rows dropped by the join).
+    const artistAgg = new Map<string, { spins: number; tracks: number; topTitle: string; topSpins: number }>()
+    for (const s of spinsByTrack) {
+      const t = trackMap.get(s.trackId)
+      if (!t) continue
+      const cur = artistAgg.get(t.artist) ?? { spins: 0, tracks: 0, topTitle: t.title, topSpins: 0 }
+      cur.spins += s._count._all
+      cur.tracks += 1
+      if (s._count._all > cur.topSpins) {
+        cur.topSpins = s._count._all
+        cur.topTitle = t.title
+      }
+      artistAgg.set(t.artist, cur)
+    }
+    const topArtists: ArtistEntry[] = Array.from(artistAgg.entries())
+      .sort((a, b) => b[1].spins - a[1].spins)
+      .slice(0, 4)
+      .map(([artist, agg]) => ({
+        artist,
+        spins7d: agg.spins,
+        trackCount: agg.tracks,
+        topTrackTitle: agg.topTitle,
+        sharePct: musicSpins7d > 0 ? Math.round((agg.spins / musicSpins7d) * 100) : 0,
+      }))
+
+    // Hall of Fame: same music-only filter, ranked on the all-time ledger.
+    const allTimeIds = allTimeSpins.map((s) => s.trackId)
+    const allTimeTracks = allTimeIds.length
+      ? await db.track.findMany({
+          where: { id: { in: allTimeIds }, playlist: { not: 'Imaging' } },
+          select: { id: true, title: true, artist: true, rightsId: true },
+        })
+      : []
+    const allTimeMap = new Map(allTimeTracks.map((t) => [t.id, t]))
+    const allTime: AllTimeEntry[] = allTimeSpins.flatMap((s, i) => {
+      const t = allTimeMap.get(s.trackId)
+      if (!t) return []
+      return [
+        {
+          trackId: t.id,
+          rank: 0, // re-ranked below after the final sort
+          title: t.title,
+          artist: t.artist,
+          rightsId: t.rightsId,
+          totalSpins: s._count._all,
+          firstPlayedAt: (s._min.playedAt ?? null)?.toISOString() ?? null,
+          lastPlayedAt: (s._max.playedAt ?? null)?.toISOString() ?? null,
+        },
+      ]
+    })
+    allTime.sort((a, b) => b.totalSpins - a.totalSpins)
+    allTime.forEach((e, i) => {
+      e.rank = i + 1
+    })
+
     const body: ChartsResponse = {
       week,
       totalSpins7d,
       mover,
+      allTime,
+      topArtists,
+      musicSpins7d,
       timezone: 'America/New_York',
       serverTime: new Date(nowMs).toISOString(),
     }

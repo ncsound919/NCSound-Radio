@@ -121,6 +121,21 @@ export type ScheduleResponse = {
   currentShowId: string | null
 }
 
+/** Minimal public status row for the artist "track my submission" lookup. */
+export type SubmissionLookupEntry = {
+  trackTitle: string
+  genre: string
+  status: 'PENDING' | 'IN_REVIEW' | 'APPROVED' | 'DECLINED'
+  /** Present once the A&R desk opened a rights record for the track. */
+  rightsId: string | null
+  createdAt: string
+  reviewedAt: string | null
+}
+
+export type SubmissionLookupResponse = {
+  submissions: SubmissionLookupEntry[]
+}
+
 export type SubmissionDTO = {
   id: string
   artistName: string
@@ -292,6 +307,31 @@ export type ChartEntry = {
   prevRank: number | null
 }
 
+/** One row of the all-time Hall of Fame — most spins since the station launched. */
+export type AllTimeEntry = {
+  trackId: string
+  rank: number
+  title: string
+  artist: string
+  rightsId: string
+  /** Every logged spin since launch (music + imaging never mix — imaging never charts). */
+  totalSpins: number
+  firstPlayedAt: string | null
+  lastPlayedAt: string | null
+}
+
+/** One artist row of "Artists of the Week" — spins aggregated across their tracks. */
+export type ArtistEntry = {
+  artist: string
+  spins7d: number
+  /** Distinct tracks of theirs that charted in the window. */
+  trackCount: number
+  /** Their most-spun track this week. */
+  topTrackTitle: string
+  /** Share of all music spins this week, 0..100. */
+  sharePct: number
+}
+
 /** The entry that climbed the most versus the previous window. */
 export type ChartMover = {
   trackId: string
@@ -308,6 +348,12 @@ export type ChartsResponse = {
   totalSpins7d: number
   /** Biggest week-over-week climber (null = too little history or no climb ≥ 2). */
   mover: ChartMover | null
+  /** Hall of Fame — top 5 tracks by spins since launch. */
+  allTime: AllTimeEntry[]
+  /** Artists of the Week — top 4 artists by 7-day music spins. */
+  topArtists: ArtistEntry[]
+  /** Total MUSIC PlayLog rows in the trailing 7 days (share denominator). */
+  musicSpins7d: number
   timezone: string
   serverTime: string
 }

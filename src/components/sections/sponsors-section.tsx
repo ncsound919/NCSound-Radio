@@ -128,7 +128,7 @@ export function SponsorsSection() {
       {/* ---- Loading ---- */}
       {loading && (
         <div className="space-y-6">
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             {Array.from({ length: 3 }).map((_, i) => (
               <Skeleton key={i} className="h-56 w-full" />
             ))}
@@ -161,7 +161,7 @@ export function SponsorsSection() {
       {!loading && !error && (
         <>
           {/* ---- Packages ---- */}
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             {packages.map((pkg, i) => (
               <Card
                 key={pkg.id}
@@ -209,7 +209,7 @@ export function SponsorsSection() {
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
               Active sponsors
             </h3>
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               {sponsors.length === 0 && (
                 <Card className="border-dashed md:col-span-3">
                   <CardContent className="p-6 text-center text-sm text-muted-foreground">

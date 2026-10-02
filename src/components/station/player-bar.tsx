@@ -58,8 +58,12 @@ export function PlayerBar() {
   const toggle = useStationPlayer((s) => s.toggle)
   const setVolume = useStationPlayer((s) => s.setVolume)
   const sleepEndsAt = useStationPlayer((s) => s.sleepEndsAt)
+  const sleepMode = useStationPlayer((s) => s.sleepMode)
   const setSleepTimer = useStationPlayer((s) => s.setSleepTimer)
+  const setSleepEndOfTrack = useStationPlayer((s) => s.setSleepEndOfTrack)
   const expireSleep = useStationPlayer((s) => s.expireSleep)
+  const checkTrackEndSleep = useStationPlayer((s) => s.checkTrackEndSleep)
+  const sleepArmed = sleepMode === 'end-of-track' || sleepEndsAt !== null
 
   // Local one-second ticker so the progress bar moves smoothly between polls.
   const [now, setNow] = useState(() => Date.now())
@@ -95,6 +99,13 @@ export function PlayerBar() {
     })
   }, [now, sleepEndsAt, expireSleep])
 
+  // End-of-track sleep mode: watch the on-air spin's remaining time each tick;
+  // the store decides when the fade begins (just before the gap).
+  useEffect(() => {
+    if (sleepMode !== 'end-of-track' || !isPlaying || !current) return
+    checkTrackEndSleep(remaining)
+  }, [now, sleepMode, isPlaying, current, remaining, checkTrackEndSleep])
+
   const handleSetSleep = (minutes: number | null) => {
     setSleepTimer(minutes)
     if (minutes === null) {
@@ -108,6 +119,13 @@ export function PlayerBar() {
         description: `${minutes} minutes of waves left, then quiet.`,
       })
     }
+  }
+
+  const handleSleepEndOfTrack = () => {
+    setSleepEndOfTrack()
+    toast('Sleep timer — after this track.', {
+      description: 'The stream will fade when this spin ends, right on the gap.',
+    })
   }
 
   const handleMute = () => {
@@ -305,8 +323,21 @@ export function PlayerBar() {
           </div>
         </div>
 
-        {/* Equalizer */}
-        <div className="flex h-4 shrink-0 items-end gap-[3px]" aria-hidden="true">
+        {/* Equalizer — individual bars keep their CSS dance animation while the
+            whole block breathes (scaleY) with the real broadcast level via the
+            --audio-level var the hero's analyser loop publishes globally. */}
+        <div
+          className="flex h-4 shrink-0 items-end gap-[3px] will-change-transform"
+          aria-hidden="true"
+          style={
+            isPlaying
+              ? {
+                  transform: 'scaleY(calc(0.55 + var(--audio-level, 0) * 0.6))',
+                  transformOrigin: 'bottom',
+                }
+              : undefined
+          }
+        >
           {[0, 1, 2, 3, 4].map((i) => (
             <span
               key={i}
@@ -352,20 +383,19 @@ export function PlayerBar() {
                 size="icon"
                 className={cn(
                   'h-8 w-8 shrink-0',
-                  sleepEndsAt && 'text-primary hover:text-primary',
+                  sleepArmed && 'text-primary hover:text-primary',
                 )}
-                aria-label={sleepEndsAt ? 'Sleep timer — active' : 'Sleep timer'}
+                aria-label={sleepArmed ? 'Sleep timer — active' : 'Sleep timer'}
                 title="Sleep timer"
               >
-                {sleepEndsAt ? (
+                {sleepArmed ? (
                   <Timer className="h-4 w-4" aria-hidden="true" />
                 ) : (
                   <Moon className="h-4 w-4" aria-hidden="true" />
                 )}
               </Button>
             </DropdownMenuTrigger>
-            {sleepEndsAt && (
-              <DropdownMenuTrigger asChild>
+            {sleepEndsAt ? (
                 <span
                   role="timer"
                   aria-label="Sleep timer countdown"
@@ -374,8 +404,18 @@ export function PlayerBar() {
                 >
                   {fmtSleepCountdown(sleepRemainingMs)}
                 </span>
-              </DropdownMenuTrigger>
-            )}
+              ) : (
+                sleepMode === 'end-of-track' && (
+                  <span
+                    role="timer"
+                    aria-label="Sleep timer — after this track"
+                    title="Sleep timer — fades when this spin ends"
+                    className="hidden h-5 cursor-pointer select-none items-center rounded-sm border border-primary/40 bg-primary/10 px-1.5 text-[10px] font-bold uppercase tracking-wide text-primary sm:inline-flex"
+                  >
+                    track end
+                  </span>
+                )
+              )}
             <DropdownMenuContent align="end" className="w-52">
               <DropdownMenuLabel className="flex items-center gap-2 text-xs">
                 <Moon className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
@@ -389,6 +429,14 @@ export function PlayerBar() {
                   aria-live="off"
                 >
                   Fading out in {fmtSleepCountdown(sleepRemainingMs)}
+                </div>
+              )}
+              {sleepMode === 'end-of-track' && (
+                <div
+                  className="px-2 pb-1.5 text-xs font-semibold text-primary"
+                  role="status"
+                >
+                  Fading at the end of this spin.
                 </div>
               )}
               {[15, 30, 45, 60, 90].map((m) => (
@@ -405,10 +453,18 @@ export function PlayerBar() {
                   </span>
                 </DropdownMenuItem>
               ))}
+              <DropdownMenuItem
+                onClick={handleSleepEndOfTrack}
+                disabled={!isPlaying}
+                className="justify-between text-xs"
+              >
+                <span>End of current track</span>
+                <span className="text-[10px] text-muted-foreground">this spin</span>
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={() => handleSetSleep(null)}
-                disabled={!sleepEndsAt}
+                disabled={!sleepArmed}
                 className="text-xs text-muted-foreground"
               >
                 Turn off

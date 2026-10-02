@@ -34,6 +34,7 @@ export function useKeyboardShortcuts(onTabChange: (t: TabId) => void): [
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const toggle = useStationPlayer((s) => s.toggle)
   const sleepEndsAt = useStationPlayer((s) => s.sleepEndsAt)
+  const sleepMode = useStationPlayer((s) => s.sleepMode)
   const setSleepTimer = useStationPlayer((s) => s.setSleepTimer)
 
   const handler = useCallback(
@@ -57,7 +58,7 @@ export function useKeyboardShortcuts(onTabChange: (t: TabId) => void): [
       }
       if (e.key === 's' || e.key === 'S') {
         e.preventDefault()
-        if (sleepEndsAt) {
+        if (sleepEndsAt || sleepMode === 'end-of-track') {
           setSleepTimer(null)
           toast('Sleep timer off.')
         } else {
@@ -73,7 +74,7 @@ export function useKeyboardShortcuts(onTabChange: (t: TabId) => void): [
         setShortcutsOpen((v) => !v)
       }
     },
-    [onTabChange, shortcutsOpen, toggle, sleepEndsAt, setSleepTimer],
+    [onTabChange, shortcutsOpen, toggle, sleepEndsAt, sleepMode, setSleepTimer],
   )
 
   useEffect(() => {

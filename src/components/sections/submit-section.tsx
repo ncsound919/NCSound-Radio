@@ -21,6 +21,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Switch } from '@/components/ui/switch'
 import { Checkbox } from '@/components/ui/checkbox'
+import { SubmissionLookupCard } from '@/components/station/submission-lookup-card'
 import { Badge } from '@/components/ui/badge'
 import {
   Dialog,
@@ -199,7 +200,7 @@ export function SubmitSection() {
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* ---- Left column: form / success panel ---- */}
         <div className="lg:col-span-2">
           {success ? (
@@ -527,6 +528,9 @@ export function SubmitSection() {
           </Card>
         </div>
       </div>
+
+      {/* ---- Artist-facing status lookup (public half of the pipeline) ---- */}
+      <SubmissionLookupCard />
 
       {/* ---- Agreement dialog ---- */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

@@ -8,7 +8,7 @@
  */
 
 import { motion } from 'framer-motion'
-import { Flame, Mic, Radio, TrendingUp, Trophy } from 'lucide-react'
+import { Crown, Flame, Mic, Radio, TrendingUp, Trophy, Users } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -221,6 +221,99 @@ export function WaveChartCard() {
               </motion.li>
             ))}
             </ol>
+
+            {/* ---- Hall of Fame + Artists of the Week ---- */}
+            {(data.allTime.length > 0 || data.topArtists.length > 0) && (
+              <div className="mt-4 grid gap-4 border-t border-border/60 pt-4 md:grid-cols-2">
+                {data.allTime.length > 0 && (
+                  <div>
+                    <h4 className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                      <Crown className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
+                      Hall of Fame
+                      <span className="font-medium normal-case tracking-normal text-muted-foreground/70">
+                        · most spins since launch
+                      </span>
+                    </h4>
+                    <ol className="space-y-1" aria-label="All-time most played tracks">
+                      {data.allTime.map((e, idx) => (
+                        <motion.li
+                          key={e.trackId}
+                          initial={{ opacity: 0, x: -8 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ duration: 0.3, delay: 0.25 + idx * 0.05, ease: 'easeOut' }}
+                          className="flex items-center gap-2 rounded px-1.5 py-1 transition-colors hover:bg-accent/40"
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={cn(
+                              'flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border font-mono text-[10px] font-bold',
+                              e.rank === 1
+                                ? 'border-primary/50 bg-primary/15 text-primary'
+                                : 'border-border bg-background/60 text-muted-foreground',
+                            )}
+                          >
+                            {e.rank}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-xs">
+                            <span className="font-medium">{e.title}</span>
+                            <span className="text-muted-foreground"> — {e.artist}</span>
+                          </span>
+                          <span
+                            title={`First spun ${e.firstPlayedAt ? new Date(e.firstPlayedAt).toLocaleDateString() : 'unknown'}`}
+                            className="shrink-0 font-mono text-[10px] text-primary"
+                          >
+                            {e.totalSpins.toLocaleString()}
+                          </span>
+                        </motion.li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+                {data.topArtists.length > 0 && (
+                  <div>
+                    <h4 className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                      <Users className="h-3.5 w-3.5 text-red-400" aria-hidden="true" />
+                      Artists of the Week
+                      <span className="font-medium normal-case tracking-normal text-muted-foreground/70">
+                        · {data.musicSpins7d.toLocaleString()} music spins
+                      </span>
+                    </h4>
+                    <ol className="space-y-1" aria-label="Top artists this week">
+                      {data.topArtists.map((a, idx) => (
+                        <motion.li
+                          key={a.artist}
+                          initial={{ opacity: 0, x: -8 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ duration: 0.3, delay: 0.25 + idx * 0.05, ease: 'easeOut' }}
+                          className="group/a relative flex items-center gap-2 overflow-hidden rounded px-1.5 py-1 transition-colors hover:bg-accent/40"
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="absolute inset-y-0 left-0 bg-gradient-to-r from-red-500/10 to-transparent transition-[width] duration-700 ease-out"
+                            style={{ width: `${Math.max(4, a.sharePct)}%` }}
+                          />
+                          <span className="relative min-w-0 flex-1 truncate text-xs">
+                            <span className="font-medium">{a.artist}</span>
+                            <span className="text-muted-foreground">
+                              {' '}· {a.trackCount} track{a.trackCount === 1 ? '' : 's'}
+                            </span>
+                          </span>
+                          <span
+                            title={`Top spin: ${a.topTrackTitle}`}
+                            className="relative hidden max-w-28 truncate text-[10px] text-muted-foreground/80 sm:inline"
+                          >
+                            {a.topTrackTitle}
+                          </span>
+                          <span className="relative shrink-0 font-mono text-[10px] text-red-400/90">
+                            {a.sharePct}%
+                          </span>
+                        </motion.li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
         <p className="mt-3 flex items-center gap-1.5 text-[10px] leading-relaxed text-muted-foreground">
