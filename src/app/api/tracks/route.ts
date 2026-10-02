@@ -18,7 +18,7 @@ export async function GET() {
     const clearedIds = new Set(clearedRights.map((r) => r.id))
 
     const tracks = await db.track.findMany({
-      where: { playlist: { not: 'Imaging' } },
+      where: { playlist: { notIn: ['Imaging', 'Talk'] } },
       orderBy: [{ title: 'asc' }],
       select: {
         id: true,

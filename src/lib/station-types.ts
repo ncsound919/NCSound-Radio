@@ -17,8 +17,8 @@ export type TrackDTO = {
   bpm: number | null
 }
 
-/** Program-clock element kinds: songs, imaging IDs, ad-break spots. */
-export type ElementKind = 'MUSIC' | 'STATION_ID' | 'AD_SPOT'
+/** Program-clock element kinds: songs, imaging IDs, ad-break spots, talk segments. */
+export type ElementKind = 'MUSIC' | 'STATION_ID' | 'AD_SPOT' | 'TALK'
 
 /** What the AutoDJ is airing right now (mirrors the broadcast engine). */
 export type NowPlayingElement = {
@@ -28,10 +28,24 @@ export type NowPlayingElement = {
   creativeName?: string
 }
 
-/** A queue entry: a real track, an imaging ID, or an (ad/house) spot. */
+/** A queue entry: a real track, an imaging ID, a talk segment, or an (ad/house) spot. */
 export type QueueEntry = TrackDTO & {
   elementKind: ElementKind
   sponsorName?: string | null
+}
+
+/** The scheduled show currently on air (player-bar / hero takeover). */
+export type LiveShowInfo = {
+  id: string
+  name: string
+  host: string
+  description: string
+  kind: 'LIVE' | 'PLAYLIST'
+  accent: string
+  startedAtIso: string
+  endsAtIso: string
+  /** Minutes until the show hands the wheel back to AutoDJ. */
+  minutesLeft: number
 }
 
 export type NowPlayingResponse = {
@@ -50,10 +64,12 @@ export type NowPlayingResponse = {
     remaining: number // seconds
     progress: number // 0..1
   }
-  /** Program-clock element currently airing (music / station ID / ad spot). */
+  /** Program-clock element currently airing (music / station ID / ad spot / talk). */
   element: NowPlayingElement
   /** Clean Daypart state: explicit tracks are held 6 AM–7 PM ET. */
   daypart: { clean: boolean; label: string }
+  /** Scheduled show on air right now (any kind) — null when AutoDJ owns the wheel. */
+  liveShow: LiveShowInfo | null
   next: QueueEntry[]
   /** Request heat (7-day listener requests): trackId -> count, only > 0 entries. */
   heat: Record<string, number>

@@ -25,6 +25,8 @@ import type {
 import { cn } from '@/lib/utils'
 
 const NAME_KEY = 'wavc-onair-name'
+/** Cross-component event: pre-select a track in the picker (from the track dialog). */
+export const REQUEST_PREFILL_EVENT = 'wavc:prefill-request'
 
 function timeAgo(iso: string, now: number): string {
   const mins = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60000))
@@ -50,6 +52,7 @@ export function RequestLine() {
   const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const pickerRef = useRef<HTMLDivElement | null>(null)
+  const pendingTrackRef = useRef<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
   const refresh = async () => {
@@ -77,6 +80,33 @@ export function RequestLine() {
     const t = setInterval(() => setNow(Date.now()), 30_000)
     return () => clearInterval(t)
   }, [])
+
+  // Apply a prefill that arrived before the library finished loading.
+  useEffect(() => {
+    if (!tracks || !pendingTrackRef.current) return
+    const wanted = pendingTrackRef.current
+    const t = tracks.find((x) => x.id === wanted)
+    if (t) setSelected(t)
+    pendingTrackRef.current = null
+  }, [tracks])
+
+  // Other surfaces (track dialog, up-next, history) can prefill a request.
+  useEffect(() => {
+    const onPrefill = (e: Event) => {
+      const detail = (e as CustomEvent<{ trackId?: string }>).detail
+      const trackId = detail?.trackId
+      if (!trackId) return
+      if (tracks) {
+        const t = tracks.find((x) => x.id === trackId)
+        if (t) setSelected(t)
+      } else {
+        pendingTrackRef.current = trackId
+      }
+      setPickerOpen(false)
+    }
+    window.addEventListener(REQUEST_PREFILL_EVENT, onPrefill)
+    return () => window.removeEventListener(REQUEST_PREFILL_EVENT, onPrefill)
+  }, [tracks])
 
   // close the picker on outside click
   useEffect(() => {
@@ -139,7 +169,7 @@ export function RequestLine() {
   }
 
   return (
-    <section aria-label="Request line" className="relative">
+    <section id="request-line" aria-label="Request line" className="relative scroll-mt-20">
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <span className="rounded-lg bg-primary/10 p-2 text-primary">
           <Flame className="h-5 w-5" aria-hidden="true" />
@@ -177,7 +207,7 @@ export function RequestLine() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.25 }}
-            className="card-glow rounded-xl border border-border/60 bg-card/60 p-4 sm:p-5"
+            className="card-glow flex h-full flex-col rounded-xl border border-border/60 bg-card/60 p-4 sm:p-5"
           >
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
               <Radio className="h-4 w-4 text-primary" aria-hidden="true" />
@@ -310,6 +340,22 @@ export function RequestLine() {
               <ShieldCheck className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
               Requests can never fast-track an uncleared record.
             </p>
+
+            {/* how a shout becomes a spin — fills the column and explains the loop */}
+            <div className="mt-auto grid grid-cols-3 gap-2 border-t border-border/40 pt-3 [&>*+*]:relative [&>*+*]:before:absolute [&>*+*]:before:left-[-8px] [&>*+*]:before:top-1/2 [&>*+*]:before:h-px [&>*+*]:before:w-4 [&>*+*]:before:-translate-y-1/2 [&>*+*]:before:bg-border">
+              {[
+                { n: '1', label: 'Pick a cleared track' },
+                { n: '2', label: 'Shout it out' },
+                { n: '3', label: 'Wheel reorders in ~1 min' },
+              ].map((s) => (
+                <div key={s.n} className="text-center">
+                  <span className="mx-auto flex h-6 w-6 items-center justify-center rounded-full border border-primary/40 bg-primary/10 text-[10px] font-bold text-primary">
+                    {s.n}
+                  </span>
+                  <p className="mt-1.5 text-[10px] leading-snug text-muted-foreground">{s.label}</p>
+                </div>
+              ))}
+            </div>
           </motion.div>
 
           {/* ---- top requests + recent shouts ---- */}
@@ -317,7 +363,7 @@ export function RequestLine() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.25, delay: 0.06 }}
-            className="rounded-xl border border-border/60 bg-card/60 p-4 sm:p-5"
+            className="h-full rounded-xl border border-border/60 bg-card/60 p-4 sm:p-5"
           >
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
               <ListMusic className="h-4 w-4 text-primary" aria-hidden="true" />

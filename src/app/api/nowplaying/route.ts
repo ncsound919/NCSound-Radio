@@ -6,8 +6,12 @@ import {
   computeListeners,
   computeOnAir,
   etDayStartUTC,
+  etOffsetMinutes,
+  etWallClock,
+  getActiveShow,
   getRotationWheel,
   getUpNextElements,
+  housePromoForSlot,
   isCleanDaypart,
   maybeLogAdPlay,
   maybeLogPlays,
@@ -16,6 +20,7 @@ import {
 } from '@/lib/broadcast'
 import type {
   ElementKind,
+  LiveShowInfo,
   NowPlayingElement,
   QueueEntry,
 } from '@/lib/station-types'
@@ -28,19 +33,37 @@ const TRACK_GAP_SEC = 12
 function adSpotTrack(
   campaign: { name: string; sponsorName: string; creativeName: string } | null,
   slotId: string,
+  slotMs: number,
 ): QueueEntry {
+  if (campaign) {
+    return {
+      id: `adspot-${slotId}`,
+      title: campaign.creativeName,
+      artist: campaign.sponsorName,
+      album: `Campaign: ${campaign.name}`,
+      durationSec: 30,
+      rightsId: 'ADSPOT',
+      explicit: false,
+      playlist: 'Sponsor Spot',
+      bpm: null,
+      elementKind: 'AD_SPOT' as ElementKind,
+      sponsorName: campaign.sponsorName,
+    }
+  }
+  // Unsold inventory: rotate through the house-promo creative pool.
+  const promo = housePromoForSlot(slotMs)
   return {
     id: `adspot-${slotId}`,
-    title: campaign ? campaign.creativeName : 'House promo — support WAVC 91.3',
-    artist: campaign ? campaign.sponsorName : 'WAVC 91.3 FM',
-    album: campaign ? `Campaign: ${campaign.name}` : 'Unsold inventory',
+    title: promo.title,
+    artist: promo.line,
+    album: 'Unsold inventory',
     durationSec: 30,
-    rightsId: campaign ? 'ADSPOT' : 'HOUSE',
+    rightsId: 'HOUSE',
     explicit: false,
-    playlist: campaign ? 'Sponsor Spot' : 'House Promo',
+    playlist: 'House Promo',
     bpm: null,
     elementKind: 'AD_SPOT' as ElementKind,
-    sponsorName: campaign ? campaign.sponsorName : null,
+    sponsorName: null,
   }
 }
 
@@ -71,6 +94,30 @@ export async function GET() {
     const upcoming = getUpNextElements(elements, onAir.index, 3)
     const listeners = computeListeners(nowMs)
     const clean = isCleanDaypart(nowMs)
+
+    // Scheduled-show takeover: whatever is in the program grid right now.
+    const activeShow = await getActiveShow(nowMs)
+    let liveShow: LiveShowInfo | null = null
+    if (activeShow) {
+      const startMin = activeShow.startHour * 60 + activeShow.startMinute
+      const endMin = startMin + activeShow.durationMin
+      const wc = etWallClock(new Date(nowMs))
+      const dayStartUTC = Date.UTC(wc.year, wc.month - 1, wc.day)
+      const offsetMin = etOffsetMinutes(new Date(nowMs))
+      const showStartMs = dayStartUTC + startMin * 60_000 - offsetMin * 60_000
+      const showEndMs = dayStartUTC + endMin * 60_000 - offsetMin * 60_000
+      liveShow = {
+        id: activeShow.id,
+        name: activeShow.name,
+        host: activeShow.host,
+        description: activeShow.description,
+        kind: activeShow.kind === 'LIVE' ? 'LIVE' : 'PLAYLIST',
+        accent: activeShow.accent,
+        startedAtIso: new Date(showStartMs).toISOString(),
+        endsAtIso: new Date(showEndMs).toISOString(),
+        minutesLeft: Math.max(0, Math.round((showEndMs - nowMs) / 60_000)),
+      }
+    }
 
     // Absolute slot-start instants for the current + upcoming elements
     // (startedAt is the current element's real start; later ones accumulate).
@@ -115,27 +162,35 @@ export async function GET() {
 
     const campaignAt = (slotMs: number) => campaignForAdSlot(slotMs, adSchedule)
 
-    // Song history: music + station IDs log to PlayLog; ad spots do not
-    // (their ledger is ad_plays, written lazily below + nightly backfill).
+    // Song history: music + station IDs + talk segments log to PlayLog; ad
+    // spots do not (their ledger is ad_plays, written lazily below + backfill).
     if (onAir.element.track) {
-      await maybeLogPlays(onAir.element.track.id, onAir.startedAt)
+      await maybeLogPlays(
+        onAir.element.track.id,
+        onAir.startedAt,
+        onAir.element.kind === 'TALK' ? 'PRODUCED' : 'AUTODJ',
+      )
     }
 
     // Queue entries (pseudo tracks for IDs and ad spots).
     const next: QueueEntry[] = upcoming.map((el, k) => {
       if (el.kind === 'AD_SPOT') {
-        return adSpotTrack(campaignAt(slotStarts[k + 1]), `${Math.round(slotStarts[k + 1] / 1000)}-${k}`)
+        return adSpotTrack(
+          campaignAt(slotStarts[k + 1]),
+          `${Math.round(slotStarts[k + 1] / 1000)}-${k}`,
+          slotStarts[k + 1],
+        )
       }
-      if (el.kind === 'STATION_ID' && el.track) {
+      if ((el.kind === 'STATION_ID' || el.kind === 'TALK') && el.track) {
         return {
           ...toTrackDTO(el.track),
-          elementKind: 'STATION_ID' as ElementKind,
+          elementKind: el.kind,
           sponsorName: null,
         }
       }
       return el.track
         ? { ...toTrackDTO(el.track), elementKind: 'MUSIC' as ElementKind, sponsorName: null }
-        : adSpotTrack(null, `fallback-${k}`)
+        : adSpotTrack(null, `fallback-${k}`, slotStarts[k + 1])
     })
 
     const currentEntry: QueueEntry = onAir.element.track
@@ -144,7 +199,7 @@ export async function GET() {
           elementKind: onAir.element.kind,
           sponsorName: null,
         }
-      : adSpotTrack(campaignAt(slotStarts[0]), `${Math.round(slotStarts[0] / 1000)}-cur`)
+      : adSpotTrack(campaignAt(slotStarts[0]), `${Math.round(slotStarts[0] / 1000)}-cur`, slotStarts[0])
 
     // Current element descriptor for the UI.
     const currentCampaign =
@@ -156,7 +211,12 @@ export async function GET() {
           sponsorName: currentCampaign.sponsorName,
           creativeName: currentCampaign.creativeName,
         }
-      : { kind: onAir.element.kind }
+      : onAir.element.kind === 'AD_SPOT'
+        ? {
+            kind: 'AD_SPOT' as ElementKind,
+            creativeName: housePromoForSlot(slotStarts[0]).title,
+          }
+        : { kind: onAir.element.kind }
 
     // Proof-of-play: a sold spot that is on the air RIGHT NOW gets its
     // ad_plays row at the exact broadcast instant (idempotent on every poll).
@@ -218,6 +278,7 @@ export async function GET() {
         clean,
         label: clean ? 'Clean Daypart' : 'Open Rotations',
       },
+      liveShow,
       next,
       heat,
       requestedBy,

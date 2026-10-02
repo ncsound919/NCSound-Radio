@@ -55,8 +55,16 @@ const ROTATION_ANCHOR_MS = Date.UTC(2025, 0, 1)
 const TRACK_GAP_SEC = 12
 /** Songs per music block before an imaging ID or ad break. */
 const BLOCK_SIZE = 3
-/** After every Nth music block: an ad break (2 spots) instead of a station ID. */
-const AD_BREAK_EVERY_N_BLOCKS = 2
+/**
+ * Program-clock cadence after each music block (round-robin):
+ *   block 0 → station ID · block 1 → ad break (2 spots) · block 2 → talk/spotlight.
+ * Mirrors the hourly clock: Music → Station ID → Talk → Music → Ad break.
+ */
+const BREAK_PATTERN: Array<'STATION_ID' | 'AD_BREAK' | 'TALK'> = [
+  'STATION_ID',
+  'AD_BREAK',
+  'TALK',
+]
 /** Duration of a single ad spot (two spots per break). */
 const AD_SPOT_SEC = 30
 /** Rotation wheel cache TTL (nowplaying is polled every ~10s). */
@@ -72,7 +80,7 @@ export const DAY_MS = 24 * 3600 * 1000
 // AutoDJ rotation engine — program clock
 // ---------------------------------------------------------------------------
 
-export type ElementKind = 'MUSIC' | 'STATION_ID' | 'AD_SPOT'
+export type ElementKind = 'MUSIC' | 'STATION_ID' | 'AD_SPOT' | 'TALK'
 
 export type AdCampaignInfo = {
   id: string
@@ -96,8 +104,28 @@ type WheelCache = {
   fetchedAt: number
 }
 
+/** Show-table cache (the live-show takeover polls this every 10s). */
+type ShowCache = { shows: Show[]; fetchedAt: number }
+
 const globalForRotation = globalThis as unknown as {
   wavcRotationCache: WheelCache | undefined
+  wavcShowCache: ShowCache | undefined
+}
+
+/**
+ * House-promo creative pool — unsold ad-break inventory rotates through these
+ * instead of airing a single canned spot (deterministic pick per slot).
+ */
+export const HOUSE_PROMOS: Array<{ title: string; line: string }> = [
+  { title: 'House promo — submit your track', line: 'Artists: send your music through the rights gate at wavc.fm/submit.' },
+  { title: 'House promo — the studio line is open', line: 'Text the studio at (910) 555-0191 or join the studio line on the site.' },
+  { title: 'House promo — sponsor this daypart', line: 'Your brand here: daypart sponsorship from $180/mo — sales@wavc.fm.' },
+]
+
+/** Deterministic house-promo variant for a slot instant. */
+export function housePromoForSlot(slotMs: number): { title: string; line: string } {
+  const bucket = Math.floor(slotMs / 600_000) // rotates every 10 minutes of airtime
+  return HOUSE_PROMOS[stringHash(`house-${bucket}`) % HOUSE_PROMOS.length]
 }
 
 /**
@@ -234,10 +262,11 @@ export async function getRotationWheel(nowMs: number = Date.now()): Promise<{
 
   const clean = isCleanDaypart(nowMs)
 
-  const [rows, weights, imagingRows, campaignRows] = await Promise.all([
+  const [rows, weights, imagingRows, talkRows, campaignRows] = await Promise.all([
     db.track.findMany({ orderBy: { seedOrder: 'asc' } }),
     getRequestWeights(nowMs),
     db.track.findMany({ where: { playlist: 'Imaging' }, orderBy: { seedOrder: 'asc' } }),
+    db.track.findMany({ where: { playlist: 'Talk' }, orderBy: { seedOrder: 'asc' } }),
     db.campaign.findMany({
       where: { active: true, startAt: { lte: new Date(nowMs) } },
       include: { sponsor: true },
@@ -254,13 +283,15 @@ export async function getRotationWheel(nowMs: number = Date.now()): Promise<{
     startAtMs: c.startAt.getTime(),
   }))
 
-  // Music pool: everything except Imaging; Fallback tracks wait on the bench
-  // unless a listener shout pulls them in. Daypart filter applies on top.
+  // Music pool: everything except Imaging and Talk; Fallback tracks wait on
+  // the bench unless a listener shout pulls them in. Daypart filter on top.
   let pool = rows.filter(
     (t) =>
-      t.playlist !== 'Imaging' && (t.playlist !== 'Fallback' || (weights.get(t.id) ?? 0) > 0),
+      t.playlist !== 'Imaging' &&
+      t.playlist !== 'Talk' &&
+      (t.playlist !== 'Fallback' || (weights.get(t.id) ?? 0) > 0),
   )
-  if (pool.length === 0) pool = rows.filter((t) => t.playlist !== 'Imaging')
+  if (pool.length === 0) pool = rows.filter((t) => t.playlist !== 'Imaging' && t.playlist !== 'Talk')
   if (clean) {
     const cleanPool = pool.filter((t) => !t.explicit)
     if (cleanPool.length > 0) pool = cleanPool
@@ -292,11 +323,20 @@ export async function getRotationWheel(nowMs: number = Date.now()): Promise<{
         durSec: music[k].durationSec,
       })
     }
-    // After every 3rd block: an ad break (2 spots). Otherwise: a station ID.
-    if ((blockIndex + 1) % AD_BREAK_EVERY_N_BLOCKS === 0) {
+    // Program clock: station ID → ad break → talk/spotlight, round-robin.
+    const breakKind = BREAK_PATTERN[blockIndex % BREAK_PATTERN.length]
+    if (breakKind === 'AD_BREAK') {
       for (let spot = 0; spot < 2; spot++) {
         elements.push({ kind: 'AD_SPOT', track: null, campaign: null, durSec: AD_SPOT_SEC })
       }
+    } else if (breakKind === 'TALK' && talkRows.length > 0) {
+      const talkTrack = talkRows[Math.floor(blockIndex / BREAK_PATTERN.length) % talkRows.length]
+      elements.push({
+        kind: 'TALK',
+        track: talkTrack,
+        campaign: null,
+        durSec: talkTrack.durationSec,
+      })
     } else if (imagingRows.length > 0) {
       const idTrack = imagingRows[blockIndex % imagingRows.length]
       elements.push({
@@ -397,6 +437,37 @@ export function getUpNextElements(
     out.push(elements[(index + k) % elements.length])
   }
   return out
+}
+
+// ---------------------------------------------------------------------------
+// Scheduled-show takeover (live programming)
+// ---------------------------------------------------------------------------
+
+/** Cached 30s: one Show-table read per ~3 nowplaying polls. */
+export async function getActiveShow(nowMs: number = Date.now()): Promise<Show | null> {
+  const cached = globalForRotation.wavcShowCache
+  let shows: Show[]
+  if (cached && Array.isArray(cached.shows) && Date.now() - cached.fetchedAt < 30_000) {
+    shows = cached.shows
+  } else {
+    shows = await db.show.findMany({
+      orderBy: [
+        { dayOfWeek: 'asc' },
+        { startHour: 'asc' },
+        { startMinute: 'asc' },
+      ],
+    })
+    globalForRotation.wavcShowCache = { shows, fetchedAt: Date.now() }
+  }
+
+  const wc = etWallClock(new Date(nowMs))
+  return (
+    shows.find((s) => {
+      if (!s.active || s.dayOfWeek !== wc.dayOfWeek) return false
+      const startMin = s.startHour * 60 + s.startMinute
+      return wc.minuteOfDay >= startMin && wc.minuteOfDay < startMin + s.durationMin
+    }) ?? null
+  )
 }
 
 // ---------------------------------------------------------------------------

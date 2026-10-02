@@ -44,6 +44,12 @@ const imaging: Array<{ id: string; title: string; artist: string; dur: number; p
   { id: 'IMG03', title: 'Legal ID — WAVC 91.3 FM', artist: 'Station Imaging', dur: 8, playlist: 'Imaging' },
 ]
 
+const talk: Array<{ id: string; title: string; artist: string; dur: number; blurb: string }> = [
+  { id: 'TALK01', title: 'Carolina Waves Spotlight — Fresh Finds', artist: 'WAVC 91.3 Programming', dur: 195, blurb: 'Three-minute spotlight on the newest cleared submissions.' },
+  { id: 'TALK02', title: 'Studio Line Shout-Outs', artist: 'WAVC 91.3 Programming', dur: 150, blurb: 'Reading listener shouts from the studio line and request ledger.' },
+  { id: 'TALK03', title: 'The Week in Carolina Hip-Hop', artist: 'WAVC 91.3 Programming', dur: 225, blurb: 'Shows, releases and open mics across NC/SC — produced segment.' },
+]
+
 async function main() {
   console.log('Seeding WAVC 91.3 ...')
 
@@ -88,6 +94,21 @@ async function main() {
       clearedAt: new Date('2025-08-01T12:00:00Z'),
     })),
   })
+  // produced talk segments are fully owned/cleared
+  await db.rightsLog.createMany({
+    data: talk.map(r => ({
+      id: r.id,
+      trackTitle: r.title,
+      artistName: r.artist,
+      owner: 'WAVC 91.3 (in-house)',
+      sampleStatus: 'CLEARED',
+      explicitFlag: false,
+      status: 'CLEARED',
+      source: 'CORE',
+      ownerProof: 'Produced in-house — work for hire (talk segment)',
+      clearedAt: new Date('2025-09-01T12:00:00Z'),
+    })),
+  })
   // pipeline demo rows (not cleared — must never reach AutoDJ)
   await db.rightsLog.createMany({
     data: [
@@ -104,6 +125,9 @@ async function main() {
   }
   for (const img of imaging) {
     trackRows.push({ title: img.title, artist: img.artist, album: null, durationSec: img.dur, rightsId: img.id, explicit: false, playlist: img.playlist, bpm: null, seedOrder: order++ })
+  }
+  for (const t of talk) {
+    trackRows.push({ title: t.title, artist: t.artist, album: t.blurb, durationSec: t.dur, rightsId: t.id, explicit: false, playlist: 'Talk', bpm: null, seedOrder: order++ })
   }
   await db.track.createMany({ data: trackRows })
 

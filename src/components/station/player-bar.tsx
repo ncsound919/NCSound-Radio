@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from 'react'
 import {
   Mic,
   Megaphone,
+  MessageSquareQuote,
   Pause,
   Play,
+  Radio,
   Share2,
   SignalHigh,
   SignalLow,
@@ -58,6 +60,7 @@ export function PlayerBar() {
 
   const track = current?.track
   const upNext = data?.next?.[0]
+  const liveShow = data?.liveShow ?? null
 
   const handleMute = () => {
     if (muted) {
@@ -137,16 +140,48 @@ export function PlayerBar() {
           {track ? (
             <>
               <p className="truncate text-sm font-medium leading-tight">
-                {elementKind === 'AD_SPOT' && data?.element?.sponsorName
-                  ? `AD — ${data.element.sponsorName}`
-                  : track.title}
+                {liveShow ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="truncate">
+                      {liveShow.kind === 'LIVE' ? 'LIVE — ' : ''}
+                      {liveShow.name}
+                    </span>
+                    <span className="hidden shrink-0 text-xs font-normal text-muted-foreground sm:inline">
+                      {liveShow.minutesLeft > 0 ? `· ${liveShow.minutesLeft}m left` : null}
+                    </span>
+                  </span>
+                ) : elementKind === 'AD_SPOT' && data?.element?.sponsorName ? (
+                  `AD — ${data.element.sponsorName}`
+                ) : (
+                  track.title
+                )}
               </p>
               <p className="truncate text-xs leading-tight text-muted-foreground">
-                {elementKind === 'AD_SPOT'
-                  ? (data?.element?.creativeName ?? track.artist)
-                  : track.artist}
+                {liveShow
+                  ? `${liveShow.kind === 'LIVE' ? 'with' : 'hosted by'} ${liveShow.host}`
+                  : elementKind === 'AD_SPOT'
+                    ? (data?.element?.creativeName ?? track.artist)
+                    : track.artist}
               </p>
               <div className="mt-1 flex items-center gap-1.5">
+                {liveShow && (
+                  <span
+                    title={
+                      liveShow.kind === 'LIVE'
+                        ? 'Live show on the program grid'
+                        : 'Scheduled show — AutoDJ continues underneath'
+                    }
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded border px-1.5 text-[10px] font-bold uppercase tracking-wider',
+                      liveShow.kind === 'LIVE'
+                        ? 'border-red-500/40 bg-red-500/10 text-red-400'
+                        : 'border-primary/40 bg-primary/10 text-primary',
+                    )}
+                  >
+                    <Radio className="h-2.5 w-2.5" aria-hidden="true" />
+                    {liveShow.kind === 'LIVE' ? 'Live Show' : 'On Air'}
+                  </span>
+                )}
                 {elementKind === 'STATION_ID' && (
                   <span
                     title="Station imaging — legal identification"
@@ -167,6 +202,15 @@ export function PlayerBar() {
                   >
                     <Megaphone className="h-2.5 w-2.5" aria-hidden="true" />
                     {data?.element?.sponsorName ? 'Sponsored' : 'Promo'}
+                  </span>
+                )}
+                {elementKind === 'TALK' && (
+                  <span
+                    title="Produced talk / spotlight segment"
+                    className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 text-[10px] font-bold uppercase tracking-wider text-amber-500"
+                  >
+                    <MessageSquareQuote className="h-2.5 w-2.5" aria-hidden="true" />
+                    Spotlight
                   </span>
                 )}
                 {elementKind === 'MUSIC' && (

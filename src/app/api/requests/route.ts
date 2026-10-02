@@ -128,10 +128,18 @@ export async function POST(req: NextRequest) {
 
     const track = await db.track.findUnique({
       where: { id: trackId },
-      select: { id: true, title: true, rightsId: true },
+      select: { id: true, title: true, rightsId: true, playlist: true },
     })
     if (!track) {
       return NextResponse.json({ error: 'Unknown track.' }, { status: 404 })
+    }
+
+    // Station content (imaging IDs, produced talk segments) is not requestable.
+    if (track.playlist === 'Imaging' || track.playlist === 'Talk') {
+      return NextResponse.json(
+        { error: 'That one is station content — only songs are requestable.' },
+        { status: 403 },
+      )
     }
 
     // THE GATE: no request can fast-track an uncleared record.

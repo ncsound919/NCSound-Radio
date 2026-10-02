@@ -14,9 +14,11 @@ import {
   ListMusic,
   Megaphone,
   MessageSquare,
+  MessageSquareQuote,
   Mic,
   Pause,
   Play,
+  Radio,
   Share2,
   ShieldCheck,
   Sun,
@@ -34,10 +36,18 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
 import { LiveChat } from '@/components/sections/live-chat'
-import { RequestLine } from '@/components/station/request-line'
+import { RequestLine, REQUEST_PREFILL_EVENT } from '@/components/station/request-line'
 import { useNowPlaying } from '@/hooks/use-nowplaying'
 import { useStationPlayer } from '@/hooks/use-station-player'
 import { shareStation } from '@/lib/share'
@@ -45,6 +55,7 @@ import type {
   HistoryResponse,
   ListenersHistoryResponse,
   NowPlayingResponse,
+  QueueEntry,
   SponsorsResponse,
   StatsResponse,
 } from '@/lib/station-types'
@@ -171,11 +182,134 @@ function ErrorLine({ onRetry }: { onRetry: () => void }) {
   )
 }
 
+// -------------------------------------------------------------- track dialog
+
+/**
+ * TrackDialog — detail sheet for any real spin (music / ID / talk). Music
+ * tracks deep-link into the request line; imaging/talk link to their ledger.
+ */
+function TrackDialog({
+  entry,
+  onClose,
+  onNavigate,
+}: {
+  entry: QueueEntry | null
+  onClose: () => void
+  onNavigate: (tab: string) => void
+}) {
+  const requestable =
+    !!entry && entry.elementKind === 'MUSIC' && !['Imaging', 'Talk'].includes(entry.playlist)
+  const hue = entry ? hueForRightsId(entry.rightsId) : 32
+
+  const handleRequest = () => {
+    if (!entry) return
+    window.dispatchEvent(
+      new CustomEvent(REQUEST_PREFILL_EVENT, { detail: { trackId: entry.id } }),
+    )
+    toast.success(`“${entry.title}” is staged in the request line — add your name and send it.`)
+    onClose()
+    document
+      .getElementById('request-line')
+      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  return (
+    <Dialog open={!!entry} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-md gap-4">
+        {entry && (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 pr-6 text-lg">
+                <Disc3 className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+                <span className="truncate">{entry.title}</span>
+              </DialogTitle>
+              <DialogDescription className="truncate">
+                {entry.artist}
+                {entry.album ? ` — ${entry.album}` : ''}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div
+              className="relative h-24 overflow-hidden rounded-lg border border-border/60"
+              style={{ backgroundColor: `oklch(0.55 0.19 ${hue} / 0.35)` }}
+              aria-hidden="true"
+            >
+              <div className="absolute inset-0 flex items-end justify-center gap-1 px-4 pb-2 opacity-80">
+                {Array.from({ length: 28 }, (_, i) => (
+                  <span
+                    key={i}
+                    className="w-1 rounded-sm bg-background/80"
+                    style={{ height: `${8 + ((i * 7919) % 48)}px` }}
+                  />
+                ))}
+              </div>
+              <span className="absolute left-3 top-3 rounded-sm bg-background/70 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-foreground">
+                {entry.elementKind === 'MUSIC' ? 'Music' : entry.elementKind === 'TALK' ? 'Talk' : 'Station ID'}
+              </span>
+            </div>
+
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Playlist</dt>
+                <dd className="font-medium">{entry.playlist}</dd>
+              </div>
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Duration</dt>
+                <dd className="font-mono">{fmtTime(entry.durationSec)}</dd>
+              </div>
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Rights ID</dt>
+                <dd className="font-mono text-primary">{entry.rightsId}</dd>
+              </div>
+              <div>
+                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Explicit</dt>
+                <dd className="font-medium">{entry.explicit ? 'E — held 6a–7p ET' : 'Clean'}</dd>
+              </div>
+              {entry.bpm !== null && (
+                <div>
+                  <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">BPM</dt>
+                  <dd className="font-mono">{entry.bpm}</dd>
+                </div>
+              )}
+            </dl>
+
+            <DialogFooter className="gap-2 sm:justify-between">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  onClose()
+                  onNavigate('rights')
+                }}
+              >
+                <ShieldCheck aria-hidden="true" />
+                Rights ledger
+              </Button>
+              {requestable ? (
+                <Button type="button" size="sm" onClick={handleRequest}>
+                  <Flame aria-hidden="true" />
+                  Request this track
+                </Button>
+              ) : (
+                <span className="self-center text-xs text-muted-foreground">
+                  Station content — not requestable
+                </span>
+              )}
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 // --------------------------------------------------------------------- main
 
 export function OnAirSection({ onNavigate }: { onNavigate: (tab: string) => void }) {
   const { data, error, lastFetch } = useNowPlaying()
   const progress = useInterpolatedProgress(data, lastFetch)
+  const [dialogEntry, setDialogEntry] = useState<QueueEntry | null>(null)
 
   return (
     <div className="space-y-6">
@@ -186,12 +320,12 @@ export function OnAirSection({ onNavigate }: { onNavigate: (tab: string) => void
           <NowPlayingCard data={data} progress={progress} />
         </FadeIn>
         <FadeIn delay={0.1}>
-          <UpNextCard data={data} />
+          <UpNextCard data={data} onSelect={setDialogEntry} />
         </FadeIn>
       </div>
 
       <FadeIn delay={0.15}>
-        <RecentlyPlayedCard trackKey={data?.current.track.id} />
+        <RecentlyPlayedCard trackKey={data?.current.track.id} onSelect={setDialogEntry} />
       </FadeIn>
 
       <FadeIn delay={0.18}>
@@ -213,6 +347,12 @@ export function OnAirSection({ onNavigate }: { onNavigate: (tab: string) => void
       <FadeIn delay={0.35}>
         <TrustNote onNavigate={onNavigate} />
       </FadeIn>
+
+      <TrackDialog
+        entry={dialogEntry}
+        onClose={() => setDialogEntry(null)}
+        onNavigate={onNavigate}
+      />
     </div>
   )
 }
@@ -280,6 +420,63 @@ function Hero({
           <p className="mt-4 max-w-xl text-lg text-muted-foreground">
             The Carolinas&rsquo; independent hip-hop signal.
           </p>
+
+          {/* Scheduled-show takeover banner */}
+          {data?.liveShow && (
+            <div
+              className={cn(
+                'mt-4 flex max-w-2xl items-start gap-3 rounded-lg border px-4 py-3 backdrop-blur',
+                data.liveShow.kind === 'LIVE'
+                  ? 'border-red-500/40 bg-red-500/10'
+                  : 'border-primary/40 bg-primary/10',
+              )}
+              role="status"
+            >
+              <span
+                className={cn(
+                  'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md',
+                  data.liveShow.kind === 'LIVE' ? 'bg-red-500/20' : 'bg-primary/20',
+                )}
+                aria-hidden="true"
+              >
+                <Radio
+                  className={cn(
+                    'h-4 w-4',
+                    data.liveShow.kind === 'LIVE' ? 'text-red-400' : 'text-primary',
+                  )}
+                />
+              </span>
+              <div className="min-w-0">
+                <p className="flex flex-wrap items-center gap-2 text-sm font-bold">
+                  <span
+                    className={cn(
+                      'inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-widest',
+                      data.liveShow.kind === 'LIVE'
+                        ? 'bg-red-500/25 text-red-300'
+                        : 'bg-primary/20 text-primary',
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'animate-onair h-1.5 w-1.5 rounded-full',
+                        data.liveShow.kind === 'LIVE' ? 'bg-red-400' : 'bg-primary',
+                      )}
+                      aria-hidden="true"
+                    />
+                    {data.liveShow.kind === 'LIVE' ? 'Live now' : 'On air'}
+                  </span>
+                  {data.liveShow.name}
+                  <span className="text-xs font-normal text-muted-foreground">
+                    · {data.liveShow.minutesLeft}m left
+                  </span>
+                </p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {data.liveShow.kind === 'LIVE' ? 'with' : 'hosted by'}{' '}
+                  {data.liveShow.host} — {data.liveShow.description}
+                </p>
+              </div>
+            </div>
+          )}
 
           <div className="mt-5 flex flex-wrap gap-2">
             {chips.map((chip) => (
@@ -372,6 +569,7 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
   const kind = data?.element?.kind ?? 'MUSIC'
   const isSponsorSpot = kind === 'AD_SPOT' && Boolean(data?.element?.sponsorName)
   const isHousePromo = kind === 'AD_SPOT' && !data?.element?.sponsorName
+  const isTalk = kind === 'TALK'
   const daypartNote = data?.daypart
     ? data.daypart.clean
       ? 'Clean Daypart — explicit lyrics held until 7:00 PM ET'
@@ -413,7 +611,9 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
                     ? 'oklch(0.35 0.03 80 / 0.82)'
                     : kind === 'STATION_ID'
                       ? 'oklch(0.42 0.02 80 / 0.78)'
-                      : `oklch(0.55 0.19 ${hue} / 0.55)`,
+                      : isTalk
+                        ? 'oklch(0.5 0.12 70 / 0.6)'
+                        : `oklch(0.55 0.19 ${hue} / 0.55)`,
               }}
               aria-hidden="true"
             />
@@ -434,6 +634,11 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
                   <span className="inline-flex items-center gap-1 rounded-sm border border-border/60 bg-background/70 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-muted-foreground backdrop-blur">
                     <Megaphone className="h-3 w-3" aria-hidden="true" />
                     House Promo
+                  </span>
+                ) : isTalk ? (
+                  <span className="inline-flex items-center gap-1 rounded-sm border border-amber-400/50 bg-amber-500/25 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-amber-100 backdrop-blur">
+                    <MessageSquareQuote className="h-3 w-3" aria-hidden="true" />
+                    Spotlight
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 rounded-sm border border-primary/50 bg-primary/20 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-primary backdrop-blur">
@@ -475,6 +680,11 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
               {kind === 'STATION_ID' && (
                 <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
                   {track.rightsId}
+                </span>
+              )}
+              {isTalk && (
+                <span className="rounded border border-amber-400/50 bg-background/70 px-1.5 py-0.5 text-[10px] font-semibold text-amber-500 backdrop-blur">
+                  Produced in-house · talk segment
                 </span>
               )}
               {isSponsorSpot && (
@@ -533,8 +743,13 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
                     <>
                       <h3 className="truncate text-2xl font-bold">House Promo</h3>
                       <p className="truncate text-sm text-muted-foreground">
-                        Unsold inventory — your brand could be here
+                        {data?.element?.creativeName ?? 'Unsold inventory — your brand could be here'}
                       </p>
+                    </>
+                  ) : isTalk ? (
+                    <>
+                      <h3 className="truncate text-xl font-bold">Spotlight</h3>
+                      <p className="truncate text-sm text-muted-foreground">{track.title}</p>
                     </>
                   ) : (
                     <>
@@ -557,7 +772,13 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
 
 // ----------------------------------------------------------------- up next
 
-function UpNextCard({ data }: { data: NowPlayingResponse | null }) {
+function UpNextCard({
+  data,
+  onSelect,
+}: {
+  data: NowPlayingResponse | null
+  onSelect: (entry: QueueEntry) => void
+}) {
   const duration = data?.current.duration ?? 0
   const remaining = data?.current.remaining ?? 0
   const toNextPct = duration > 0 ? Math.min(100, Math.max(0, ((duration - remaining) / duration) * 100)) : 0
@@ -608,13 +829,23 @@ function UpNextCard({ data }: { data: NowPlayingResponse | null }) {
               const requesters = data.requestedBy?.[t.id] ?? []
               const isId = t.elementKind === 'STATION_ID'
               const isAd = t.elementKind === 'AD_SPOT'
+              const isTalk = t.elementKind === 'TALK'
+              const isPseudo = isAd || t.id.startsWith('adspot-') || t.id.startsWith('fallback-')
+              const RowTag = isPseudo ? 'div' : 'button'
               return (
-                <div
+                <RowTag
                   key={`${t.id}-${i}`}
+                  {...(isPseudo
+                    ? {}
+                    : {
+                        type: 'button' as const,
+                        onClick: () => onSelect(t),
+                        'aria-label': `Details for ${t.title}`,
+                      })}
                   className={cn(
-                    'flex items-start gap-3 rounded-md border border-transparent px-2 py-2 transition-colors hover:border-border hover:bg-accent/40',
+                    'flex w-full items-start gap-3 rounded-md border border-transparent px-2 py-2 text-left transition-colors hover:border-border hover:bg-accent/40',
                     isAd && 'bg-red-500/[0.04]',
-                    isId && 'border-dashed border-border/60 bg-background/30',
+                    (isId || isTalk) && 'border-dashed border-border/60 bg-background/30',
                   )}
                 >
                   <span
@@ -624,13 +855,17 @@ function UpNextCard({ data }: { data: NowPlayingResponse | null }) {
                         ? 'border-red-500/40 bg-red-500/10 text-red-400'
                         : isId
                           ? 'border-primary/40 bg-primary/10 text-primary'
-                          : 'border-border bg-background/60 text-muted-foreground',
+                          : isTalk
+                            ? 'border-amber-500/40 bg-amber-500/10 text-amber-500'
+                            : 'border-border bg-background/60 text-muted-foreground',
                     )}
                   >
                     {isAd ? (
                       <Megaphone className="h-3 w-3" aria-hidden="true" />
                     ) : isId ? (
                       <Mic className="h-3 w-3" aria-hidden="true" />
+                    ) : isTalk ? (
+                      <MessageSquareQuote className="h-3 w-3" aria-hidden="true" />
                     ) : (
                       i + 1
                     )}
@@ -668,18 +903,25 @@ function UpNextCard({ data }: { data: NowPlayingResponse | null }) {
                     className={cn(
                       'hidden shrink-0 border-border/70 text-[10px] font-medium text-muted-foreground sm:inline-flex',
                       isAd && 'border-red-500/30 text-red-400',
+                      isTalk && 'border-amber-500/30 text-amber-500',
                     )}
                   >
-                    {isAd ? (t.sponsorName ? 'Sponsor Spot' : 'House Promo') : t.playlist}
+                    {isAd
+                      ? t.sponsorName
+                        ? 'Sponsor Spot'
+                        : 'House Promo'
+                      : isTalk
+                        ? 'Spotlight'
+                        : t.playlist}
                   </Badge>
-                </div>
+                </RowTag>
               )
             })}
           </div>
         )}
         <p className="text-[10px] leading-relaxed text-muted-foreground">
-          Listener shouts bump the hottest tracks up the wheel — station IDs and ad breaks air
-          every few spins, per the program clock.
+          Listener shouts bump the hottest tracks up the wheel — station IDs, spotlight segments
+          and ad breaks air between blocks, per the program clock.
         </p>
       </CardContent>
     </Card>
@@ -688,7 +930,13 @@ function UpNextCard({ data }: { data: NowPlayingResponse | null }) {
 
 // --------------------------------------------------------- recently played
 
-function RecentlyPlayedCard({ trackKey }: { trackKey?: string }) {
+function RecentlyPlayedCard({
+  trackKey,
+  onSelect,
+}: {
+  trackKey?: string
+  onSelect: (entry: QueueEntry) => void
+}) {
   const { data, error, retry } = useJson<HistoryResponse>('/api/history?limit=10', trackKey)
   const { data: np } = useNowPlaying()
   const serverMs = np ? new Date(np.serverTime).getTime() : Date.now()
@@ -726,23 +974,36 @@ function RecentlyPlayedCard({ trackKey }: { trackKey?: string }) {
                     'border-l-2 border-primary bg-gradient-to-r from-primary/10 to-transparent hover:from-primary/15'
                 )}
               >
-                <span
-                  aria-hidden="true"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-gradient-to-br from-primary/30 via-primary/15 to-red-500/20 text-sm font-bold text-primary transition-transform group-hover:scale-105"
+                <button
+                  type="button"
+                  onClick={() =>
+                    onSelect({
+                      ...play.track,
+                      elementKind: 'MUSIC',
+                      sponsorName: null,
+                    })
+                  }
+                  aria-label={`Details for ${play.track.title}`}
+                  className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left"
                 >
-                  {(play.track.title.charAt(0) || '?').toUpperCase()}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">
-                    {play.track.title}
-                    {idx === 0 && (
-                      <span className="ml-2 rounded-sm bg-primary/15 px-1 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wider text-primary">
-                        Last spin
-                      </span>
-                    )}
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground">{play.track.artist}</p>
-                </div>
+                  <span
+                    aria-hidden="true"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-gradient-to-br from-primary/30 via-primary/15 to-red-500/20 text-sm font-bold text-primary transition-transform group-hover:scale-105"
+                  >
+                    {(play.track.title.charAt(0) || '?').toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">
+                      {play.track.title}
+                      {idx === 0 && (
+                        <span className="ml-2 rounded-sm bg-primary/15 px-1 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wider text-primary">
+                          Last spin
+                        </span>
+                      )}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">{play.track.artist}</p>
+                  </div>
+                </button>
                 <Badge
                   variant="outline"
                   className="hidden shrink-0 border-border/70 text-[10px] text-muted-foreground md:inline-flex"
