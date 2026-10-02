@@ -105,7 +105,7 @@ function ShowCard({ show, isCurrent }: { show: ShowDTO; isCurrent: boolean }) {
   )
 }
 
-export function ScheduleSection() {
+export function ScheduleSection({ onNavigate }: { onNavigate?: (tab: string) => void }) {
   const [data, setData] = useState<ScheduleResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -176,10 +176,18 @@ export function ScheduleSection() {
             {data.now.label}
           </Badge>
           {currentShow ? (
-            <Badge className="border border-red-500/40 bg-red-500/15 text-xs font-semibold text-red-400 hover:bg-red-500/15">
-              <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-red-500 animate-onair" aria-hidden />
-              ON AIR NOW · {currentShow.name}
-            </Badge>
+            <button
+              type="button"
+              onClick={() => onNavigate?.('on-air')}
+              title="See what's spinning on the On Air panel"
+              className="inline-flex items-center rounded-md transition-transform hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+            >
+              <Badge className="border border-red-500/40 bg-red-500/15 text-xs font-semibold text-red-400 hover:bg-red-500/15">
+                <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-red-500 animate-onair" aria-hidden />
+                ON AIR NOW · {currentShow.name}
+                <ChevronRight className="ml-1 h-3 w-3" aria-hidden />
+              </Badge>
+            </button>
           ) : (
             <Badge
               variant="outline"

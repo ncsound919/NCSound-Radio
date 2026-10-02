@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import Image from 'next/image'
 import { motion } from 'framer-motion'
 import {
@@ -48,6 +48,13 @@ import { Progress } from '@/components/ui/progress'
 import { Skeleton } from '@/components/ui/skeleton'
 import { LiveChat } from '@/components/sections/live-chat'
 import { RequestLine, REQUEST_PREFILL_EVENT } from '@/components/station/request-line'
+import { ErrorLine } from '@/components/station/error-line'
+import { MyWavesCard } from '@/components/station/my-waves-card'
+import { SpectrumCanvas } from '@/components/station/spectrum-canvas'
+import { WaveChartCard } from '@/components/station/wave-chart-card'
+import { useFavorites } from '@/hooks/use-favorites'
+import { useCountUp } from '@/hooks/use-count-up'
+import { useJson } from '@/hooks/use-json'
 import { useNowPlaying } from '@/hooks/use-nowplaying'
 import { useStationPlayer } from '@/hooks/use-station-player'
 import { shareStation } from '@/lib/share'
@@ -107,42 +114,6 @@ function useInterpolatedProgress(data: NowPlayingResponse | null, lastFetch: num
   return Math.min(1, Math.max(0, data.current.progress + (now - lastFetch) / 1000 / duration))
 }
 
-/** Tiny one-shot JSON fetcher with manual retry. */
-function useJson<T>(url: string, extraKey?: string) {
-  const [data, setData] = useState<T | null>(null)
-  const [error, setError] = useState(false)
-  const [attempt, setAttempt] = useState(0)
-
-  useEffect(() => {
-    let cancelled = false
-    const ctrl = new AbortController()
-    const timeout = setTimeout(() => ctrl.abort(), 12000)
-    fetch(url, { cache: 'no-store', signal: ctrl.signal })
-      .then(async (res) => {
-        if (!res.ok) throw new Error(`HTTP ${res.status}`)
-        return (await res.json()) as T
-      })
-      .then((json) => {
-        if (!cancelled) {
-          setData(json)
-          setError(false)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setError(true)
-      })
-      .finally(() => clearTimeout(timeout))
-    return () => {
-      cancelled = true
-      ctrl.abort()
-      clearTimeout(timeout)
-    }
-  }, [url, extraKey, attempt])
-
-  const retry = useCallback(() => setAttempt((a) => a + 1), [])
-  return { data, error, retry }
-}
-
 function FadeIn({ children, delay = 0, className }: { children: ReactNode; delay?: number; className?: string }) {
   return (
     <motion.div
@@ -165,23 +136,6 @@ function OnAirPill() {
   )
 }
 
-function ErrorLine({ onRetry }: { onRetry: () => void }) {
-  return (
-    <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background/40 px-3 py-2">
-      <p className="text-xs text-muted-foreground">Feed unavailable — retrying…</p>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        className="h-7 px-2 text-xs text-primary hover:text-primary"
-        onClick={onRetry}
-      >
-        Retry
-      </Button>
-    </div>
-  )
-}
-
 // -------------------------------------------------------------- track dialog
 
 /**
@@ -200,6 +154,25 @@ function TrackDialog({
   const requestable =
     !!entry && entry.elementKind === 'MUSIC' && !['Imaging', 'Talk'].includes(entry.playlist)
   const hue = entry ? hueForRightsId(entry.rightsId) : 32
+  const { ids, toggle } = useFavorites()
+  const isFav = !!entry && ids.has(entry.id)
+
+  const handleHeart = () => {
+    if (!entry) return
+    const added = toggle({
+      id: entry.id,
+      title: entry.title,
+      artist: entry.artist,
+      rightsId: entry.rightsId,
+    })
+    if (added) {
+      toast.success(`Saved to My Waves — “${entry.title}”`, {
+        description: 'We\'ll toast you when it hits the wheel.',
+      })
+    } else {
+      toast(`Removed from My Waves`, { description: entry.title })
+    }
+  }
 
   const handleRequest = () => {
     if (!entry) return
@@ -274,18 +247,38 @@ function TrackDialog({
             </dl>
 
             <DialogFooter className="gap-2 sm:justify-between">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  onClose()
-                  onNavigate('rights')
-                }}
-              >
-                <ShieldCheck aria-hidden="true" />
-                Rights ledger
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleHeart}
+                  aria-pressed={isFav}
+                  aria-label={isFav ? `Remove ${entry.title} from My Waves` : `Save ${entry.title} to My Waves`}
+                  className={cn(
+                    'gap-1.5 transition-colors',
+                    isFav && 'border-red-500/40 text-red-400 hover:border-red-500/60 hover:text-red-300',
+                  )}
+                >
+                  <Heart
+                    className={cn('h-4 w-4', isFav && 'fill-red-400 text-red-400')}
+                    aria-hidden="true"
+                  />
+                  {isFav ? 'Saved' : 'My Waves'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    onClose()
+                    onNavigate('rights')
+                  }}
+                >
+                  <ShieldCheck aria-hidden="true" />
+                  Rights ledger
+                </Button>
+              </div>
               {requestable ? (
                 <Button type="button" size="sm" onClick={handleRequest}>
                   <Flame aria-hidden="true" />
@@ -301,6 +294,53 @@ function TrackDialog({
         )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+// -------------------------------------------------------- favorite heart btn
+
+/**
+ * FavoriteHeartButton — one heart, three surfaces (recent list, now-playing
+ * overlay, track dialog). Filled red when saved; reveals on hover in the
+ * recent list so the rows stay quiet.
+ */
+function FavoriteHeartButton({
+  track,
+  alwaysVisible = false,
+}: {
+  track: { id: string; title: string; artist: string; rightsId: string }
+  alwaysVisible?: boolean
+}) {
+  const { ids, toggle } = useFavorites()
+  const isFav = ids.has(track.id)
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      key={String(isFav)}
+      onClick={() => {
+        const added = toggle(track)
+        if (added) {
+          toast.success(`Saved to My Waves — “${track.title}”`, {
+            description: 'We\'ll toast you when it hits the wheel.',
+          })
+        } else {
+          toast(`Removed from My Waves`, { description: track.title })
+        }
+      }}
+      aria-pressed={isFav}
+      aria-label={isFav ? `Remove ${track.title} from My Waves` : `Save ${track.title} to My Waves`}
+      className={cn(
+        'h-7 w-7 shrink-0 text-muted-foreground transition-all hover:bg-red-500/10 hover:text-red-400 md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100',
+        (isFav || alwaysVisible) && 'opacity-100 md:opacity-100',
+      )}
+    >
+      <Heart
+        className={cn('h-3.5 w-3.5', isFav && 'fill-red-400 text-red-400 animate-heart-pop')}
+        aria-hidden="true"
+      />
+    </Button>
   )
 }
 
@@ -328,11 +368,20 @@ export function OnAirSection({ onNavigate }: { onNavigate: (tab: string) => void
         <RecentlyPlayedCard trackKey={data?.current.track.id} onSelect={setDialogEntry} />
       </FadeIn>
 
-      <FadeIn delay={0.18}>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <FadeIn delay={0.17} className="lg:col-span-2">
+          <WaveChartCard />
+        </FadeIn>
+        <FadeIn delay={0.19}>
+          <MyWavesCard />
+        </FadeIn>
+      </div>
+
+      <FadeIn delay={0.2}>
         <RequestLine />
       </FadeIn>
 
-      <FadeIn delay={0.2}>
+      <FadeIn delay={0.22}>
         <StatsStrip />
       </FadeIn>
 
@@ -402,6 +451,8 @@ function Hero({
           className="absolute inset-0 bg-gradient-to-r from-background via-background/70 to-background/30"
           aria-hidden="true"
         />
+        {/* broadcast grain — keeps the photo from banding on dark surfaces */}
+        <div className="bg-noise absolute inset-0 opacity-[0.06]" aria-hidden="true" />
         <div className="relative p-6 sm:p-10">
           <div className="flex flex-wrap items-center gap-3">
             <Image
@@ -691,6 +742,7 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
               className="absolute inset-0 bg-gradient-to-t from-background/95 via-background/30 to-background/10"
               aria-hidden="true"
             />
+            <div className="bg-noise absolute inset-0 opacity-[0.05]" aria-hidden="true" />
 
             {/* element stamp */}
             {kind !== 'MUSIC' && (
@@ -764,26 +816,13 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
               )}
             </div>
 
-            {/* big EQ strip along the bottom */}
+            {/* big spectrum strip along the bottom — REAL audio: driven by the
+                studio-preview synth's master-chain analyser, not a keyframe */}
             <div
-              className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-center gap-1 px-6 pb-1 opacity-70"
+              className="pointer-events-none absolute inset-x-0 bottom-0 h-12 px-6 pb-1 opacity-80 sm:h-14"
               aria-hidden="true"
             >
-              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23].map(
-                (i) => {
-                  const height = 8 + ((i * 7919) % 44)
-                  return (
-                    <span
-                      key={i}
-                      className={cn('w-1 rounded-sm bg-primary/80', isPlaying && 'eq-bar')}
-                      style={{
-                        height: isPlaying ? `${height}px` : '6px',
-                        animationDelay: `${((i % 9) * 0.09).toFixed(2)}s`,
-                      }}
-                    />
-                  )
-                }
-              )}
+              <SpectrumCanvas active={isPlaying} bars={40} />
             </div>
 
             {/* title overlay */}
@@ -828,9 +867,12 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
                     </>
                   )}
                 </div>
-                <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                  -{fmtTime(remaining)}
-                </span>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {kind === 'MUSIC' && <FavoriteHeartButton track={track} alwaysVisible />}
+                  <span className="font-mono text-xs text-muted-foreground">
+                    -{fmtTime(remaining)}
+                  </span>
+                </div>
               </div>
             </div>
           </div>
@@ -1074,6 +1116,7 @@ function RecentlyPlayedCard({
                     <p className="truncate text-xs text-muted-foreground">{play.track.artist}</p>
                   </div>
                 </button>
+                <FavoriteHeartButton track={play.track} />
                 <Badge
                   variant="outline"
                   className="hidden shrink-0 border-border/70 text-[10px] text-muted-foreground md:inline-flex"
@@ -1097,6 +1140,17 @@ function RecentlyPlayedCard({
 
 // -------------------------------------------------------------- live stats
 
+function AnimatedStat({
+  value,
+  format = (n: number) => Math.round(n).toLocaleString(),
+}: {
+  value: number
+  format?: (n: number) => string
+}) {
+  const animated = useCountUp(value)
+  return <>{format(animated)}</>
+}
+
 function StatsStrip() {
   const { data, error, retry } = useJson<StatsResponse>('/api/stats')
   const { data: listenerHistory } = useJson<ListenersHistoryResponse>('/api/listeners/history')
@@ -1107,28 +1161,32 @@ function StatsStrip() {
         {
           icon: Users,
           label: 'Listeners Now',
-          value: data.listeners.current.toLocaleString(),
+          value: <AnimatedStat value={data.listeners.current} />,
           sub: 'listener trend · last 24h',
           spark: true,
         },
         {
           icon: TrendingUp,
           label: 'Peak 24h',
-          value: data.listeners.peak24h.toLocaleString(),
+          value: <AnimatedStat value={data.listeners.peak24h} />,
           sub: 'evening peak · ~8 PM ET',
           spark: false,
         },
         {
           icon: ShieldCheck,
           label: 'Cleared Tracks',
-          value: `${data.library.cleared}/${data.library.tracks}`,
-          sub: 'rights gate enforced',
+          value: (
+            <>
+              <AnimatedStat value={data.library.cleared} />/{data.library.tracks}
+            </>
+          ),
+          sub: 'every spin rights-checked',
           spark: false,
         },
         {
           icon: Disc3,
           label: 'Programming',
-          value: `${data.library.totalHours} hrs`,
+          value: <AnimatedStat value={data.library.totalHours} format={(n) => `${n.toFixed(1)} hrs`} />,
           sub: 'on the AutoDJ wheel',
           spark: false,
         },

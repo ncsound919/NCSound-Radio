@@ -50,6 +50,7 @@ export class SynthEngine {
   private ctx: AudioContext | null = null
   private bus: GainNode | null = null
   private master: GainNode | null = null
+  private analyser: AnalyserNode | null = null
   private noise: AudioBuffer | null = null
   private sources = new Set<AudioScheduledSourceNode>()
   private timer: ReturnType<typeof setInterval> | null = null
@@ -60,6 +61,23 @@ export class SynthEngine {
 
   get isRunning(): boolean {
     return this.running
+  }
+
+  /**
+   * The master-chain analyser — drives the on-air spectrum visualizer.
+   * Null while the engine has never started (or is torn down).
+   */
+  getAnalyser(): AnalyserNode | null {
+    return this.analyser
+  }
+
+  /** True when a live AudioContext is currently rendering audio. */
+  isActive(): boolean {
+    try {
+      return this.running && this.ctx?.state === 'running'
+    } catch {
+      return false
+    }
   }
 
   /** Must be called from a user gesture path. Creates/resumes the AudioContext. */
@@ -109,8 +127,12 @@ export class SynthEngine {
       try {
         this.master?.disconnect()
       } catch {}
+      try {
+        this.analyser?.disconnect()
+      } catch {}
       this.bus = null
       this.master = null
+      this.analyser = null
       try {
         void this.ctx?.suspend()
       } catch {}
@@ -148,15 +170,23 @@ export class SynthEngine {
     const master = ctx.createGain()
     master.gain.value = this.volume * MASTER_CEILING
 
+    // Spectrum tap: analyser AFTER the master gain so the visualizer tracks
+    // what the listener actually hears (volume drops also calm the bars).
+    const analyser = ctx.createAnalyser()
+    analyser.fftSize = 128
+    analyser.smoothingTimeConstant = 0.78
+
     const bus = ctx.createGain()
     bus.gain.value = 1
 
     bus.connect(warm)
     warm.connect(master)
-    master.connect(ctx.destination)
+    master.connect(analyser)
+    analyser.connect(ctx.destination)
 
     this.bus = bus
     this.master = master
+    this.analyser = analyser
   }
 
   private makeNoiseBuffer(ctx: AudioContext): AudioBuffer {

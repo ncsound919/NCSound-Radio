@@ -1,0 +1,1279 @@
+     1→'use client'
+     2→
+     3→import { useCallback, useEffect, useState, type ReactNode } from 'react'
+     4→import Image from 'next/image'
+     5→import { motion } from 'framer-motion'
+     6→import {
+     7→  ArrowRight,
+     8→  CalendarClock,
+     9→  Disc3,
+    10→  Flame,
+    11→  Gauge,
+    12→  Heart,
+    13→  History,
+    14→  ListMusic,
+    15→  Megaphone,
+    16→  MessageSquare,
+    17→  MessageSquareQuote,
+    18→  Mic,
+    19→  Pause,
+    20→  Play,
+    21→  Radio,
+    22→  Share2,
+    23→  ShieldCheck,
+    24→  Sun,
+    25→  TrendingUp,
+    26→  Upload,
+    27→  Users,
+    28→} from 'lucide-react'
+    29→import { toast } from 'sonner'
+    30→import { Badge } from '@/components/ui/badge'
+    31→import { Button } from '@/components/ui/button'
+    32→import {
+    33→  Card,
+    34→  CardContent,
+    35→  CardDescription,
+    36→  CardHeader,
+    37→  CardTitle,
+    38→} from '@/components/ui/card'
+    39→import {
+    40→  Dialog,
+    41→  DialogContent,
+    42→  DialogDescription,
+    43→  DialogFooter,
+    44→  DialogHeader,
+    45→  DialogTitle,
+    46→} from '@/components/ui/dialog'
+    47→import { Progress } from '@/components/ui/progress'
+    48→import { Skeleton } from '@/components/ui/skeleton'
+    49→import { LiveChat } from '@/components/sections/live-chat'
+    50→import { RequestLine, REQUEST_PREFILL_EVENT } from '@/components/station/request-line'
+    51→import { useNowPlaying } from '@/hooks/use-nowplaying'
+    52→import { useStationPlayer } from '@/hooks/use-station-player'
+    53→import { shareStation } from '@/lib/share'
+    54→import type {
+    55→  HistoryResponse,
+    56→  ListenersHistoryResponse,
+    57→  NowPlayingResponse,
+    58→  QueueEntry,
+    59→  SponsorsResponse,
+    60→  StatsResponse,
+    61→} from '@/lib/station-types'
+    62→import { cn } from '@/lib/utils'
+    63→import { Sparkline } from '@/components/station/sparkline'
+    64→
+    65→// ------------------------------------------------------------------ helpers
+    66→
+    67→function hashString(s: string): number {
+    68→  let h = 5381
+    69→  for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0
+    70→  return h
+    71→}
+    72→
+    73→/** Deterministic art hue from the rights ID — amber/red family only (20..45). */
+    74→function hueForRightsId(rightsId: string): number {
+    75→  return 20 + (hashString(rightsId) % 26)
+    76→}
+    77→
+    78→function fmtTime(sec: number): string {
+    79→  const s = Math.max(0, Math.round(sec))
+    80→  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+    81→}
+    82→
+    83→function timeAgo(playedAtMs: number, serverMs: number): string {
+    84→  const min = Math.floor(Math.max(0, serverMs - playedAtMs) / 60000)
+    85→  if (min < 1) return 'just now'
+    86→  if (min < 60) return `${min} min ago`
+    87→  const hrs = Math.floor(min / 60)
+    88→  if (hrs < 24) return `${hrs} hr${hrs === 1 ? '' : 's'} ago`
+    89→  return `${Math.floor(hrs / 24)} d ago`
+    90→}
+    91→
+    92→/** One-second local ticker for smooth progress interpolation between polls. */
+    93→function useNowTicker(intervalMs = 1000): number {
+    94→  const [now, setNow] = useState(() => Date.now())
+    95→  useEffect(() => {
+    96→    const id = setInterval(() => setNow(Date.now()), intervalMs)
+    97→    return () => clearInterval(id)
+    98→  }, [intervalMs])
+    99→  return now
+   100→}
+   101→
+   102→/** Interpolated on-air progress (0..1) between nowplaying polls. */
+   103→function useInterpolatedProgress(data: NowPlayingResponse | null, lastFetch: number): number {
+   104→  const now = useNowTicker()
+   105→  const duration = data?.current.duration ?? 0
+   106→  if (!data || lastFetch <= 0 || duration <= 0) return 0
+   107→  return Math.min(1, Math.max(0, data.current.progress + (now - lastFetch) / 1000 / duration))
+   108→}
+   109→
+   110→/** Tiny one-shot JSON fetcher with manual retry. */
+   111→function useJson<T>(url: string, extraKey?: string) {
+   112→  const [data, setData] = useState<T | null>(null)
+   113→  const [error, setError] = useState(false)
+   114→  const [attempt, setAttempt] = useState(0)
+   115→
+   116→  useEffect(() => {
+   117→    let cancelled = false
+   118→    const ctrl = new AbortController()
+   119→    const timeout = setTimeout(() => ctrl.abort(), 12000)
+   120→    fetch(url, { cache: 'no-store', signal: ctrl.signal })
+   121→      .then(async (res) => {
+   122→        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+   123→        return (await res.json()) as T
+   124→      })
+   125→      .then((json) => {
+   126→        if (!cancelled) {
+   127→          setData(json)
+   128→          setError(false)
+   129→        }
+   130→      })
+   131→      .catch(() => {
+   132→        if (!cancelled) setError(true)
+   133→      })
+   134→      .finally(() => clearTimeout(timeout))
+   135→    return () => {
+   136→      cancelled = true
+   137→      ctrl.abort()
+   138→      clearTimeout(timeout)
+   139→    }
+   140→  }, [url, extraKey, attempt])
+   141→
+   142→  const retry = useCallback(() => setAttempt((a) => a + 1), [])
+   143→  return { data, error, retry }
+   144→}
+   145→
+   146→function FadeIn({ children, delay = 0, className }: { children: ReactNode; delay?: number; className?: string }) {
+   147→  return (
+   148→    <motion.div
+   149→      initial={{ opacity: 0, y: 14 }}
+   150→      animate={{ opacity: 1, y: 0 }}
+   151→      transition={{ duration: 0.4, delay, ease: 'easeOut' }}
+   152→      className={className}
+   153→    >
+   154→      {children}
+   155→    </motion.div>
+   156→  )
+   157→}
+   158→
+   159→function OnAirPill() {
+   160→  return (
+   161→    <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/40 bg-red-500/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-red-400">
+   162→      <span className="animate-onair h-1.5 w-1.5 rounded-full bg-red-500" aria-hidden="true" />
+   163→      On Air
+   164→    </span>
+   165→  )
+   166→}
+   167→
+   168→function ErrorLine({ onRetry }: { onRetry: () => void }) {
+   169→  return (
+   170→    <div className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background/40 px-3 py-2">
+   171→      <p className="text-xs text-muted-foreground">Feed unavailable — retrying…</p>
+   172→      <Button
+   173→        type="button"
+   174→        variant="ghost"
+   175→        size="sm"
+   176→        className="h-7 px-2 text-xs text-primary hover:text-primary"
+   177→        onClick={onRetry}
+   178→      >
+   179→        Retry
+   180→      </Button>
+   181→    </div>
+   182→  )
+   183→}
+   184→
+   185→// -------------------------------------------------------------- track dialog
+   186→
+   187→/**
+   188→ * TrackDialog — detail sheet for any real spin (music / ID / talk). Music
+   189→ * tracks deep-link into the request line; imaging/talk link to their ledger.
+   190→ */
+   191→function TrackDialog({
+   192→  entry,
+   193→  onClose,
+   194→  onNavigate,
+   195→}: {
+   196→  entry: QueueEntry | null
+   197→  onClose: () => void
+   198→  onNavigate: (tab: string) => void
+   199→}) {
+   200→  const requestable =
+   201→    !!entry && entry.elementKind === 'MUSIC' && !['Imaging', 'Talk'].includes(entry.playlist)
+   202→  const hue = entry ? hueForRightsId(entry.rightsId) : 32
+   203→
+   204→  const handleRequest = () => {
+   205→    if (!entry) return
+   206→    window.dispatchEvent(
+   207→      new CustomEvent(REQUEST_PREFILL_EVENT, { detail: { trackId: entry.id } }),
+   208→    )
+   209→    toast.success(`“${entry.title}” is staged in the request line — add your name and send it.`)
+   210→    onClose()
+   211→    document
+   212→      .getElementById('request-line')
+   213→      ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+   214→  }
+   215→
+   216→  return (
+   217→    <Dialog open={!!entry} onOpenChange={(open) => !open && onClose()}>
+   218→      <DialogContent className="max-w-md gap-4">
+   219→        {entry && (
+   220→          <>
+   221→            <DialogHeader>
+   222→              <DialogTitle className="flex items-center gap-2 pr-6 text-lg">
+   223→                <Disc3 className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+   224→                <span className="truncate">{entry.title}</span>
+   225→              </DialogTitle>
+   226→              <DialogDescription className="truncate">
+   227→                {entry.artist}
+   228→                {entry.album ? ` — ${entry.album}` : ''}
+   229→              </DialogDescription>
+   230→            </DialogHeader>
+   231→
+   232→            <div
+   233→              className="relative h-24 overflow-hidden rounded-lg border border-border/60"
+   234→              style={{ backgroundColor: `oklch(0.55 0.19 ${hue} / 0.35)` }}
+   235→              aria-hidden="true"
+   236→            >
+   237→              <div className="absolute inset-0 flex items-end justify-center gap-1 px-4 pb-2 opacity-80">
+   238→                {Array.from({ length: 28 }, (_, i) => (
+   239→                  <span
+   240→                    key={i}
+   241→                    className="w-1 rounded-sm bg-background/80"
+   242→                    style={{ height: `${8 + ((i * 7919) % 48)}px` }}
+   243→                  />
+   244→                ))}
+   245→              </div>
+   246→              <span className="absolute left-3 top-3 rounded-sm bg-background/70 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-widest text-foreground">
+   247→                {entry.elementKind === 'MUSIC' ? 'Music' : entry.elementKind === 'TALK' ? 'Talk' : 'Station ID'}
+   248→              </span>
+   249→            </div>
+   250→
+   251→            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+   252→              <div>
+   253→                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Playlist</dt>
+   254→                <dd className="font-medium">{entry.playlist}</dd>
+   255→              </div>
+   256→              <div>
+   257→                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Duration</dt>
+   258→                <dd className="font-mono">{fmtTime(entry.durationSec)}</dd>
+   259→              </div>
+   260→              <div>
+   261→                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Rights ID</dt>
+   262→                <dd className="font-mono text-primary">{entry.rightsId}</dd>
+   263→              </div>
+   264→              <div>
+   265→                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Explicit</dt>
+   266→                <dd className="font-medium">{entry.explicit ? 'E — held 6a–7p ET' : 'Clean'}</dd>
+   267→              </div>
+   268→              {entry.bpm !== null && (
+   269→                <div>
+   270→                  <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">BPM</dt>
+   271→                  <dd className="font-mono">{entry.bpm}</dd>
+   272→                </div>
+   273→              )}
+   274→            </dl>
+   275→
+   276→            <DialogFooter className="gap-2 sm:justify-between">
+   277→              <Button
+   278→                type="button"
+   279→                variant="outline"
+   280→                size="sm"
+   281→                onClick={() => {
+   282→                  onClose()
+   283→                  onNavigate('rights')
+   284→                }}
+   285→              >
+   286→                <ShieldCheck aria-hidden="true" />
+   287→                Rights ledger
+   288→              </Button>
+   289→              {requestable ? (
+   290→                <Button type="button" size="sm" onClick={handleRequest}>
+   291→                  <Flame aria-hidden="true" />
+   292→                  Request this track
+   293→                </Button>
+   294→              ) : (
+   295→                <span className="self-center text-xs text-muted-foreground">
+   296→                  Station content — not requestable
+   297→                </span>
+   298→              )}
+   299→            </DialogFooter>
+   300→          </>
+   301→        )}
+   302→      </DialogContent>
+   303→    </Dialog>
+   304→  )
+   305→}
+   306→
+   307→// --------------------------------------------------------------------- main
+   308→
+   309→export function OnAirSection({ onNavigate }: { onNavigate: (tab: string) => void }) {
+   310→  const { data, error, lastFetch } = useNowPlaying()
+   311→  const progress = useInterpolatedProgress(data, lastFetch)
+   312→  const [dialogEntry, setDialogEntry] = useState<QueueEntry | null>(null)
+   313→
+   314→  return (
+   315→    <div className="space-y-6">
+   316→      <Hero data={data} npError={error} onNavigate={onNavigate} />
+   317→
+   318→      <div className="grid gap-6 lg:grid-cols-3">
+   319→        <FadeIn delay={0.05} className="lg:col-span-2">
+   320→          <NowPlayingCard data={data} progress={progress} />
+   321→        </FadeIn>
+   322→        <FadeIn delay={0.1}>
+   323→          <UpNextCard data={data} onSelect={setDialogEntry} />
+   324→        </FadeIn>
+   325→      </div>
+   326→
+   327→      <FadeIn delay={0.15}>
+   328→        <RecentlyPlayedCard trackKey={data?.current.track.id} onSelect={setDialogEntry} />
+   329→      </FadeIn>
+   330→
+   331→      <FadeIn delay={0.18}>
+   332→        <RequestLine />
+   333→      </FadeIn>
+   334→
+   335→      <FadeIn delay={0.2}>
+   336→        <StatsStrip />
+   337→      </FadeIn>
+   338→
+   339→      <FadeIn delay={0.25}>
+   340→        <StudioLineCard />
+   341→      </FadeIn>
+   342→
+   343→      <FadeIn delay={0.3}>
+   344→        <SponsorTicker onNavigate={onNavigate} />
+   345→      </FadeIn>
+   346→
+   347→      <FadeIn delay={0.35}>
+   348→        <TrustNote onNavigate={onNavigate} />
+   349→      </FadeIn>
+   350→
+   351→      <TrackDialog
+   352→        entry={dialogEntry}
+   353→        onClose={() => setDialogEntry(null)}
+   354→        onNavigate={onNavigate}
+   355→      />
+   356→    </div>
+   357→  )
+   358→}
+   359→
+   360→// --------------------------------------------------------------------- hero
+   361→
+   362→function Hero({
+   363→  data,
+   364→  npError,
+   365→  onNavigate,
+   366→}: {
+   367→  data: NowPlayingResponse | null
+   368→  npError: string | null
+   369→  onNavigate: (tab: string) => void
+   370→}) {
+   371→  const isPlaying = useStationPlayer((s) => s.isPlaying)
+   372→  const toggle = useStationPlayer((s) => s.toggle)
+   373→
+   374→  const chips = [
+   375→    { icon: Gauge, label: '128 kbps AAC' },
+   376→    { icon: ShieldCheck, label: 'Rights-cleared library' },
+   377→    data?.daypart
+   378→      ? {
+   379→          icon: Sun,
+   380→          label: data.daypart.clean
+   381→            ? 'Clean Daypart · 6a–7p ET'
+   382→            : 'Open rotations · full library',
+   383→        }
+   384→      : { icon: Heart, label: 'Listener-supported' },
+   385→  ]
+   386→
+   387→  return (
+   388→    <FadeIn>
+   389→      <section
+   390→        aria-label="Station introduction"
+   391→        className="relative overflow-hidden rounded-xl border border-border/60"
+   392→      >
+   393→        <Image
+   394→          src="/station-hero.jpg"
+   395→          alt="Inside the WAVC 91.3 broadcast studio"
+   396→          fill
+   397→          priority
+   398→          sizes="(max-width: 1280px) 100vw, 1280px"
+   399→          className="object-cover opacity-60"
+   400→        />
+   401→        <div
+   402→          className="absolute inset-0 bg-gradient-to-r from-background via-background/70 to-background/30"
+   403→          aria-hidden="true"
+   404→        />
+   405→        <div className="relative p-6 sm:p-10">
+   406→          <div className="flex flex-wrap items-center gap-3">
+   407→            <Image
+   408→              src="/station-logo.png"
+   409→              alt=""
+   410→              width={40}
+   411→              height={40}
+   412→              className="animate-float-slow h-10 w-10 rounded-md"
+   413→            />
+   414→            <h1 className="text-glow text-3xl font-extrabold tracking-tight sm:text-5xl">
+   415→              WAVC 91.3 FM
+   416→            </h1>
+   417→            <OnAirPill />
+   418→          </div>
+   419→
+   420→          <p className="mt-4 max-w-xl text-lg text-muted-foreground">
+   421→            The Carolinas&rsquo; independent hip-hop signal.
+   422→          </p>
+   423→
+   424→          {/* Scheduled-show takeover banner */}
+   425→          {data?.liveShow && (
+   426→            <div
+   427→              className={cn(
+   428→                'mt-4 flex max-w-2xl items-start gap-3 rounded-lg border px-4 py-3 backdrop-blur',
+   429→                data.liveShow.kind === 'LIVE'
+   430→                  ? 'border-red-500/40 bg-red-500/10'
+   431→                  : 'border-primary/40 bg-primary/10',
+   432→              )}
+   433→              role="status"
+   434→            >
+   435→              <span
+   436→                className={cn(
+   437→                  'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md',
+   438→                  data.liveShow.kind === 'LIVE' ? 'bg-red-500/20' : 'bg-primary/20',
+   439→                )}
+   440→                aria-hidden="true"
+   441→              >
+   442→                <Radio
+   443→                  className={cn(
+   444→                    'h-4 w-4',
+   445→                    data.liveShow.kind === 'LIVE' ? 'text-red-400' : 'text-primary',
+   446→                  )}
+   447→                />
+   448→              </span>
+   449→              <div className="min-w-0">
+   450→                <p className="flex flex-wrap items-center gap-2 text-sm font-bold">
+   451→                  <span
+   452→                    className={cn(
+   453→                      'inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-widest',
+   454→                      data.liveShow.kind === 'LIVE'
+   455→                        ? 'bg-red-500/25 text-red-300'
+   456→                        : 'bg-primary/20 text-primary',
+   457→                    )}
+   458→                  >
+   459→                    <span
+   460→                      className={cn(
+   461→                        'animate-onair h-1.5 w-1.5 rounded-full',
+   462→                        data.liveShow.kind === 'LIVE' ? 'bg-red-400' : 'bg-primary',
+   463→                      )}
+   464→                      aria-hidden="true"
+   465→                    />
+   466→                    {data.liveShow.kind === 'LIVE' ? 'Live now' : 'On air'}
+   467→                  </span>
+   468→                  {data.liveShow.name}
+   469→                  <span className="text-xs font-normal text-muted-foreground">
+   470→                    · {data.liveShow.minutesLeft}m left
+   471→                  </span>
+   472→                </p>
+   473→                <p className="truncate text-xs text-muted-foreground">
+   474→                  {data.liveShow.kind === 'LIVE' ? 'with' : 'hosted by'}{' '}
+   475→                  {data.liveShow.host} — {data.liveShow.description}
+   476→                </p>
+   477→              </div>
+   478→            </div>
+   479→          )}
+   480→
+   481→          <div className="mt-5 flex flex-wrap gap-2">
+   482→            {chips.map((chip) => (
+   483→              <span
+   484→                key={chip.label}
+   485→                className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-background/60 px-3 py-1 text-xs text-muted-foreground backdrop-blur"
+   486→              >
+   487→                <chip.icon className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
+   488→                {chip.label}
+   489→              </span>
+   490→            ))}
+   491→          </div>
+   492→
+   493→          <div className="mt-6 flex flex-wrap items-center gap-3">
+   494→            <Button
+   495→              type="button"
+   496→              size="lg"
+   497→              onClick={toggle}
+   498→              className="h-11 px-6 font-semibold"
+   499→              aria-label={isPlaying ? 'Pause the stream' : 'Listen live'}
+   500→            >
+   501→              {isPlaying ? (
+   502→                <Pause className="fill-current" aria-hidden="true" />
+   503→              ) : (
+   504→                <Play className="fill-current" aria-hidden="true" />
+   505→              )}
+   506→              {isPlaying ? 'Pause' : 'Listen Live'}
+   507→            </Button>
+   508→            <Button
+   509→              type="button"
+   510→              size="lg"
+   511→              variant="outline"
+   512→              onClick={() => onNavigate('submit')}
+   513→              className="h-11 px-6"
+   514→            >
+   515→              <Upload aria-hidden="true" />
+   516→              Submit Your Track
+   517→            </Button>
+   518→            <Button
+   519→              type="button"
+   520→              size="lg"
+   521→              variant="ghost"
+   522→              onClick={() => onNavigate('schedule')}
+   523→              className="h-11 px-4"
+   524→            >
+   525→              <CalendarClock aria-hidden="true" />
+   526→              Schedule
+   527→            </Button>
+   528→            <Button
+   529→              type="button"
+   530→              size="lg"
+   531→              variant="ghost"
+   532→              className="h-11 px-4"
+   533→              onClick={async () => {
+   534→                const result = await shareStation()
+   535→                if (result === 'copied') {
+   536→                  toast.success('Stream link copied — pass it on.')
+   537→                } else if (result === 'failed') {
+   538→                  toast.error('Could not share — copy wavc.fm from the address bar.')
+   539→                }
+   540→              }}
+   541→            >
+   542→              <Share2 aria-hidden="true" />
+   543→              Share
+   544→            </Button>
+   545→          </div>
+   546→
+   547→          <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground" aria-live="polite">
+   548→            <span className="animate-pulse h-2 w-2 rounded-full bg-red-500" aria-hidden="true" />
+   549→            {npError
+   550→              ? 'Listener feed reconnecting…'
+   551→              : data
+   552→                ? `${data.listeners.current.toLocaleString()} tuned in right now`
+   553→                : 'Scanning the dial…'}
+   554→          </p>
+   555→        </div>
+   556→      </section>
+   557→    </FadeIn>
+   558→  )
+   559→}
+   560→
+   561→// -------------------------------------------------------------- now playing
+   562→
+   563→function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; progress: number }) {
+   564→  const isPlaying = useStationPlayer((s) => s.isPlaying)
+   565→  const track = data?.current.track
+   566→  const duration = data?.current.duration ?? 0
+   567→  const remaining = Math.max(0, duration - progress * duration)
+   568→  const hue = track ? hueForRightsId(track.rightsId) : 32
+   569→  const kind = data?.element?.kind ?? 'MUSIC'
+   570→  const isSponsorSpot = kind === 'AD_SPOT' && Boolean(data?.element?.sponsorName)
+   571→  const isHousePromo = kind === 'AD_SPOT' && !data?.element?.sponsorName
+   572→  const isTalk = kind === 'TALK'
+   573→  const live = data?.liveShow ?? null
+   574→  const liveIsShow = live?.kind === 'LIVE'
+   575→  const daypartNote = data?.daypart
+   576→    ? data.daypart.clean
+   577→      ? 'Clean Daypart — explicit lyrics held until 7:00 PM ET'
+   578→      : 'Open rotations — full cleared library on the wheel'
+   579→    : 'Deterministic AutoDJ rotation — rights gate enforced'
+   580→
+   581→  return (
+   582→    <Card
+   583→      className={cn(
+   584→        'bg-card/70 transition-shadow duration-500',
+   585→        live
+   586→          ? liveIsShow
+   587→            ? 'border-red-500/50 shadow-[0_0_44px_-14px_rgba(239,68,68,0.55)]'
+   588→            : 'border-primary/50 shadow-[0_0_44px_-14px_rgba(245,158,11,0.5)]'
+   589→          : 'border-border/60',
+   590→      )}
+   591→    >
+   592→      <CardHeader>
+   593→        <CardTitle className="flex flex-wrap items-center gap-2 text-base font-semibold">
+   594→          <Disc3
+   595→            className={cn('h-4 w-4 text-primary', isPlaying && 'animate-vinyl')}
+   596→            aria-hidden="true"
+   597→          />
+   598→          Now Playing
+   599→          {live && (
+   600→            <span
+   601→              className={cn(
+   602→                'inline-flex items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-[0.2em]',
+   603→                liveIsShow ? 'bg-red-500/20 text-red-300' : 'bg-primary/15 text-primary',
+   604→              )}
+   605→            >
+   606→              <span
+   607→                className={cn(
+   608→                  'animate-onair h-1.5 w-1.5 rounded-full',
+   609→                  liveIsShow ? 'bg-red-400' : 'bg-primary',
+   610→                )}
+   611→                aria-hidden="true"
+   612→              />
+   613→              {liveIsShow ? 'Live show' : 'Playlist hour'}
+   614→            </span>
+   615→          )}
+   616→        </CardTitle>
+   617→        <CardDescription>
+   618→          {live
+   619→            ? `${live.name} — ${live.host} · ${live.minutesLeft}m left, then back to the wheel`
+   620→            : daypartNote}
+   621→        </CardDescription>
+   622→      </CardHeader>
+   623→      <CardContent>
+   624→        {!data || !track ? (
+   625→          <Skeleton className="aspect-video w-full rounded-lg" aria-label="Loading now playing" />
+   626→        ) : (
+   627→          <div
+   628→            className={cn(
+   629→              'relative aspect-video overflow-hidden rounded-lg border',
+   630→              live
+   631→                ? liveIsShow
+   632→                  ? 'border-red-500/50'
+   633→                  : 'border-primary/50'
+   634→                : 'border-border/60',
+   635→            )}
+   636→          >
+   637→            <Image
+   638→              src="/station-texture.jpg"
+   639→              alt=""
+   640→              fill
+   641→              priority
+   642→              sizes="(max-width: 1024px) 100vw, 768px"
+   643→              className="object-cover"
+   644→            />
+   645→            {/* live-show broadcast bug — top strip like a TV station lower-third */}
+   646→            {live && (
+   647→              <div
+   648→                className={cn(
+   649→                  'absolute inset-x-0 top-0 z-10 flex items-center gap-2 bg-gradient-to-b from-background/95 to-transparent px-3 pb-4 pt-2 backdrop-blur-[2px] sm:px-4',
+   650→                  liveIsShow ? 'from-red-950/80' : 'from-amber-950/70',
+   651→                )}
+   652→                role="status"
+   653→              >
+   654→                <span
+   655→                  className={cn(
+   656→                    'animate-onair h-2 w-2 shrink-0 rounded-full',
+   657→                    liveIsShow ? 'bg-red-500' : 'bg-primary',
+   658→                  )}
+   659→                  aria-hidden="true"
+   660→                />
+   661→                <span
+   662→                  className={cn(
+   663→                    'truncate text-[10px] font-extrabold uppercase tracking-[0.22em] sm:text-[11px]',
+   664→                    liveIsShow ? 'text-red-300' : 'text-primary',
+   665→                  )}
+   666→                >
+   667→                  {liveIsShow ? 'Live' : 'Playlist hour'} — {live.name}
+   668→                  <span className="ml-2 hidden font-semibold normal-case tracking-normal text-muted-foreground sm:inline">
+   669→                    {liveIsShow ? 'with' : 'hosted by'} {live.host} · {live.minutesLeft}m left
+   670→                  </span>
+   671→                </span>
+   672→              </div>
+   673→            )}
+   674→            {/* element wash: music = deterministic hue · ID = neutral · ad = amber/red */}
+   675→            <div
+   676→              className="absolute inset-0"
+   677→              style={{
+   678→                backgroundColor: isSponsorSpot
+   679→                  ? 'oklch(0.62 0.17 40 / 0.68)'
+   680→                  : isHousePromo
+   681→                    ? 'oklch(0.35 0.03 80 / 0.82)'
+   682→                    : kind === 'STATION_ID'
+   683→                      ? 'oklch(0.42 0.02 80 / 0.78)'
+   684→                      : isTalk
+   685→                        ? 'oklch(0.5 0.12 70 / 0.6)'
+   686→                        : `oklch(0.55 0.19 ${hue} / 0.55)`,
+   687→              }}
+   688→              aria-hidden="true"
+   689→            />
+   690→            <div
+   691→              className="absolute inset-0 bg-gradient-to-t from-background/95 via-background/30 to-background/10"
+   692→              aria-hidden="true"
+   693→            />
+   694→
+   695→            {/* element stamp */}
+   696→            {kind !== 'MUSIC' && (
+   697→              <div className="absolute right-3 top-3 flex items-center gap-1.5">
+   698→                {isSponsorSpot ? (
+   699→                  <span className="inline-flex items-center gap-1 rounded-sm border border-red-400/50 bg-red-500/25 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-red-100 backdrop-blur">
+   700→                    <Megaphone className="h-3 w-3" aria-hidden="true" />
+   701→                    Ad Break
+   702→                  </span>
+   703→                ) : isHousePromo ? (
+   704→                  <span className="inline-flex items-center gap-1 rounded-sm border border-border/60 bg-background/70 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-muted-foreground backdrop-blur">
+   705→                    <Megaphone className="h-3 w-3" aria-hidden="true" />
+   706→                    House Promo
+   707→                  </span>
+   708→                ) : isTalk ? (
+   709→                  <span className="inline-flex items-center gap-1 rounded-sm border border-amber-400/50 bg-amber-500/25 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-amber-100 backdrop-blur">
+   710→                    <MessageSquareQuote className="h-3 w-3" aria-hidden="true" />
+   711→                    Spotlight
+   712→                  </span>
+   713→                ) : (
+   714→                  <span className="inline-flex items-center gap-1 rounded-sm border border-primary/50 bg-primary/20 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-primary backdrop-blur">
+   715→                    <Mic className="h-3 w-3" aria-hidden="true" />
+   716→                    Station ID
+   717→                  </span>
+   718→                )}
+   719→              </div>
+   720→            )}
+   721→
+   722→            {/* metadata chips */}
+   723→            <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
+   724→              {kind === 'MUSIC' && (
+   725→                <>
+   726→                  <Badge
+   727→                    variant="outline"
+   728→                    className="border-border/70 bg-background/70 text-[10px] backdrop-blur"
+   729→                  >
+   730→                    {track.playlist}
+   731→                  </Badge>
+   732→                  <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
+   733→                    {track.rightsId}
+   734→                  </span>
+   735→                  {track.bpm !== null && (
+   736→                    <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
+   737→                      {track.bpm} BPM
+   738→                    </span>
+   739→                  )}
+   740→                  {track.explicit && (
+   741→                    <span
+   742→                      title="Explicit lyrics"
+   743→                      className="rounded border border-red-500/40 bg-red-500/15 px-1.5 py-0.5 text-[10px] font-bold text-red-400"
+   744→                    >
+   745→                      E
+   746→                    </span>
+   747→                  )}
+   748→                </>
+   749→              )}
+   750→              {kind === 'STATION_ID' && (
+   751→                <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
+   752→                  {track.rightsId}
+   753→                </span>
+   754→              )}
+   755→              {isTalk && (
+   756→                <span className="rounded border border-amber-400/50 bg-background/70 px-1.5 py-0.5 text-[10px] font-semibold text-amber-500 backdrop-blur">
+   757→                  Produced in-house · talk segment
+   758→                </span>
+   759→              )}
+   760→              {isSponsorSpot && (
+   761→                <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
+   762→                  ADSPOT · proof-of-play logged
+   763→                </span>
+   764→              )}
+   765→            </div>
+   766→
+   767→            {/* big EQ strip along the bottom */}
+   768→            <div
+   769→              className="pointer-events-none absolute inset-x-0 bottom-0 flex items-end justify-center gap-1 px-6 pb-1 opacity-70"
+   770→              aria-hidden="true"
+   771→            >
+   772→              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23].map(
+   773→                (i) => {
+   774→                  const height = 8 + ((i * 7919) % 44)
+   775→                  return (
+   776→                    <span
+   777→                      key={i}
+   778→                      className={cn('w-1 rounded-sm bg-primary/80', isPlaying && 'eq-bar')}
+   779→                      style={{
+   780→                        height: isPlaying ? `${height}px` : '6px',
+   781→                        animationDelay: `${((i % 9) * 0.09).toFixed(2)}s`,
+   782→                      }}
+   783→                    />
+   784→                  )
+   785→                }
+   786→              )}
+   787→            </div>
+   788→
+   789→            {/* title overlay */}
+   790→            <div className="absolute inset-x-0 bottom-0 p-4 pb-14 sm:p-5 sm:pb-16">
+   791→              <Progress
+   792→                value={progress * 100}
+   793→                className="h-1"
+   794→                aria-label="On-air progress"
+   795→              />
+   796→              <div className="mt-2 flex items-end justify-between gap-3">
+   797→                <div className="min-w-0">
+   798→                  {kind === 'MUSIC' ? (
+   799→                    <>
+   800→                      <h3 className="truncate text-2xl font-bold">{track.title}</h3>
+   801→                      <p className="truncate text-sm text-muted-foreground">{track.artist}</p>
+   802→                    </>
+   803→                  ) : isSponsorSpot ? (
+   804→                    <>
+   805→                      <h3 className="truncate text-2xl font-bold">
+   806→                        {data?.element?.sponsorName}
+   807→                      </h3>
+   808→                      <p className="truncate text-sm text-muted-foreground">
+   809→                        {data?.element?.creativeName} — paid sponsor spot
+   810→                      </p>
+   811→                    </>
+   812→                  ) : isHousePromo ? (
+   813→                    <>
+   814→                      <h3 className="truncate text-2xl font-bold">House Promo</h3>
+   815→                      <p className="truncate text-sm text-muted-foreground">
+   816→                        {data?.element?.creativeName ?? 'Unsold inventory — your brand could be here'}
+   817→                      </p>
+   818→                    </>
+   819→                  ) : isTalk ? (
+   820→                    <>
+   821→                      <h3 className="truncate text-xl font-bold">Spotlight</h3>
+   822→                      <p className="truncate text-sm text-muted-foreground">{track.title}</p>
+   823→                    </>
+   824→                  ) : (
+   825→                    <>
+   826→                      <h3 className="truncate text-xl font-bold">{track.title}</h3>
+   827→                      <p className="truncate text-sm text-muted-foreground">{track.artist}</p>
+   828→                    </>
+   829→                  )}
+   830→                </div>
+   831→                <span className="shrink-0 font-mono text-xs text-muted-foreground">
+   832→                  -{fmtTime(remaining)}
+   833→                </span>
+   834→              </div>
+   835→            </div>
+   836→          </div>
+   837→        )}
+   838→      </CardContent>
+   839→    </Card>
+   840→  )
+   841→}
+   842→
+   843→// ----------------------------------------------------------------- up next
+   844→
+   845→function UpNextCard({
+   846→  data,
+   847→  onSelect,
+   848→}: {
+   849→  data: NowPlayingResponse | null
+   850→  onSelect: (entry: QueueEntry) => void
+   851→}) {
+   852→  const duration = data?.current.duration ?? 0
+   853→  const remaining = data?.current.remaining ?? 0
+   854→  const toNextPct = duration > 0 ? Math.min(100, Math.max(0, ((duration - remaining) / duration) * 100)) : 0
+   855→  const cueing = remaining <= 0
+   856→
+   857→  return (
+   858→    <Card className="border-border/60 bg-card/70">
+   859→      <CardHeader>
+   860→        <CardTitle className="flex items-center gap-2 text-base font-semibold">
+   861→          <ListMusic className="h-4 w-4 text-primary" aria-hidden="true" />
+   862→          Up Next
+   863→        </CardTitle>
+   864→        <CardDescription>AutoDJ program clock — music, IDs, ad breaks</CardDescription>
+   865→      </CardHeader>
+   866→      <CardContent className="space-y-3">
+   867→        {/* countdown to the next element — fills as the current one plays out */}
+   868→        <div className="rounded-md border border-border/50 bg-background/40 px-3 py-2">
+   869→          <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+   870→            <span>{cueing ? 'Cueing up next…' : 'Next spin in'}</span>
+   871→            <span
+   872→              className={cn(
+   873→                'font-mono',
+   874→                cueing ? 'animate-pulse text-red-400' : 'text-primary',
+   875→              )}
+   876→            >
+   877→              ~{fmtTime(remaining)}
+   878→            </span>
+   879→          </div>
+   880→          <Progress
+   881→            value={toNextPct}
+   882→            className={cn('mt-1.5 h-1', cueing && 'animate-pulse')}
+   883→            aria-label="Time until the next element"
+   884→          />
+   885→        </div>
+   886→
+   887→        {!data ? (
+   888→          <div className="space-y-2">
+   889→            {[0, 1, 2].map((i) => (
+   890→              <Skeleton key={i} className="h-12 w-full rounded-md" />
+   891→            ))}
+   892→          </div>
+   893→        ) : data.next.length === 0 ? (
+   894→          <p className="py-6 text-center text-sm text-muted-foreground">Queue is empty.</p>
+   895→        ) : (
+   896→          <div className="space-y-1">
+   897→            {data.next.map((t, i) => {
+   898→              const heat = data.heat?.[t.id] ?? 0
+   899→              const requesters = data.requestedBy?.[t.id] ?? []
+   900→              const isId = t.elementKind === 'STATION_ID'
+   901→              const isAd = t.elementKind === 'AD_SPOT'
+   902→              const isTalk = t.elementKind === 'TALK'
+   903→              const isPseudo = isAd || t.id.startsWith('adspot-') || t.id.startsWith('fallback-')
+   904→              const RowTag = isPseudo ? 'div' : 'button'
+   905→              return (
+   906→                <RowTag
+   907→                  key={`${t.id}-${i}`}
+   908→                  {...(isPseudo
+   909→                    ? {}
+   910→                    : {
+   911→                        type: 'button' as const,
+   912→                        onClick: () => onSelect(t),
+   913→                        'aria-label': `Details for ${t.title}`,
+   914→                      })}
+   915→                  className={cn(
+   916→                    'flex w-full items-start gap-3 rounded-md border border-transparent px-2 py-2 text-left transition-colors hover:border-border hover:bg-accent/40',
+   917→                    isAd && 'bg-red-500/[0.04]',
+   918→                    (isId || isTalk) && 'border-dashed border-border/60 bg-background/30',
+   919→                  )}
+   920→                >
+   921→                  <span
+   922→                    className={cn(
+   923→                      'flex h-6 w-6 shrink-0 items-center justify-center rounded border font-mono text-[10px]',
+   924→                      isAd
+   925→                        ? 'border-red-500/40 bg-red-500/10 text-red-400'
+   926→                        : isId
+   927→                          ? 'border-primary/40 bg-primary/10 text-primary'
+   928→                          : isTalk
+   929→                            ? 'border-amber-500/40 bg-amber-500/10 text-amber-500'
+   930→                            : 'border-border bg-background/60 text-muted-foreground',
+   931→                    )}
+   932→                  >
+   933→                    {isAd ? (
+   934→                      <Megaphone className="h-3 w-3" aria-hidden="true" />
+   935→                    ) : isId ? (
+   936→                      <Mic className="h-3 w-3" aria-hidden="true" />
+   937→                    ) : isTalk ? (
+   938→                      <MessageSquareQuote className="h-3 w-3" aria-hidden="true" />
+   939→                    ) : (
+   940→                      i + 1
+   941→                    )}
+   942→                  </span>
+   943→                  <div className="min-w-0 flex-1">
+   944→                    <p
+   945→                      className={cn(
+   946→                        'truncate text-sm font-medium',
+   947→                        isAd && 'text-red-300',
+   948→                      )}
+   949→                    >
+   950→                      {t.title}
+   951→                    </p>
+   952→                    <p className="truncate text-xs text-muted-foreground">{t.artist}</p>
+   953→                    {t.elementKind === 'MUSIC' && requesters.length > 0 && (
+   954→                      <p className="mt-0.5 truncate text-[10px] text-amber-500/90">
+   955→                        shouted by {requesters.map((n) => `@${n}`).join(', ')}
+   956→                      </p>
+   957→                    )}
+   958→                  </div>
+   959→                  {heat > 0 && (
+   960→                    <span
+   961→                      title={`${heat} listener request${heat === 1 ? '' : 's'} this week — hot tracks jump the wheel`}
+   962→                      className="inline-flex shrink-0 items-center gap-0.5 rounded border border-red-500/30 bg-red-500/10 px-1 py-0.5 text-[10px] font-bold text-red-400"
+   963→                    >
+   964→                      <Flame className="h-3 w-3" aria-hidden="true" />
+   965→                      {heat}
+   966→                    </span>
+   967→                  )}
+   968→                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
+   969→                    {fmtTime(t.durationSec)}
+   970→                  </span>
+   971→                  <Badge
+   972→                    variant="outline"
+   973→                    className={cn(
+   974→                      'hidden shrink-0 border-border/70 text-[10px] font-medium text-muted-foreground sm:inline-flex',
+   975→                      isAd && 'border-red-500/30 text-red-400',
+   976→                      isTalk && 'border-amber-500/30 text-amber-500',
+   977→                    )}
+   978→                  >
+   979→                    {isAd
+   980→                      ? t.sponsorName
+   981→                        ? 'Sponsor Spot'
+   982→                        : 'House Promo'
+   983→                      : isTalk
+   984→                        ? 'Spotlight'
+   985→                        : t.playlist}
+   986→                  </Badge>
+   987→                </RowTag>
+   988→              )
+   989→            })}
+   990→          </div>
+   991→        )}
+   992→        <p className="text-[10px] leading-relaxed text-muted-foreground">
+   993→          Listener shouts bump the hottest tracks up the wheel — station IDs, spotlight segments
+   994→          and ad breaks air between blocks, per the program clock.
+   995→        </p>
+   996→      </CardContent>
+   997→    </Card>
+   998→  )
+   999→}
+  1000→
+  1001→// --------------------------------------------------------- recently played
+  1002→
+  1003→function RecentlyPlayedCard({
+  1004→  trackKey,
+  1005→  onSelect,
+  1006→}: {
+  1007→  trackKey?: string
+  1008→  onSelect: (entry: QueueEntry) => void
+  1009→}) {
+  1010→  const { data, error, retry } = useJson<HistoryResponse>('/api/history?limit=10', trackKey)
+  1011→  const { data: np } = useNowPlaying()
+  1012→  const serverMs = np ? new Date(np.serverTime).getTime() : Date.now()
+  1013→
+  1014→  return (
+  1015→    <Card className="border-border/60 bg-card/70">
+  1016→      <CardHeader>
+  1017→        <CardTitle className="flex items-center gap-2 text-base font-semibold">
+  1018→          <History className="h-4 w-4 text-primary" aria-hidden="true" />
+  1019→          Recently Played
+  1020→        </CardTitle>
+  1021→        <CardDescription>Last ten spins from the play-log ledger</CardDescription>
+  1022→      </CardHeader>
+  1023→      <CardContent>
+  1024→        {error ? (
+  1025→          <ErrorLine onRetry={retry} />
+  1026→        ) : !data ? (
+  1027→          <div className="space-y-2">
+  1028→            {[0, 1, 2, 3, 4].map((i) => (
+  1029→              <Skeleton key={i} className="h-12 w-full rounded-md" />
+  1030→            ))}
+  1031→          </div>
+  1032→        ) : data.plays.length === 0 ? (
+  1033→          <p className="py-6 text-center text-sm text-muted-foreground">
+  1034→            No spins logged yet — the AutoDJ is warming up.
+  1035→          </p>
+  1036→        ) : (
+  1037→          <ul className="max-h-96 space-y-1 overflow-y-auto pr-1 scrollbar-thin">
+  1038→            {data.plays.map((play, idx) => (
+  1039→              <li
+  1040→                key={play.id}
+  1041→                className={cn(
+  1042→                  'group flex items-center gap-3 rounded-md px-2 py-2 transition-colors hover:bg-accent/40',
+  1043→                  idx === 0 &&
+  1044→                    'border-l-2 border-primary bg-gradient-to-r from-primary/10 to-transparent hover:from-primary/15'
+  1045→                )}
+  1046→              >
+  1047→                <button
+  1048→                  type="button"
+  1049→                  onClick={() =>
+  1050→                    onSelect({
+  1051→                      ...play.track,
+  1052→                      elementKind: 'MUSIC',
+  1053→                      sponsorName: null,
+  1054→                    })
+  1055→                  }
+  1056→                  aria-label={`Details for ${play.track.title}`}
+  1057→                  className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left"
+  1058→                >
+  1059→                  <span
+  1060→                    aria-hidden="true"
+  1061→                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-gradient-to-br from-primary/30 via-primary/15 to-red-500/20 text-sm font-bold text-primary transition-transform group-hover:scale-105"
+  1062→                  >
+  1063→                    {(play.track.title.charAt(0) || '?').toUpperCase()}
+  1064→                  </span>
+  1065→                  <div className="min-w-0 flex-1">
+  1066→                    <p className="truncate text-sm font-medium">
+  1067→                      {play.track.title}
+  1068→                      {idx === 0 && (
+  1069→                        <span className="ml-2 rounded-sm bg-primary/15 px-1 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wider text-primary">
+  1070→                          Last spin
+  1071→                        </span>
+  1072→                      )}
+  1073→                    </p>
+  1074→                    <p className="truncate text-xs text-muted-foreground">{play.track.artist}</p>
+  1075→                  </div>
+  1076→                </button>
+  1077→                <Badge
+  1078→                  variant="outline"
+  1079→                  className="hidden shrink-0 border-border/70 text-[10px] text-muted-foreground md:inline-flex"
+  1080→                >
+  1081→                  {play.track.playlist}
+  1082→                </Badge>
+  1083→                <span className="hidden shrink-0 font-mono text-[10px] text-muted-foreground sm:inline">
+  1084→                  {play.track.rightsId}
+  1085→                </span>
+  1086→                <span className="w-20 shrink-0 text-right text-[10px] text-muted-foreground">
+  1087→                  {timeAgo(new Date(play.playedAt).getTime(), serverMs)}
+  1088→                </span>
+  1089→              </li>
+  1090→            ))}
+  1091→          </ul>
+  1092→        )}
+  1093→      </CardContent>
+  1094→    </Card>
+  1095→  )
+  1096→}
+  1097→
+  1098→// -------------------------------------------------------------- live stats
+  1099→
+  1100→function StatsStrip() {
+  1101→  const { data, error, retry } = useJson<StatsResponse>('/api/stats')
+  1102→  const { data: listenerHistory } = useJson<ListenersHistoryResponse>('/api/listeners/history')
+  1103→  const trend = listenerHistory ? listenerHistory.points.map((p) => p.v) : []
+  1104→
+  1105→  const tiles = data
+  1106→    ? [
+  1107→        {
+  1108→          icon: Users,
+  1109→          label: 'Listeners Now',
+  1110→          value: data.listeners.current.toLocaleString(),
+  1111→          sub: 'listener trend · last 24h',
+  1112→          spark: true,
+  1113→        },
+  1114→        {
+  1115→          icon: TrendingUp,
+  1116→          label: 'Peak 24h',
+  1117→          value: data.listeners.peak24h.toLocaleString(),
+  1118→          sub: 'evening peak · ~8 PM ET',
+  1119→          spark: false,
+  1120→        },
+  1121→        {
+  1122→          icon: ShieldCheck,
+  1123→          label: 'Cleared Tracks',
+  1124→          value: `${data.library.cleared}/${data.library.tracks}`,
+  1125→          sub: 'rights gate enforced',
+  1126→          spark: false,
+  1127→        },
+  1128→        {
+  1129→          icon: Disc3,
+  1130→          label: 'Programming',
+  1131→          value: `${data.library.totalHours} hrs`,
+  1132→          sub: 'on the AutoDJ wheel',
+  1133→          spark: false,
+  1134→        },
+  1135→      ]
+  1136→    : null
+  1137→
+  1138→  return (
+  1139→    <section aria-label="Live station stats" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+  1140→      {error ? (
+  1141→        <div className="sm:col-span-2 lg:col-span-4">
+  1142→          <ErrorLine onRetry={retry} />
+  1143→        </div>
+  1144→      ) : !tiles ? (
+  1145→        [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-24 rounded-xl" />)
+  1146→      ) : (
+  1147→        tiles.map((tile) => (
+  1148→          <div
+  1149→            key={tile.label}
+  1150→            className="card-glow flex flex-col rounded-xl border border-border/60 bg-card/60 p-4 transition-shadow"
+  1151→          >
+  1152→            <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground">
+  1153→              <tile.icon className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
+  1154→              {tile.label}
+  1155→            </div>
+  1156→            <p className="mt-2 break-words text-2xl font-bold text-primary">{tile.value}</p>
+  1157→            <div className="mt-auto border-t border-border/40 pt-2">
+  1158→              {tile.spark ? (
+  1159→                trend.length > 1 ? (
+  1160→                  <Sparkline
+  1161→                    values={trend}
+  1162→                    width={220}
+  1163→                    height={36}
+  1164→                    className="h-9 w-full"
+  1165→                    ariaLabel="Listeners over the last 24 hours"
+  1166→                  />
+  1167→                ) : (
+  1168→                  <Skeleton className="h-9 w-full" />
+  1169→                )
+  1170→              ) : null}
+  1171→              <p className="mt-1 text-[10px] text-muted-foreground">{tile.sub}</p>
+  1172→            </div>
+  1173→          </div>
+  1174→        ))
+  1175→      )}
+  1176→    </section>
+  1177→  )
+  1178→}
+  1179→
+  1180→// -------------------------------------------------------------- studio line
+  1181→
+  1182→function StudioLineCard() {
+  1183→  return (
+  1184→    <Card className="border-border/60 bg-card/70">
+  1185→      <CardHeader>
+  1186→        <CardTitle className="flex items-center gap-2 text-base font-semibold">
+  1187→          <MessageSquare className="h-4 w-4 text-primary" aria-hidden="true" />
+  1188→          Studio Line — listener chat
+  1189→          <span className="inline-flex items-center gap-1 rounded-sm bg-red-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase text-red-400">
+  1190→            <span className="animate-onair h-1.5 w-1.5 rounded-full bg-red-500" aria-hidden="true" />
+  1191→            live
+  1192→          </span>
+  1193→        </CardTitle>
+  1194→        <CardDescription>Text the studio in real time — powered by the listener relay.</CardDescription>
+  1195→      </CardHeader>
+  1196→      <CardContent>
+  1197→        {/* soften the inner card chrome so it reads as a panel inside this card */}
+  1198→        <div className="[&_[data-slot=card]]:border-border/60 [&_[data-slot=card]]:bg-background/40 [&_[data-slot=card-header]]:bg-transparent">
+  1199→          <LiveChat />
+  1200→        </div>
+  1201→      </CardContent>
+  1202→    </Card>
+  1203→  )
+  1204→}
+  1205→
+  1206→// ---------------------------------------------------------- sponsor ticker
+  1207→
+  1208→function SponsorTicker({ onNavigate }: { onNavigate: (tab: string) => void }) {
+  1209→  const { data, error, retry } = useJson<SponsorsResponse>('/api/sponsors')
+  1210→  const active = data ? data.sponsors.filter((s) => s.status === 'ACTIVE') : null
+  1211→
+  1212→  return (
+  1213→    <Card className="overflow-hidden border-border/60 bg-card/70">
+  1214→      <CardContent className="flex items-center gap-4 p-4">
+  1215→        <span className="shrink-0 border-r border-border/60 pr-4 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+  1216→          Supporting
+  1217→        </span>
+  1218→        {error ? (
+  1219→          <div className="flex-1">
+  1220→            <ErrorLine onRetry={retry} />
+  1221→          </div>
+  1222→        ) : !active ? (
+  1223→          <Skeleton className="h-5 w-64" />
+  1224→        ) : active.length === 0 ? (
+  1225→          <button
+  1226→            type="button"
+  1227→            onClick={() => onNavigate('sponsors')}
+  1228→            className="text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-primary hover:underline"
+  1229→          >
+  1230→            Your brand could be here →
+  1231→          </button>
+  1232→        ) : (
+  1233→          <div className="relative flex-1 overflow-hidden" aria-label="Current sponsors">
+  1234→            <div className="animate-ticker flex w-max items-center gap-10">
+  1235→              {[...active, ...active].map((sponsor, i) => (
+  1236→                <span key={`${sponsor.id}-${i}`} className="flex items-center gap-10">
+  1237→                  <span className="whitespace-nowrap text-xs uppercase tracking-widest text-muted-foreground">
+  1238→                    {sponsor.name}
+  1239→                  </span>
+  1240→                  <Megaphone className="h-3 w-3 shrink-0 text-primary/60" aria-hidden="true" />
+  1241→                </span>
+  1242→              ))}
+  1243→            </div>
+  1244→          </div>
+  1245→        )}
+  1246→      </CardContent>
+  1247→    </Card>
+  1248→  )
+  1249→}
+  1250→
+  1251→// -------------------------------------------------------------- trust note
+  1252→
+  1253→function TrustNote({ onNavigate }: { onNavigate: (tab: string) => void }) {
+  1254→  return (
+  1255→    <section
+  1256→      aria-label="Rights gate note"
+  1257→      className="flex flex-col gap-4 rounded-xl border border-border/60 bg-card/60 p-4 sm:flex-row sm:items-center sm:p-5"
+  1258→    >
+  1259→      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-primary/10">
+  1260→        <ShieldCheck className="h-5 w-5 text-primary" aria-hidden="true" />
+  1261→      </span>
+  1262→      <p className="flex-1 text-sm leading-relaxed text-muted-foreground">
+  1263→        <span className="font-semibold text-foreground">The Rights Gate</span> — every track airs
+  1264→        only after its rights record reads CLEARED. Browse the public ledger.
+  1265→      </p>
+  1266→      <Button
+  1267→        type="button"
+  1268→        variant="ghost"
+  1269→        size="sm"
+  1270→        onClick={() => onNavigate('rights')}
+  1271→        className="text-primary hover:text-primary"
+  1272→      >
+  1273→        Browse the ledger
+  1274→        <ArrowRight aria-hidden="true" />
+  1275→      </Button>
+  1276→    </section>
+  1277→  )
+  1278→}
+  1279→

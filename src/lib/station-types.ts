@@ -268,6 +268,33 @@ export type TracksResponse = {
   }>
 }
 
+/** One row of The Wave Chart — most-heard cleared tracks over the trailing week. */
+export type ChartEntry = {
+  trackId: string
+  rank: number
+  title: string
+  artist: string
+  rightsId: string
+  playlist: string
+  explicit: boolean
+  /** Spins in the trailing 7 days (any source). */
+  spins7d: number
+  /** Listener shouts in the trailing 7 days. */
+  shouts7d: number
+  /** Last spin ISO timestamp (null = logged request heat but no recent spin). */
+  lastPlayedAt: string | null
+  /** True when this entry is spinning on the wheel right now. */
+  onAirNow: boolean
+}
+
+export type ChartsResponse = {
+  week: ChartEntry[]
+  /** Total PlayLog rows (music + imaging) in the trailing 7 days. */
+  totalSpins7d: number
+  timezone: string
+  serverTime: string
+}
+
 export const TAB_IDS = ['on-air', 'schedule', 'submit', 'rights', 'sponsors', 'ops'] as const
 export type TabId = (typeof TAB_IDS)[number]
 

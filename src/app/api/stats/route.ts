@@ -33,7 +33,7 @@ export async function GET() {
 
     const [
       tracks,
-      cleared,
+      clearedRightsIds,
       pendingRights,
       blocked,
       durationAgg,
@@ -44,11 +44,11 @@ export async function GET() {
       adToday,
     ] = await Promise.all([
       db.track.count({ where: { playlist: { not: 'Imaging' } } }),
-      // cleared = CLEARED rights records backing real music tracks (exclude
-      // in-house imaging IDs like IMG01 so the number never exceeds `tracks`).
-      db.rightsLog.count({
-        where: { status: 'CLEARED', id: { startsWith: 'R' } },
-      }),
+      // Cleared library = music tracks whose rights record is CLEARED. Counting
+      // CLEARED records alone overshoots when a submission was approved (record
+      // issued) but the file has not landed on the wheel yet — the tile would
+      // read "23 cleared / 22 tracks" forever. Count tracks, not records.
+      db.rightsLog.findMany({ where: { status: 'CLEARED' }, select: { id: true } }),
       db.rightsLog.count({ where: { status: { in: ['PENDING', 'IN_REVIEW'] } } }),
       db.rightsLog.count({ where: { status: 'BLOCKED' } }),
       db.track.aggregate({
@@ -66,6 +66,13 @@ export async function GET() {
       }),
       db.adPlay.count({ where: { playedAt: { gte: etDayStartUTC(new Date(nowMs)) } } }),
     ])
+
+    const clearedIdSet = new Set(clearedRightsIds.map((r) => r.id))
+    const musicTracks = await db.track.findMany({
+      where: { playlist: { not: 'Imaging' } },
+      select: { rightsId: true },
+    })
+    const cleared = musicTracks.filter((t) => clearedIdSet.has(t.rightsId)).length
 
     const subMap = new Map(
       submissionGroups.map((g) => [g.status, g._count._all]),

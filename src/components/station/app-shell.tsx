@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Keyboard, Radio, ShieldCheck, MapPin } from 'lucide-react'
 import { StationHeader } from '@/components/station/header'
@@ -25,6 +25,12 @@ export function AppShell() {
     if (TAB_ORDER.includes(t as TabId)) setTab(t as TabId)
   }, [])
 
+  // panel switch resets the viewport like a real page change — otherwise a
+  // deep scroll on a long panel drops you mid-footer on the next one
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: 'auto' })
+  }, [tab])
+
   return (
     <div className="min-h-screen flex flex-col bg-studio">
       <StationHeader activeTab={tab} onTabChange={setTab} />
@@ -39,7 +45,7 @@ export function AppShell() {
             transition={{ duration: 0.22, ease: 'easeOut' }}
           >
             {tab === 'on-air' && <OnAirSection onNavigate={navigate} />}
-            {tab === 'schedule' && <ScheduleSection />}
+            {tab === 'schedule' && <ScheduleSection onNavigate={navigate} />}
             {tab === 'submit' && <SubmitSection />}
             {tab === 'rights' && <RightsSection />}
             {tab === 'sponsors' && <SponsorsSection />}

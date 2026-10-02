@@ -161,6 +161,23 @@
       radial-gradient(ellipse 80% 50% at 50% -10%, oklch(0.77 0.16 70 / 0.14), transparent),
       radial-gradient(ellipse 50% 40% at 90% 110%, oklch(0.62 0.22 25 / 0.08), transparent);
   }
+  /* fine broadcast-noise grain for hero/visual surfaces (SVG turbulence, no asset) */
+  .bg-noise {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+    background-size: 140px 140px;
+  }
+  /* cards that gently rise on hover — panels you can act on */
+  .hover-lift {
+    transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+  }
+  .hover-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 10px 30px -12px oklch(0.13 0.008 60 / 0.9), 0 0 24px oklch(0.77 0.16 70 / 0.1);
+  }
+  /* red glow variant for LIVE headlines */
+  .text-glow-red {
+    text-shadow: 0 0 16px oklch(0.62 0.24 25 / 0.6), 0 0 40px oklch(0.62 0.24 25 / 0.25);
+  }
   /* footer broadcast wave — drifting sine lines */
   .signal-wave {
     height: 26px;
@@ -225,4 +242,26 @@
 }
 .animate-float-slow {
   animation: float-slow 6s ease-in-out infinite;
+}
+
+/* heart save pop — one bounce when a track lands in My Waves */
+@keyframes heart-pop {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.45); }
+  65% { transform: scale(0.9); }
+  100% { transform: scale(1); }
+}
+.animate-heart-pop {
+  animation: heart-pop 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-onair,
+  .eq-bar,
+  .animate-vinyl,
+  .animate-ticker,
+  .animate-float-slow,
+  .signal-wave {
+    animation: none !important;
+  }
 }
