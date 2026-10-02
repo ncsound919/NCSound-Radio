@@ -17,6 +17,23 @@ export type TrackDTO = {
   bpm: number | null
 }
 
+/** Program-clock element kinds: songs, imaging IDs, ad-break spots. */
+export type ElementKind = 'MUSIC' | 'STATION_ID' | 'AD_SPOT'
+
+/** What the AutoDJ is airing right now (mirrors the broadcast engine). */
+export type NowPlayingElement = {
+  kind: ElementKind
+  campaignName?: string
+  sponsorName?: string
+  creativeName?: string
+}
+
+/** A queue entry: a real track, an imaging ID, or an (ad/house) spot. */
+export type QueueEntry = TrackDTO & {
+  elementKind: ElementKind
+  sponsorName?: string | null
+}
+
 export type NowPlayingResponse = {
   station: {
     name: string
@@ -33,9 +50,15 @@ export type NowPlayingResponse = {
     remaining: number // seconds
     progress: number // 0..1
   }
-  next: TrackDTO[]
+  /** Program-clock element currently airing (music / station ID / ad spot). */
+  element: NowPlayingElement
+  /** Clean Daypart state: explicit tracks are held 6 AM–7 PM ET. */
+  daypart: { clean: boolean; label: string }
+  next: QueueEntry[]
   /** Request heat (7-day listener requests): trackId -> count, only > 0 entries. */
   heat: Record<string, number>
+  /** Who shouted for the current/upcoming music tracks (max 3 names each). */
+  requestedBy: Record<string, string[]>
   listeners: {
     current: number
     peak24h: number
@@ -161,14 +184,6 @@ export type AdPlaysResponse = {
   plays: AdPlayDTO[]
   total: number
   last7Days: number
-}
-
-export type AdSyncResponse = {
-  ok: boolean
-  inserted: number
-  byCampaign: Record<string, number>
-  ranAt: string
-  note: string
 }
 
 export type StatsResponse = {

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { AGREEMENT_VERSION } from '@/lib/station-types'
 import { toSubmissionDTO } from '@/lib/broadcast'
+import { allow, clientIp } from '@/lib/rate-limit'
 
 export const dynamic = 'force-dynamic'
 
@@ -64,6 +65,14 @@ export async function GET() {
  */
 export async function POST(request: Request) {
   try {
+    // Per-IP throttle: 3 submissions per 10 minutes (inbox hygiene).
+    if (!allow(`sub:${clientIp(request)}`, 3, 10 * 60_000)) {
+      return NextResponse.json(
+        { error: 'Too many submissions from this connection — try again later.' },
+        { status: 429 },
+      )
+    }
+
     const contentType = request.headers.get('content-type') ?? ''
     let raw: RawBody = {}
     let fileName: string | null = null

@@ -1,11 +1,20 @@
 /**
  * WAVC 91.3 "Carolina Waves" — backend broadcast-engine helpers.
  * ---------------------------------------------------------------
- * Simulated AutoDJ: the "what's on air right now" decision is a pure,
- * deterministic function of the wall clock over the Track library
- * (ordered by seedOrder, skipping the Imaging playlist). Every poller
- * sees the same track for the same second, and PlayLog rows accumulate
- * as the API is polled.
+ * Simulated AutoDJ implementing the station's PROGRAM CLOCK: the "what's on
+ * air right now" decision is a pure, deterministic function of the wall clock
+ * over an element wheel (music blocks → station IDs → ad breaks). Every
+ * poller sees the same element for the same second, and PlayLog rows
+ * accumulate as the API is polled.
+ *
+ * Programming rules enforced here:
+ *  - Rights gate: only library tracks ever reach the wheel; the request line
+ *    refuses anything without a CLEARED rights record.
+ *  - Clean Daypart 06:00–19:00 ET: explicit tracks are held out of rotation.
+ *  - Fallback tracks sit on the bench and only join the wheel when a listener
+ *    shout pulls them in (request weight > 0) — zero dead air insurance.
+ *  - Ad breaks carry sold sponsor creatives (matched to the nightly-sync
+ *    ledger formula) or house promos for unsold inventory.
  *
  * Also hosts small shared helpers used by the API routes:
  * America/New_York wall-clock math, listener simulation and
@@ -42,27 +51,53 @@ export const STATION_TIMEZONE = 'America/New_York'
 
 /** Epoch anchor for the rotation clock: 2025-01-01T00:00:00Z. */
 const ROTATION_ANCHOR_MS = Date.UTC(2025, 0, 1)
-/** Silence gap inserted after every track in the rotation cycle. */
+/** Silence gap inserted after every element in the cycle. */
 const TRACK_GAP_SEC = 12
-/** Rotation library cache TTL (nowplaying is polled every ~10s). */
+/** Songs per music block before an imaging ID or ad break. */
+const BLOCK_SIZE = 3
+/** After every Nth music block: an ad break (2 spots) instead of a station ID. */
+const AD_BREAK_EVERY_N_BLOCKS = 2
+/** Duration of a single ad spot (two spots per break). */
+const AD_SPOT_SEC = 30
+/** Rotation wheel cache TTL (nowplaying is polled every ~10s). */
 const ROTATION_CACHE_TTL_MS = 60_000
 /** Listener-simulation bucket: fresh deterministic noise every 15s. */
 const LISTENER_BUCKET_MS = 15_000
 /** Station launch date for uptime math: 2025-10-01. */
 export const LAUNCH_UTC_MS = Date.UTC(2025, 9, 1)
 
+export const DAY_MS = 24 * 3600 * 1000
+
 // ---------------------------------------------------------------------------
-// AutoDJ rotation engine
+// AutoDJ rotation engine — program clock
 // ---------------------------------------------------------------------------
 
-type RotationCache = {
-  tracks: Track[]
-  weights: Map<string, number>
+export type ElementKind = 'MUSIC' | 'STATION_ID' | 'AD_SPOT'
+
+export type AdCampaignInfo = {
+  id: string
+  name: string
+  sponsorName: string
+  creativeName: string
+  spotsPerDay: number
+  startAtMs: number
+}
+
+export type RotationElement = {
+  kind: ElementKind
+  track: Track | null
+  campaign: AdCampaignInfo | null
+  durSec: number
+}
+
+type WheelCache = {
+  elements: RotationElement[]
+  cycleSec: number
   fetchedAt: number
 }
 
 const globalForRotation = globalThis as unknown as {
-  wavcRotationCache: RotationCache | undefined
+  wavcRotationCache: WheelCache | undefined
 }
 
 /**
@@ -80,118 +115,286 @@ export async function getRequestWeights(nowMs: number = Date.now()): Promise<Map
 }
 
 /**
- * Rotation library (everything except Imaging), cached for 60s.
- * Request-weighted: the most-requested CLEARED tracks from the last 7 days
- * are promoted to the front of the rotation (stable sort — equal weight keeps
- * seedOrder). All pollers within the same cache window see the same order, so
- * the AutoDJ stays deterministic between cache refreshes while listener
- * shouts genuinely bump tracks up the wheel.
+ * Absolute AD_SPOT instants (ms) whose element slot starts inside [fromMs, toMs].
+ * Derived from the same anchor/cycle math as computeOnAir, so an instant here
+ * IS the broadcast time of that spot.
  */
-export async function getRotationTracks(): Promise<{
-  tracks: Track[]
-  weights: Map<string, number>
-}> {
-  const now = Date.now()
-  const cached = globalForRotation.wavcRotationCache
-  if (
-    cached &&
-    cached.weights instanceof Map &&
-    now - cached.fetchedAt < ROTATION_CACHE_TTL_MS
-  ) {
-    return cached
+export function adBreakSpotInstants(
+  elements: RotationElement[],
+  cycleSec: number,
+  fromMs: number,
+  toMs: number,
+): Array<{ atMs: number; elementIndex: number }> {
+  if (elements.length === 0 || cycleSec <= 0) return []
+  const offsets: number[] = []
+  let acc = 0
+  for (const e of elements) {
+    offsets.push(acc)
+    acc += (e.durSec + TRACK_GAP_SEC) * 1000
   }
-  const [rows, weights] = await Promise.all([
-    db.track.findMany({
-      where: { playlist: { not: 'Imaging' } },
-      orderBy: { seedOrder: 'asc' },
-    }),
-    getRequestWeights(now),
-  ])
-  const tracks = [...rows].sort((a, b) => {
-    const wa = weights.get(a.id) ?? 0
-    const wb = weights.get(b.id) ?? 0
-    if (wa !== wb) return wb - wa
-    return a.seedOrder - b.seedOrder
-  })
-  globalForRotation.wavcRotationCache = { tracks, weights, fetchedAt: now }
-  return { tracks, weights }
-}
-
-export type OnAir = {
-  track: Track
-  /** Index of the current track inside the rotation array. */
-  index: number
-  /** Slot start instant (ISO-able Date) — used as the PlayLog playedAt. */
-  startedAt: Date
-  /** Seconds elapsed inside the track window (floored). */
-  elapsed: number
-  /** Track duration in seconds. */
-  duration: number
-  /** Seconds remaining in the track window. */
-  remaining: number
-  /** 0..1 playback progress. */
-  progress: number
+  const cycleMs = cycleSec * 1000
+  const firstCycle = Math.floor((fromMs - ROTATION_ANCHOR_MS) / cycleMs)
+  const lastCycle = Math.floor((toMs - ROTATION_ANCHOR_MS) / cycleMs)
+  const out: Array<{ atMs: number; elementIndex: number }> = []
+  for (let c = firstCycle; c <= lastCycle; c++) {
+    for (let i = 0; i < elements.length; i++) {
+      if (elements[i].kind !== 'AD_SPOT') continue
+      const atMs = ROTATION_ANCHOR_MS + c * cycleMs + offsets[i]
+      if (atMs >= fromMs && atMs <= toMs) out.push({ atMs, elementIndex: i })
+    }
+  }
+  return out.sort((a, b) => a.atMs - b.atMs)
 }
 
 /**
- * Deterministic "what's on air now" from the wall clock.
- * Each track occupies `durationSec + 12s gap` inside one repeating cycle.
- * Position = (now - anchor) mod cycleTotal. If the clock currently sits in
- * the inter-track gap we clamp elapsed to the full duration (progress 1).
+ * Sold/house allocation for one ET day of ad-break spots, in time order.
+ *
+ * Sold spots are spread evenly across the whole day (Bresenham on the spot
+ * index — never bunched into the small hours) and assigned round-robin to
+ * campaigns while each campaign's spotsPerDay budget lasts; everything else
+ * airs as a house promo (unsold inventory, never ledgered).
+ *
+ * This is THE shared schedule: the on-air clock picks the creative it airs
+ * from it, and the nightly ad-sync ledger pull writes exactly its sold rows.
  */
-export function computeOnAir(tracks: Track[], nowMs: number = Date.now()): OnAir {
-  if (tracks.length === 0) {
+export function adSpotScheduleForDay(
+  dayStartMs: number,
+  elements: RotationElement[],
+  cycleSec: number,
+  campaigns: AdCampaignInfo[],
+): Array<{ atMs: number; campaign: AdCampaignInfo | null }> {
+  const instants = adBreakSpotInstants(elements, cycleSec, dayStartMs, dayStartMs + DAY_MS)
+  const M = instants.length
+  if (M === 0) return []
+  const budgets = campaigns.map((c) => Math.max(0, c.spotsPerDay))
+  const totalSold = Math.min(M, budgets.reduce((a, b) => a + b, 0))
+  const remaining = [...budgets]
+  const out: Array<{ atMs: number; campaign: AdCampaignInfo | null }> = []
+  let s = 0
+  for (let k = 0; k < M; k++) {
+    let campaign: AdCampaignInfo | null = null
+    if (
+      s < totalSold &&
+      Math.floor(((k + 1) * totalSold) / M) > Math.floor((k * totalSold) / M)
+    ) {
+      for (let attempt = 0; attempt < campaigns.length; attempt++) {
+        const j = (s + attempt) % campaigns.length
+        if (remaining[j] > 0) {
+          const candidate = campaigns[j]
+          remaining[j]--
+          s++
+          // Spots before the campaign's flight start stay unsold (house).
+          if (candidate.startAtMs <= instants[k].atMs) campaign = candidate
+          break
+        }
+      }
+    }
+    out.push({ atMs: instants[k].atMs, campaign })
+  }
+  return out
+}
+
+/** Find the schedule entry for an absolute spot start (± half a slot gap). */
+export function campaignForAdSlot(
+  slotStartMs: number,
+  schedule: Array<{ atMs: number; campaign: AdCampaignInfo | null }>,
+): AdCampaignInfo | null {
+  const TOL_MS = (TRACK_GAP_SEC * 1000) / 2
+  for (const s of schedule) {
+    if (Math.abs(s.atMs - slotStartMs) <= TOL_MS) return s.campaign
+  }
+  return null
+}
+
+/** Clean Daypart window: 06:00–18:59 ET (explicit lyrics held). */
+export function isCleanDaypart(nowMs: number = Date.now()): boolean {
+  const wc = etWallClock(new Date(nowMs))
+  return wc.hour >= 6 && wc.hour < 19
+}
+
+/**
+ * Build the program-clock wheel. Cached 60s so every poller sees the same
+ * element order within a window; listener shouts re-sort the front of the
+ * music blocks on the next refresh.
+ */
+export async function getRotationWheel(nowMs: number = Date.now()): Promise<{
+  elements: RotationElement[]
+  cycleSec: number
+}> {
+  const cached = globalForRotation.wavcRotationCache
+  if (
+    cached &&
+    Array.isArray(cached.elements) &&
+    cached.elements.length > 0 &&
+    typeof cached.cycleSec === 'number' &&
+    Date.now() - cached.fetchedAt < ROTATION_CACHE_TTL_MS
+  ) {
+    return cached
+  }
+
+  const clean = isCleanDaypart(nowMs)
+
+  const [rows, weights, imagingRows, campaignRows] = await Promise.all([
+    db.track.findMany({ orderBy: { seedOrder: 'asc' } }),
+    getRequestWeights(nowMs),
+    db.track.findMany({ where: { playlist: 'Imaging' }, orderBy: { seedOrder: 'asc' } }),
+    db.campaign.findMany({
+      where: { active: true, startAt: { lte: new Date(nowMs) } },
+      include: { sponsor: true },
+      orderBy: { id: 'asc' },
+    }),
+  ])
+
+  const campaigns: AdCampaignInfo[] = campaignRows.map((c) => ({
+    id: c.id,
+    name: c.name,
+    sponsorName: c.sponsor.name,
+    creativeName: c.creativeName,
+    spotsPerDay: c.spotsPerDay,
+    startAtMs: c.startAt.getTime(),
+  }))
+
+  // Music pool: everything except Imaging; Fallback tracks wait on the bench
+  // unless a listener shout pulls them in. Daypart filter applies on top.
+  let pool = rows.filter(
+    (t) =>
+      t.playlist !== 'Imaging' && (t.playlist !== 'Fallback' || (weights.get(t.id) ?? 0) > 0),
+  )
+  if (pool.length === 0) pool = rows.filter((t) => t.playlist !== 'Imaging')
+  if (clean) {
+    const cleanPool = pool.filter((t) => !t.explicit)
+    if (cleanPool.length > 0) pool = cleanPool
+  }
+
+  // Request-weighted ordering: top-3 hottest lead the wheel, the rest hold
+  // seed order (stable — equal weights never reshuffle).
+  const promoted = pool
+    .filter((t) => (weights.get(t.id) ?? 0) > 0)
+    .sort(
+      (a, b) => (weights.get(b.id) ?? 0) - (weights.get(a.id) ?? 0) || a.seedOrder - b.seedOrder,
+    )
+    .slice(0, 3)
+  const promotedIds = new Set(promoted.map((t) => t.id))
+  const music = [...promoted, ...pool.filter((t) => !promotedIds.has(t.id))]
+
+  if (music.length === 0) {
     throw new Error('Rotation library is empty')
   }
-  const cycleMs = tracks.reduce(
-    (acc, t) => acc + (t.durationSec + TRACK_GAP_SEC) * 1000,
-    0,
-  )
-  const position =
-    (((nowMs - ROTATION_ANCHOR_MS) % cycleMs) + cycleMs) % cycleMs
+
+  const elements: RotationElement[] = []
+  let blockIndex = 0
+  for (let m = 0; m < music.length; m += BLOCK_SIZE) {
+    for (let k = m; k < Math.min(m + BLOCK_SIZE, music.length); k++) {
+      elements.push({
+        kind: 'MUSIC',
+        track: music[k],
+        campaign: null,
+        durSec: music[k].durationSec,
+      })
+    }
+    // After every 3rd block: an ad break (2 spots). Otherwise: a station ID.
+    if ((blockIndex + 1) % AD_BREAK_EVERY_N_BLOCKS === 0) {
+      for (let spot = 0; spot < 2; spot++) {
+        elements.push({ kind: 'AD_SPOT', track: null, campaign: null, durSec: AD_SPOT_SEC })
+      }
+    } else if (imagingRows.length > 0) {
+      const idTrack = imagingRows[blockIndex % imagingRows.length]
+      elements.push({
+        kind: 'STATION_ID',
+        track: idTrack,
+        campaign: null,
+        durSec: idTrack.durationSec,
+      })
+    }
+    blockIndex++
+  }
+
+  const cycleSec = elements.reduce((acc, e) => acc + e.durSec + TRACK_GAP_SEC, 0)
+
+  globalForRotation.wavcRotationCache = { elements, cycleSec, fetchedAt: Date.now() }
+  return { elements, cycleSec }
+}
+
+export type OnAir = {
+  element: RotationElement
+  /** Absolute slot start instant — used as the PlayLog playedAt (music/ID). */
+  startedAt: Date
+  /** Seconds elapsed inside the element window (floored). */
+  elapsed: number
+  /** Element duration in seconds. */
+  duration: number
+  /** Seconds remaining in the element window. */
+  remaining: number
+  /** 0..1 playback progress. */
+  progress: number
+  /** Index of the element inside the wheel. */
+  index: number
+}
+
+/**
+ * Deterministic "what's on air now" from the wall clock over the element
+ * wheel. Each element occupies `durSec + 12s gap` inside one repeating
+ * cycle. If the clock sits in the inter-element gap we clamp elapsed to the
+ * full duration (progress 1) — the UI reads that as "cueing up next".
+ */
+export function computeOnAir(
+  elements: RotationElement[],
+  cycleSec: number,
+  nowMs: number = Date.now(),
+): OnAir {
+  if (elements.length === 0 || cycleSec <= 0) {
+    throw new Error('Rotation wheel is empty')
+  }
+  const cycleMs = cycleSec * 1000
+  const position = (((nowMs - ROTATION_ANCHOR_MS) % cycleMs) + cycleMs) % cycleMs
+  // Start of the CURRENT cycle in absolute time — the wall-clock instant the
+  // wheel last wrapped. Slot starts are true broadcast instants (this is what
+  // PlayLog/ad_plays key on and what the ad schedule must match exactly).
+  const cycleStartMs = nowMs - position
 
   let slotStart = 0
-  for (let i = 0; i < tracks.length; i++) {
-    const track = tracks[i]
-    const slotLenMs = (track.durationSec + TRACK_GAP_SEC) * 1000
+  for (let i = 0; i < elements.length; i++) {
+    const element = elements[i]
+    const slotLenMs = (element.durSec + TRACK_GAP_SEC) * 1000
     if (position < slotStart + slotLenMs) {
       const elapsedRaw = Math.max(0, (position - slotStart) / 1000)
-      const elapsed = Math.min(Math.floor(elapsedRaw), track.durationSec)
+      const elapsed = Math.min(Math.floor(elapsedRaw), element.durSec)
       return {
-        track,
-        index: i,
-        startedAt: new Date(ROTATION_ANCHOR_MS + slotStart),
+        element,
+        startedAt: new Date(cycleStartMs + slotStart),
         elapsed,
-        duration: track.durationSec,
-        remaining: Math.max(0, track.durationSec - elapsed),
-        progress:
-          track.durationSec > 0
-            ? Math.min(1, elapsedRaw / track.durationSec)
-            : 0,
+        duration: element.durSec,
+        remaining: Math.max(0, element.durSec - elapsed),
+        progress: element.durSec > 0 ? Math.min(1, elapsedRaw / element.durSec) : 0,
+        index: i,
       }
     }
     slotStart += slotLenMs
   }
 
   // Unreachable (modulo guarantees a slot hit) — safe fallback.
-  const last = tracks[tracks.length - 1]
+  const last = elements[elements.length - 1]
   return {
-    track: last,
-    index: tracks.length - 1,
-    startedAt: new Date(ROTATION_ANCHOR_MS),
+    element: last,
+    startedAt: new Date(cycleStartMs),
     elapsed: 0,
-    duration: last.durationSec,
-    remaining: last.durationSec,
+    duration: last.durSec,
+    remaining: last.durSec,
     progress: 0,
+    index: elements.length - 1,
   }
 }
 
-/** Next `count` tracks in the rotation, wrapping around the array. */
-export function getUpNext(tracks: Track[], index: number, count = 3): Track[] {
-  if (tracks.length === 0) return []
-  const out: Track[] = []
+/** Next `count` elements in the wheel, wrapping around. */
+export function getUpNextElements(
+  elements: RotationElement[],
+  index: number,
+  count = 3,
+): RotationElement[] {
+  if (elements.length === 0) return []
+  const out: RotationElement[] = []
   for (let k = 1; k <= count; k++) {
-    out.push(tracks[(index + k) % tracks.length])
+    out.push(elements[(index + k) % elements.length])
   }
   return out
 }
@@ -255,6 +458,25 @@ export async function maybeLogPlays(
     })
   } catch {
     // P2002 unique-violation — this slot is already logged; ignore.
+  }
+}
+
+/**
+ * Proof-of-play: log a SOLD sponsor spot at its broadcast instant. Safe on
+ * every poll — unique(campaignId, playedAt) + swallowed P2002. The nightly
+ * ad-sync backfills any slots missed while nobody was polling.
+ */
+export async function maybeLogAdPlay(
+  campaignId: string,
+  playedAt: Date,
+  source = 'AUTODJ',
+): Promise<void> {
+  try {
+    await db.adPlay.create({
+      data: { campaignId, playedAt, source },
+    })
+  } catch {
+    // P2002 — this spot is already ledgered; ignore.
   }
 }
 
@@ -328,7 +550,8 @@ export function etOffsetMinutes(date: Date = new Date()): number {
 
 /**
  * The UTC instant corresponding to "local midnight today" in the station
- * timezone (handles EST/EDT). Used for playsToday-style counters.
+ * timezone (handles EST/EDT). Used for playsToday-style counters and the
+ * day-anchored sold-ad-slot schedule.
  */
 export function etDayStartUTC(date: Date = new Date()): Date {
   const wc = etWallClock(date)

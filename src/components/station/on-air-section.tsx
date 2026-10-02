@@ -14,10 +14,12 @@ import {
   ListMusic,
   Megaphone,
   MessageSquare,
+  Mic,
   Pause,
   Play,
   Share2,
   ShieldCheck,
+  Sun,
   TrendingUp,
   Upload,
   Users,
@@ -232,7 +234,14 @@ function Hero({
   const chips = [
     { icon: Gauge, label: '128 kbps AAC' },
     { icon: ShieldCheck, label: 'Rights-cleared library' },
-    { icon: Heart, label: 'Listener-supported' },
+    data?.daypart
+      ? {
+          icon: Sun,
+          label: data.daypart.clean
+            ? 'Clean Daypart · 6a–7p ET'
+            : 'Open rotations · full library',
+        }
+      : { icon: Heart, label: 'Listener-supported' },
   ]
 
   return (
@@ -360,6 +369,14 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
   const duration = data?.current.duration ?? 0
   const remaining = Math.max(0, duration - progress * duration)
   const hue = track ? hueForRightsId(track.rightsId) : 32
+  const kind = data?.element?.kind ?? 'MUSIC'
+  const isSponsorSpot = kind === 'AD_SPOT' && Boolean(data?.element?.sponsorName)
+  const isHousePromo = kind === 'AD_SPOT' && !data?.element?.sponsorName
+  const daypartNote = data?.daypart
+    ? data.daypart.clean
+      ? 'Clean Daypart — explicit lyrics held until 7:00 PM ET'
+      : 'Open rotations — full cleared library on the wheel'
+    : 'Deterministic AutoDJ rotation — rights gate enforced'
 
   return (
     <Card className="border-border/60 bg-card/70">
@@ -371,7 +388,7 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
           />
           Now Playing
         </CardTitle>
-        <CardDescription>Deterministic AutoDJ rotation — rights gate enforced</CardDescription>
+        <CardDescription>{daypartNote}</CardDescription>
       </CardHeader>
       <CardContent>
         {!data || !track ? (
@@ -386,10 +403,18 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
               sizes="(max-width: 1024px) 100vw, 768px"
               className="object-cover"
             />
-            {/* deterministic amber/red wash keyed to the rights ID */}
+            {/* element wash: music = deterministic hue · ID = neutral · ad = amber/red */}
             <div
               className="absolute inset-0"
-              style={{ backgroundColor: `oklch(0.55 0.19 ${hue} / 0.55)` }}
+              style={{
+                backgroundColor: isSponsorSpot
+                  ? 'oklch(0.62 0.17 40 / 0.68)'
+                  : isHousePromo
+                    ? 'oklch(0.35 0.03 80 / 0.82)'
+                    : kind === 'STATION_ID'
+                      ? 'oklch(0.42 0.02 80 / 0.78)'
+                      : `oklch(0.55 0.19 ${hue} / 0.55)`,
+              }}
               aria-hidden="true"
             />
             <div
@@ -397,28 +422,64 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
               aria-hidden="true"
             />
 
+            {/* element stamp */}
+            {kind !== 'MUSIC' && (
+              <div className="absolute right-3 top-3 flex items-center gap-1.5">
+                {isSponsorSpot ? (
+                  <span className="inline-flex items-center gap-1 rounded-sm border border-red-400/50 bg-red-500/25 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-red-100 backdrop-blur">
+                    <Megaphone className="h-3 w-3" aria-hidden="true" />
+                    Ad Break
+                  </span>
+                ) : isHousePromo ? (
+                  <span className="inline-flex items-center gap-1 rounded-sm border border-border/60 bg-background/70 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-muted-foreground backdrop-blur">
+                    <Megaphone className="h-3 w-3" aria-hidden="true" />
+                    House Promo
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded-sm border border-primary/50 bg-primary/20 px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-primary backdrop-blur">
+                    <Mic className="h-3 w-3" aria-hidden="true" />
+                    Station ID
+                  </span>
+                )}
+              </div>
+            )}
+
             {/* metadata chips */}
             <div className="absolute left-3 top-3 flex flex-wrap gap-1.5">
-              <Badge
-                variant="outline"
-                className="border-border/70 bg-background/70 text-[10px] backdrop-blur"
-              >
-                {track.playlist}
-              </Badge>
-              <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
-                {track.rightsId}
-              </span>
-              {track.bpm !== null && (
+              {kind === 'MUSIC' && (
+                <>
+                  <Badge
+                    variant="outline"
+                    className="border-border/70 bg-background/70 text-[10px] backdrop-blur"
+                  >
+                    {track.playlist}
+                  </Badge>
+                  <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
+                    {track.rightsId}
+                  </span>
+                  {track.bpm !== null && (
+                    <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
+                      {track.bpm} BPM
+                    </span>
+                  )}
+                  {track.explicit && (
+                    <span
+                      title="Explicit lyrics"
+                      className="rounded border border-red-500/40 bg-red-500/15 px-1.5 py-0.5 text-[10px] font-bold text-red-400"
+                    >
+                      E
+                    </span>
+                  )}
+                </>
+              )}
+              {kind === 'STATION_ID' && (
                 <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
-                  {track.bpm} BPM
+                  {track.rightsId}
                 </span>
               )}
-              {track.explicit && (
-                <span
-                  title="Explicit lyrics"
-                  className="rounded border border-red-500/40 bg-red-500/15 px-1.5 py-0.5 text-[10px] font-bold text-red-400"
-                >
-                  E
+              {isSponsorSpot && (
+                <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
+                  ADSPOT · proof-of-play logged
                 </span>
               )}
             </div>
@@ -454,8 +515,33 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
               />
               <div className="mt-2 flex items-end justify-between gap-3">
                 <div className="min-w-0">
-                  <h3 className="truncate text-2xl font-bold">{track.title}</h3>
-                  <p className="truncate text-sm text-muted-foreground">{track.artist}</p>
+                  {kind === 'MUSIC' ? (
+                    <>
+                      <h3 className="truncate text-2xl font-bold">{track.title}</h3>
+                      <p className="truncate text-sm text-muted-foreground">{track.artist}</p>
+                    </>
+                  ) : isSponsorSpot ? (
+                    <>
+                      <h3 className="truncate text-2xl font-bold">
+                        {data?.element?.sponsorName}
+                      </h3>
+                      <p className="truncate text-sm text-muted-foreground">
+                        {data?.element?.creativeName} — paid sponsor spot
+                      </p>
+                    </>
+                  ) : isHousePromo ? (
+                    <>
+                      <h3 className="truncate text-2xl font-bold">House Promo</h3>
+                      <p className="truncate text-sm text-muted-foreground">
+                        Unsold inventory — your brand could be here
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <h3 className="truncate text-xl font-bold">{track.title}</h3>
+                      <p className="truncate text-sm text-muted-foreground">{track.artist}</p>
+                    </>
+                  )}
                 </div>
                 <span className="shrink-0 font-mono text-xs text-muted-foreground">
                   -{fmtTime(remaining)}
@@ -475,6 +561,7 @@ function UpNextCard({ data }: { data: NowPlayingResponse | null }) {
   const duration = data?.current.duration ?? 0
   const remaining = data?.current.remaining ?? 0
   const toNextPct = duration > 0 ? Math.min(100, Math.max(0, ((duration - remaining) / duration) * 100)) : 0
+  const cueing = remaining <= 0
 
   return (
     <Card className="border-border/60 bg-card/70">
@@ -483,19 +570,26 @@ function UpNextCard({ data }: { data: NowPlayingResponse | null }) {
           <ListMusic className="h-4 w-4 text-primary" aria-hidden="true" />
           Up Next
         </CardTitle>
-        <CardDescription>AutoDJ rotation queue</CardDescription>
+        <CardDescription>AutoDJ program clock — music, IDs, ad breaks</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* countdown to the next spin — fills as the current track plays out */}
+        {/* countdown to the next element — fills as the current one plays out */}
         <div className="rounded-md border border-border/50 bg-background/40 px-3 py-2">
           <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            <span>Next spin in</span>
-            <span className="font-mono text-primary">~{fmtTime(remaining)}</span>
+            <span>{cueing ? 'Cueing up next…' : 'Next spin in'}</span>
+            <span
+              className={cn(
+                'font-mono',
+                cueing ? 'animate-pulse text-red-400' : 'text-primary',
+              )}
+            >
+              ~{fmtTime(remaining)}
+            </span>
           </div>
           <Progress
             value={toNextPct}
-            className="mt-1.5 h-1"
-            aria-label="Time until the next track"
+            className={cn('mt-1.5 h-1', cueing && 'animate-pulse')}
+            aria-label="Time until the next element"
           />
         </div>
 
@@ -511,17 +605,51 @@ function UpNextCard({ data }: { data: NowPlayingResponse | null }) {
           <div className="space-y-1">
             {data.next.map((t, i) => {
               const heat = data.heat?.[t.id] ?? 0
+              const requesters = data.requestedBy?.[t.id] ?? []
+              const isId = t.elementKind === 'STATION_ID'
+              const isAd = t.elementKind === 'AD_SPOT'
               return (
                 <div
-                  key={t.id}
-                  className="flex items-center gap-3 rounded-md border border-transparent px-2 py-2 transition-colors hover:border-border hover:bg-accent/40"
+                  key={`${t.id}-${i}`}
+                  className={cn(
+                    'flex items-start gap-3 rounded-md border border-transparent px-2 py-2 transition-colors hover:border-border hover:bg-accent/40',
+                    isAd && 'bg-red-500/[0.04]',
+                    isId && 'border-dashed border-border/60 bg-background/30',
+                  )}
                 >
-                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-border bg-background/60 font-mono text-[10px] text-muted-foreground">
-                    {i + 1}
+                  <span
+                    className={cn(
+                      'flex h-6 w-6 shrink-0 items-center justify-center rounded border font-mono text-[10px]',
+                      isAd
+                        ? 'border-red-500/40 bg-red-500/10 text-red-400'
+                        : isId
+                          ? 'border-primary/40 bg-primary/10 text-primary'
+                          : 'border-border bg-background/60 text-muted-foreground',
+                    )}
+                  >
+                    {isAd ? (
+                      <Megaphone className="h-3 w-3" aria-hidden="true" />
+                    ) : isId ? (
+                      <Mic className="h-3 w-3" aria-hidden="true" />
+                    ) : (
+                      i + 1
+                    )}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium">{t.title}</p>
+                    <p
+                      className={cn(
+                        'truncate text-sm font-medium',
+                        isAd && 'text-red-300',
+                      )}
+                    >
+                      {t.title}
+                    </p>
                     <p className="truncate text-xs text-muted-foreground">{t.artist}</p>
+                    {t.elementKind === 'MUSIC' && requesters.length > 0 && (
+                      <p className="mt-0.5 truncate text-[10px] text-amber-500/90">
+                        shouted by {requesters.map((n) => `@${n}`).join(', ')}
+                      </p>
+                    )}
                   </div>
                   {heat > 0 && (
                     <span
@@ -537,9 +665,12 @@ function UpNextCard({ data }: { data: NowPlayingResponse | null }) {
                   </span>
                   <Badge
                     variant="outline"
-                    className="hidden shrink-0 border-border/70 text-[10px] font-medium text-muted-foreground sm:inline-flex"
+                    className={cn(
+                      'hidden shrink-0 border-border/70 text-[10px] font-medium text-muted-foreground sm:inline-flex',
+                      isAd && 'border-red-500/30 text-red-400',
+                    )}
                   >
-                    {t.playlist}
+                    {isAd ? (t.sponsorName ? 'Sponsor Spot' : 'House Promo') : t.playlist}
                   </Badge>
                 </div>
               )
@@ -547,7 +678,8 @@ function UpNextCard({ data }: { data: NowPlayingResponse | null }) {
           </div>
         )}
         <p className="text-[10px] leading-relaxed text-muted-foreground">
-          Listener shouts bump the hottest tracks up the wheel — send one from the request line.
+          Listener shouts bump the hottest tracks up the wheel — station IDs and ad breaks air
+          every few spins, per the program clock.
         </p>
       </CardContent>
     </Card>

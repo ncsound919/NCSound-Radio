@@ -363,8 +363,8 @@ export function ScheduleSection() {
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
                 <span className="font-semibold text-foreground/80">Clean Daypart runs 6a–7p ET</span>{' '}
-                — explicit tracks only air outside ad windows. The Fallback playlist guarantees
-                zero dead air.
+                — explicit tracks are held out of the AutoDJ wheel until 7:00 PM. The Fallback
+                playlist guarantees zero dead air.
               </p>
             </CardContent>
           </Card>

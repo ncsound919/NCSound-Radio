@@ -1,19 +1,24 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { stringHash } from '@/lib/broadcast'
+import {
+  adSpotScheduleForDay,
+  etDayStartUTC,
+  getRotationWheel,
+  DAY_MS,
+} from '@/lib/broadcast'
 
 export const dynamic = 'force-dynamic'
 
-const DAY_MS = 24 * 3600 * 1000
 const DEDUPE_TOLERANCE_MS = 90_000
 
 /**
  * POST /api/ops/ad-sync
- * Simulates the nightly "AzuraCast song history -> ad_plays" pull: every
- * ACTIVE campaign whose flight started gets its spotsPerDay slots stamped
- * into the last 24h at deterministic, evenly-spread timestamps (offset by a
- * hash of the campaign id). Slots within 90s of an existing row are skipped,
- * and P2002 on insert is swallowed — the ledger stays idempotent.
+ * Simulates the nightly "AzuraCast song history -> ad_plays" pull. It walks
+ * the SAME day-anchored ad schedule the on-air clock uses to pick creatives
+ * and stamps every SOLD spot from the last 24 hours into the ledger with its
+ * broadcast timestamp — so proof-of-play always matches what actually aired.
+ * House promos (unsold inventory) never appear in the ledger. Slots within
+ * 90s of an existing row are skipped and P2002 is swallowed — idempotent.
  */
 export async function POST() {
   try {
@@ -21,53 +26,65 @@ export async function POST() {
     const nowMs = now.getTime()
     const windowStartMs = nowMs - DAY_MS
 
-    const campaigns = await db.campaign.findMany({
-      where: { active: true, startAt: { lte: now } },
+    const [{ elements, cycleSec }, campaignRows] = await Promise.all([
+      getRotationWheel(nowMs),
+      db.campaign.findMany({
+        where: { active: true, startAt: { lte: now } },
+        include: { sponsor: true },
+        orderBy: { id: 'asc' },
+      }),
+    ])
+    const campaigns = campaignRows.map((c) => ({
+      id: c.id,
+      name: c.name,
+      sponsorName: c.sponsor.name,
+      creativeName: c.creativeName,
+      spotsPerDay: c.spotsPerDay,
+      startAtMs: c.startAt.getTime(),
+    }))
+
+    // Sold/house allocation for yesterday + today, clipped to the window.
+    const schedule = [
+      ...adSpotScheduleForDay(
+        etDayStartUTC(new Date(nowMs - DAY_MS)).getTime(),
+        elements,
+        cycleSec,
+        campaigns,
+      ),
+      ...adSpotScheduleForDay(etDayStartUTC(now).getTime(), elements, cycleSec, campaigns),
+    ].filter((s) => s.campaign && s.atMs <= nowMs && s.atMs >= windowStartMs)
+
+    const existing = await db.adPlay.findMany({
+      where: { playedAt: { gte: new Date(windowStartMs - 5 * 60_000) } },
+      select: { campaignId: true, playedAt: true },
     })
 
     let inserted = 0
     const byCampaign: Record<string, number> = {}
 
-    for (const campaign of campaigns) {
-      const spots = Math.max(1, campaign.spotsPerDay)
-      const intervalMs = DAY_MS / spots
-      const offsetMs = stringHash(campaign.id) % Math.max(1, Math.floor(intervalMs))
-
-      const existing = await db.adPlay.findMany({
-        where: {
-          campaignId: campaign.id,
-          playedAt: { gte: new Date(windowStartMs - 5 * 60_000) },
-        },
-        select: { playedAt: true },
-      })
-      const existingMs = existing.map((row) => row.playedAt.getTime())
-
-      let campaignInserted = 0
-      for (let slot = 0; slot < spots; slot++) {
-        const playedAtMs = Math.round(
-          windowStartMs + offsetMs + slot * intervalMs,
+    for (const slot of schedule) {
+      if (!slot.campaign) continue
+      if (
+        existing.some(
+          (row) =>
+            Math.abs(row.playedAt.getTime() - slot.atMs) <= DEDUPE_TOLERANCE_MS,
         )
-        if (
-          existingMs.some((ts) => Math.abs(ts - playedAtMs) <= DEDUPE_TOLERANCE_MS)
-        ) {
-          continue
-        }
-        try {
-          await db.adPlay.create({
-            data: {
-              campaignId: campaign.id,
-              playedAt: new Date(playedAtMs),
-              source: 'azuracast-history',
-            },
-          })
-          campaignInserted++
-        } catch {
-          // P2002 — raced/duplicate exact timestamp; skip.
-        }
+      ) {
+        continue
       }
-
-      inserted += campaignInserted
-      byCampaign[campaign.name] = campaignInserted
+      try {
+        await db.adPlay.create({
+          data: {
+            campaignId: slot.campaign.id,
+            playedAt: new Date(slot.atMs),
+            source: 'azuracast-history',
+          },
+        })
+        inserted++
+        byCampaign[slot.campaign.name] = (byCampaign[slot.campaign.name] ?? 0) + 1
+      } catch {
+        // P2002 — raced/duplicate exact timestamp; skip.
+      }
     }
 
     return NextResponse.json({
@@ -75,7 +92,7 @@ export async function POST() {
       inserted,
       byCampaign,
       ranAt: now.toISOString(),
-      note: 'Nightly sync from AzuraCast song history (simulated in sandbox)',
+      note: 'Nightly sync from AzuraCast song history (program-clock schedule, simulated in sandbox)',
     })
   } catch (error) {
     console.error('[api/ops/ad-sync]', error)

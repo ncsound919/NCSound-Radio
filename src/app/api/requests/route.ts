@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { etDayStartUTC } from '@/lib/broadcast'
+import { allow, clientIp, sweepRateLimits } from '@/lib/rate-limit'
 import type {
   RequestRecentEntry,
   RequestTopEntry,
@@ -107,6 +108,15 @@ export async function GET() {
  */
 export async function POST(req: NextRequest) {
   try {
+    // Per-IP throttle: 5 shouts per minute (the chat line has the same spirit).
+    sweepRateLimits()
+    if (!allow(`req:${clientIp(req)}`, 5, 60_000)) {
+      return NextResponse.json(
+        { error: 'Easy on the shout-outs — try again in a minute.' },
+        { status: 429 },
+      )
+    }
+
     const parsed = postSchema.safeParse(await req.json())
     if (!parsed.success) {
       return NextResponse.json(

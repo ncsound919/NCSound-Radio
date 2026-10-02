@@ -155,11 +155,15 @@ export function StationHeader({
           {/* Mobile menu */}
           <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
             <SheetTrigger asChild>
+              {/* suppressHydrationWarning: Radix generates the aria-controls id
+                  separately during SSR and client hydration (dev-only attribute
+                  mismatch); the value self-corrects when the sheet opens. */}
               <Button
                 variant="outline"
                 size="icon"
                 className="lg:hidden"
                 aria-label="Open navigation menu"
+                suppressHydrationWarning
               >
                 <Menu className="h-5 w-5" aria-hidden="true" />
               </Button>

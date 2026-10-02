@@ -1,7 +1,17 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Pause, Play, Share2, SignalHigh, SignalLow, Volume2, VolumeX } from 'lucide-react'
+import {
+  Mic,
+  Megaphone,
+  Pause,
+  Play,
+  Share2,
+  SignalHigh,
+  SignalLow,
+  Volume2,
+  VolumeX,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -37,6 +47,7 @@ export function PlayerBar() {
   const muted = volume === 0
 
   const current = data?.current
+  const elementKind = data?.element?.kind ?? 'MUSIC'
   const duration = current?.duration ?? 0
   const progress =
     current && lastFetch > 0 && duration > 0
@@ -125,18 +136,52 @@ export function PlayerBar() {
         <div className="min-w-0 flex-1">
           {track ? (
             <>
-              <p className="truncate text-sm font-medium leading-tight">{track.title}</p>
-              <p className="truncate text-xs leading-tight text-muted-foreground">{track.artist}</p>
+              <p className="truncate text-sm font-medium leading-tight">
+                {elementKind === 'AD_SPOT' && data?.element?.sponsorName
+                  ? `AD — ${data.element.sponsorName}`
+                  : track.title}
+              </p>
+              <p className="truncate text-xs leading-tight text-muted-foreground">
+                {elementKind === 'AD_SPOT'
+                  ? (data?.element?.creativeName ?? track.artist)
+                  : track.artist}
+              </p>
               <div className="mt-1 flex items-center gap-1.5">
-                <span className="inline-flex max-w-28 items-center truncate rounded border border-border/80 px-1.5 text-[10px] font-medium text-muted-foreground">
-                  {track.playlist}
-                </span>
-                <span
-                  title="Rights ledger ID"
-                  className="rounded border border-border px-1 font-mono text-[10px] leading-4 text-muted-foreground"
-                >
-                  {track.rightsId}
-                </span>
+                {elementKind === 'STATION_ID' && (
+                  <span
+                    title="Station imaging — legal identification"
+                    className="inline-flex items-center gap-1 rounded border border-primary/40 bg-primary/10 px-1.5 text-[10px] font-bold uppercase tracking-wider text-primary"
+                  >
+                    <Mic className="h-2.5 w-2.5" aria-hidden="true" />
+                    Station ID
+                  </span>
+                )}
+                {elementKind === 'AD_SPOT' && (
+                  <span
+                    title={
+                      data?.element?.campaignName
+                        ? `Sponsor spot — ${data.element.campaignName}`
+                        : 'Unsold inventory — house promo'
+                    }
+                    className="inline-flex items-center gap-1 rounded border border-red-500/40 bg-red-500/10 px-1.5 text-[10px] font-bold uppercase tracking-wider text-red-400"
+                  >
+                    <Megaphone className="h-2.5 w-2.5" aria-hidden="true" />
+                    {data?.element?.sponsorName ? 'Sponsored' : 'Promo'}
+                  </span>
+                )}
+                {elementKind === 'MUSIC' && (
+                  <span className="inline-flex max-w-28 items-center truncate rounded border border-border/80 px-1.5 text-[10px] font-medium text-muted-foreground">
+                    {track.playlist}
+                  </span>
+                )}
+                {elementKind === 'MUSIC' && (
+                  <span
+                    title="Rights ledger ID"
+                    className="rounded border border-border px-1 font-mono text-[10px] leading-4 text-muted-foreground"
+                  >
+                    {track.rightsId}
+                  </span>
+                )}
                 {track.explicit && (
                   <span
                     title="Explicit lyrics"
