@@ -1,0 +1,148 @@
+// WAVC 91.3 "Carolina Waves" — station data model
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Artist {
+  id         String   @id @default(cuid())
+  name       String
+  email      String?
+  city       String?
+  state      String?
+  instagram  String?
+  soundcloud String?
+  createdAt  DateTime @default(now())
+}
+
+model Submission {
+  id                  String    @id @default(cuid())
+  artistName          String
+  email               String
+  trackTitle          String
+  genre               String
+  explicit            Boolean   @default(false)
+  city                String?
+  state               String?
+  socials             String?
+  fileName            String?
+  fileSize            Int?
+  notes               String?
+  status              String    @default("PENDING") // PENDING | IN_REVIEW | APPROVED | DECLINED
+  agreementVersion    String    @default("v1.1")
+  agreementAcceptedAt DateTime?
+  agreementIp         String?
+  reviewNotes         String?
+  reviewedAt          DateTime?
+  rightsId            String?
+  createdAt           DateTime  @default(now())
+
+  @@index([status])
+}
+
+// Note: Submission↔Artist linked by name (loose coupling); no strict relation needed.
+
+model RightsLog {
+  id            String    @id // e.g. "R0123"
+  trackTitle    String
+  artistName    String
+  owner         String
+  sampleStatus  String    @default("PENDING") // PENDING | CLEARED | UNCLEARED
+  explicitFlag  Boolean   @default(false)
+  status        String    @default("PENDING") // PENDING | IN_REVIEW | CLEARED | BLOCKED
+  source        String    @default("SUBMISSION") // SUBMISSION | CORE
+  ownerProof    String?   // e.g. "signed agreement v1.1", "email permission 2024-11-02"
+  clearedAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([status])
+}
+
+model Sponsor {
+  id          String     @id @default(cuid())
+  name        String
+  contact     String
+  tier        String // ON_AIR_SPOT | SHOW_SPONSOR | DAYPART_SPONSOR
+  monthlyRate Int // cents
+  status      String     @default("ACTIVE") // ACTIVE | PENDING | ENDED
+  startAt     DateTime   @default(now())
+  endAt       DateTime?
+  campaigns   Campaign[]
+}
+
+model Campaign {
+  id           String   @id @default(cuid())
+  sponsorId    String
+  sponsor      Sponsor  @relation(fields: [sponsorId], references: [id])
+  name         String
+  spotsPerDay  Int      @default(6)
+  creativeName String
+  startAt      DateTime @default(now())
+  endAt        DateTime?
+  active       Boolean  @default(true)
+  adPlays      AdPlay[]
+}
+
+model AdPlay {
+  id         String   @id @default(cuid())
+  campaignId String
+  campaign   Campaign @relation(fields: [campaignId], references: [id])
+  playedAt   DateTime
+  source     String   @default("azuracast-history")
+
+  @@index([playedAt])
+  @@unique([campaignId, playedAt])
+}
+
+model Show {
+  id          String  @id @default(cuid())
+  name        String
+  slug        String  @unique
+  description String
+  host        String
+  dayOfWeek   Int // 0=Sun .. 6=Sat (America/New_York)
+  startHour   Int // 0-23 ET
+  startMinute Int     @default(0)
+  durationMin Int
+  explicit    Boolean @default(false)
+  kind        String  @default("PLAYLIST") // PLAYLIST | LIVE
+  accent      String  @default("amber")
+  active      Boolean @default(true)
+}
+
+model Track {
+  id          String   @id @default(cuid())
+  title       String
+  artist      String
+  album       String?
+  durationSec Int
+  rightsId    String // FK -> RightsLog.id (logical)
+  explicit    Boolean  @default(false)
+  playlist    String // Core Rotation | New Heat | Throwbacks | Clean Daypart | Fallback | Imaging | Ads
+  bpm         Int?
+  seedOrder   Int      @unique
+  createdAt   DateTime @default(now())
+
+  playLogs PlayLog[]
+}
+
+model PlayLog {
+  id       String   @id @default(cuid())
+  trackId  String
+  track    Track    @relation(fields: [trackId], references: [id])
+  playedAt DateTime
+  source   String   @default("AUTODJ") // AUTODJ | LIVE
+
+  @@unique([trackId, playedAt])
+  @@index([playedAt])
+}
+
+model StationSetting {
+  key   String @id
+  value String
+}

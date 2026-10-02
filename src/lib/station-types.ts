@@ -1,0 +1,183 @@
+/**
+ * WAVC 91.3 "Carolina Waves" — SHARED TYPES / API CONTRACT
+ * ---------------------------------------------------------
+ * This file is the single source of truth for every agent.
+ * Backend returns these shapes; frontend imports these types.
+ */
+
+export type TrackDTO = {
+  id: string
+  title: string
+  artist: string
+  album: string | null
+  durationSec: number
+  rightsId: string
+  explicit: boolean
+  playlist: string
+  bpm: number | null
+}
+
+export type NowPlayingResponse = {
+  station: {
+    name: string
+    tagline: string
+    bitrateKbps: number
+    timezone: string
+    rightsGate: string
+  }
+  current: {
+    track: TrackDTO
+    startedAt: string // ISO
+    elapsed: number // seconds
+    duration: number // seconds
+    remaining: number // seconds
+    progress: number // 0..1
+  }
+  next: TrackDTO[]
+  listeners: {
+    current: number
+    peak24h: number
+  }
+  mode: 'simulated' | 'live'
+  streamUrl: string | null
+  serverTime: string
+}
+
+export type HistoryResponse = {
+  plays: Array<{ id: string; playedAt: string; source: string; track: TrackDTO }>
+}
+
+export type ShowDTO = {
+  id: string
+  name: string
+  slug: string
+  description: string
+  host: string
+  dayOfWeek: number // 0=Sun..6=Sat
+  startHour: number
+  startMinute: number
+  durationMin: number
+  explicit: boolean
+  kind: 'PLAYLIST' | 'LIVE'
+  accent: string
+  active: boolean
+}
+
+export type ScheduleResponse = {
+  timezone: string
+  now: { dayOfWeek: number; minutes: number; label: string }
+  shows: ShowDTO[]
+  currentShowId: string | null
+}
+
+export type SubmissionDTO = {
+  id: string
+  artistName: string
+  email: string
+  trackTitle: string
+  genre: string
+  explicit: boolean
+  city: string | null
+  state: string | null
+  socials: string | null
+  fileName: string | null
+  fileSize: number | null
+  notes: string | null
+  status: 'PENDING' | 'IN_REVIEW' | 'APPROVED' | 'DECLINED'
+  agreementVersion: string
+  agreementAcceptedAt: string | null
+  agreementIp: string | null
+  reviewNotes: string | null
+  reviewedAt: string | null
+  rightsId: string | null
+  createdAt: string
+}
+
+export type RightsDTO = {
+  id: string
+  trackTitle: string
+  artistName: string
+  owner: string
+  sampleStatus: 'PENDING' | 'CLEARED' | 'UNCLEARED'
+  explicitFlag: boolean
+  status: 'PENDING' | 'IN_REVIEW' | 'CLEARED' | 'BLOCKED'
+  source: 'SUBMISSION' | 'CORE'
+  ownerProof: string | null
+  clearedAt: string | null
+  createdAt: string
+}
+
+export type CampaignDTO = {
+  id: string
+  name: string
+  spotsPerDay: number
+  creativeName: string
+  startAt: string
+  endAt: string | null
+  active: boolean
+  playsTotal: number
+  playsToday: number
+}
+
+export type SponsorDTO = {
+  id: string
+  name: string
+  contact: string
+  tier: 'ON_AIR_SPOT' | 'SHOW_SPONSOR' | 'DAYPART_SPONSOR'
+  monthlyRate: number // cents
+  status: 'ACTIVE' | 'PENDING' | 'ENDED'
+  startAt: string
+  endAt: string | null
+  campaigns: CampaignDTO[]
+}
+
+export type SponsorsResponse = {
+  sponsors: SponsorDTO[]
+  packages: Array<{ id: string; name: string; price: string; perks: string[]; spotsPerDay: number }>
+}
+
+export type AdPlayDTO = {
+  id: string
+  campaignId: string
+  campaignName: string
+  sponsorName: string
+  playedAt: string
+  source: string
+}
+
+export type AdPlaysResponse = {
+  plays: AdPlayDTO[]
+  total: number
+  last7Days: number
+}
+
+export type AdSyncResponse = {
+  ok: boolean
+  inserted: number
+  byCampaign: Record<string, number>
+  ranAt: string
+  note: string
+}
+
+export type StatsResponse = {
+  library: { tracks: number; cleared: number; pendingRights: number; blocked: number; totalHours: number }
+  submissions: { total: number; pending: number; inReview: number; approved: number; declined: number }
+  sponsors: { active: number; monthlyMRR: number }
+  adplays: { last7Days: number; today: number }
+  listeners: { current: number; peak24h: number }
+  bandwidth: { kbps: number; gbPerListenerHour: number; projectedGBDay: number }
+  uptime: { streamOk: boolean; daysSinceLaunch: number }
+  checklist: string[]
+}
+
+// ---- Player/store shared enums ----
+export type PlayerState = {
+  isPlaying: boolean
+  volume: number // 0..1
+  previewSynth: boolean // true = WebAudio studio preview, false = silent UI
+}
+
+export const TAB_IDS = ['on-air', 'schedule', 'submit', 'rights', 'sponsors', 'ops'] as const
+export type TabId = (typeof TAB_IDS)[number]
+
+export const AGREEMENT_VERSION = 'v1.1'
