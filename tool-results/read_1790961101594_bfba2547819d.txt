@@ -1,0 +1,781 @@
+     1→/**
+     2→ * WAVC 91.3 "Carolina Waves" — backend broadcast-engine helpers.
+     3→ * ---------------------------------------------------------------
+     4→ * Simulated AutoDJ implementing the station's PROGRAM CLOCK: the "what's on
+     5→ * air right now" decision is a pure, deterministic function of the wall clock
+     6→ * over an element wheel (music blocks → station IDs → ad breaks). Every
+     7→ * poller sees the same element for the same second, and PlayLog rows
+     8→ * accumulate as the API is polled.
+     9→ *
+    10→ * Programming rules enforced here:
+    11→ *  - Rights gate: only library tracks ever reach the wheel; the request line
+    12→ *    refuses anything without a CLEARED rights record.
+    13→ *  - Clean Daypart 06:00–19:00 ET: explicit tracks are held out of rotation.
+    14→ *  - Fallback tracks sit on the bench and only join the wheel when a listener
+    15→ *    shout pulls them in (request weight > 0) — zero dead air insurance.
+    16→ *  - Ad breaks carry sold sponsor creatives (matched to the nightly-sync
+    17→ *    ledger formula) or house promos for unsold inventory.
+    18→ *
+    19→ * Also hosts small shared helpers used by the API routes:
+    20→ * America/New_York wall-clock math, listener simulation and
+    21→ * Prisma-row -> DTO mappers (backend-only; the frontend imports the
+    22→ * DTO types from station-types.ts).
+    23→ */
+    24→
+    25→import { db } from '@/lib/db'
+    26→import type {
+    27→  AdPlay,
+    28→  Campaign,
+    29→  PlayLog,
+    30→  RightsLog,
+    31→  Show,
+    32→  Sponsor,
+    33→  Submission,
+    34→  Track,
+    35→} from '@prisma/client'
+    36→import type {
+    37→  AdPlayDTO,
+    38→  CampaignDTO,
+    39→  RightsDTO,
+    40→  ShowDTO,
+    41→  SponsorDTO,
+    42→  SubmissionDTO,
+    43→  TrackDTO,
+    44→} from '@/lib/station-types'
+    45→
+    46→// ---------------------------------------------------------------------------
+    47→// Constants
+    48→// ---------------------------------------------------------------------------
+    49→
+    50→export const STATION_TIMEZONE = 'America/New_York'
+    51→
+    52→/** Epoch anchor for the rotation clock: 2025-01-01T00:00:00Z. */
+    53→const ROTATION_ANCHOR_MS = Date.UTC(2025, 0, 1)
+    54→/** Silence gap inserted after every element in the cycle. */
+    55→const TRACK_GAP_SEC = 12
+    56→/** Songs per music block before an imaging ID or ad break. */
+    57→const BLOCK_SIZE = 3
+    58→/**
+    59→ * Program-clock cadence after each music block (round-robin):
+    60→ *   block 0 → station ID · block 1 → ad break (2 spots) · block 2 → talk/spotlight.
+    61→ * Mirrors the hourly clock: Music → Station ID → Talk → Music → Ad break.
+    62→ */
+    63→const BREAK_PATTERN: Array<'STATION_ID' | 'AD_BREAK' | 'TALK'> = [
+    64→  'STATION_ID',
+    65→  'AD_BREAK',
+    66→  'TALK',
+    67→]
+    68→/** Duration of a single ad spot (two spots per break). */
+    69→const AD_SPOT_SEC = 30
+    70→/** Rotation wheel cache TTL (nowplaying is polled every ~10s). */
+    71→const ROTATION_CACHE_TTL_MS = 60_000
+    72→/** Listener-simulation bucket: fresh deterministic noise every 15s. */
+    73→const LISTENER_BUCKET_MS = 15_000
+    74→/** Station launch date for uptime math: 2025-10-01. */
+    75→export const LAUNCH_UTC_MS = Date.UTC(2025, 9, 1)
+    76→
+    77→export const DAY_MS = 24 * 3600 * 1000
+    78→
+    79→// ---------------------------------------------------------------------------
+    80→// AutoDJ rotation engine — program clock
+    81→// ---------------------------------------------------------------------------
+    82→
+    83→export type ElementKind = 'MUSIC' | 'STATION_ID' | 'AD_SPOT' | 'TALK'
+    84→
+    85→export type AdCampaignInfo = {
+    86→  id: string
+    87→  name: string
+    88→  sponsorName: string
+    89→  creativeName: string
+    90→  spotsPerDay: number
+    91→  startAtMs: number
+    92→}
+    93→
+    94→export type RotationElement = {
+    95→  kind: ElementKind
+    96→  track: Track | null
+    97→  campaign: AdCampaignInfo | null
+    98→  durSec: number
+    99→}
+   100→
+   101→type WheelCache = {
+   102→  elements: RotationElement[]
+   103→  cycleSec: number
+   104→  fetchedAt: number
+   105→}
+   106→
+   107→/** Show-table cache (the live-show takeover polls this every 10s). */
+   108→type ShowCache = { shows: Show[]; fetchedAt: number }
+   109→
+   110→const globalForRotation = globalThis as unknown as {
+   111→  wavcRotationCache: WheelCache | undefined
+   112→  wavcShowCache: ShowCache | undefined
+   113→}
+   114→
+   115→/**
+   116→ * House-promo creative pool — unsold ad-break inventory rotates through these
+   117→ * instead of airing a single canned spot (deterministic pick per slot).
+   118→ */
+   119→export const HOUSE_PROMOS: Array<{ title: string; line: string }> = [
+   120→  { title: 'House promo — submit your track', line: 'Artists: send your music through the rights gate at wavc.fm/submit.' },
+   121→  { title: 'House promo — the studio line is open', line: 'Text the studio at (910) 555-0191 or join the studio line on the site.' },
+   122→  { title: 'House promo — sponsor this daypart', line: 'Your brand here: daypart sponsorship from $180/mo — sales@wavc.fm.' },
+   123→]
+   124→
+   125→/** Deterministic house-promo variant for a slot instant. */
+   126→export function housePromoForSlot(slotMs: number): { title: string; line: string } {
+   127→  const bucket = Math.floor(slotMs / 600_000) // rotates every 10 minutes of airtime
+   128→  return HOUSE_PROMOS[stringHash(`house-${bucket}`) % HOUSE_PROMOS.length]
+   129→}
+   130→
+   131→/**
+   132→ * Listener-request weights (last 7 days): trackId -> request count.
+   133→ * Feeds both the request-weighted rotation and the "heat" readouts.
+   134→ */
+   135→export async function getRequestWeights(nowMs: number = Date.now()): Promise<Map<string, number>> {
+   136→  const since = new Date(nowMs - 7 * 86_400_000)
+   137→  const groups = await db.trackRequest.groupBy({
+   138→    by: ['trackId'],
+   139→    where: { createdAt: { gte: since } },
+   140→    _count: { trackId: true },
+   141→  })
+   142→  return new Map(groups.map((g) => [g.trackId, g._count.trackId]))
+   143→}
+   144→
+   145→/**
+   146→ * Absolute AD_SPOT instants (ms) whose element slot starts inside [fromMs, toMs].
+   147→ * Derived from the same anchor/cycle math as computeOnAir, so an instant here
+   148→ * IS the broadcast time of that spot.
+   149→ */
+   150→export function adBreakSpotInstants(
+   151→  elements: RotationElement[],
+   152→  cycleSec: number,
+   153→  fromMs: number,
+   154→  toMs: number,
+   155→): Array<{ atMs: number; elementIndex: number }> {
+   156→  if (elements.length === 0 || cycleSec <= 0) return []
+   157→  const offsets: number[] = []
+   158→  let acc = 0
+   159→  for (const e of elements) {
+   160→    offsets.push(acc)
+   161→    acc += (e.durSec + TRACK_GAP_SEC) * 1000
+   162→  }
+   163→  const cycleMs = cycleSec * 1000
+   164→  const firstCycle = Math.floor((fromMs - ROTATION_ANCHOR_MS) / cycleMs)
+   165→  const lastCycle = Math.floor((toMs - ROTATION_ANCHOR_MS) / cycleMs)
+   166→  const out: Array<{ atMs: number; elementIndex: number }> = []
+   167→  for (let c = firstCycle; c <= lastCycle; c++) {
+   168→    for (let i = 0; i < elements.length; i++) {
+   169→      if (elements[i].kind !== 'AD_SPOT') continue
+   170→      const atMs = ROTATION_ANCHOR_MS + c * cycleMs + offsets[i]
+   171→      if (atMs >= fromMs && atMs <= toMs) out.push({ atMs, elementIndex: i })
+   172→    }
+   173→  }
+   174→  return out.sort((a, b) => a.atMs - b.atMs)
+   175→}
+   176→
+   177→/**
+   178→ * Sold/house allocation for one ET day of ad-break spots, in time order.
+   179→ *
+   180→ * Sold spots are spread evenly across the whole day (Bresenham on the spot
+   181→ * index — never bunched into the small hours) and assigned round-robin to
+   182→ * campaigns while each campaign's spotsPerDay budget lasts; everything else
+   183→ * airs as a house promo (unsold inventory, never ledgered).
+   184→ *
+   185→ * This is THE shared schedule: the on-air clock picks the creative it airs
+   186→ * from it, and the nightly ad-sync ledger pull writes exactly its sold rows.
+   187→ */
+   188→export function adSpotScheduleForDay(
+   189→  dayStartMs: number,
+   190→  elements: RotationElement[],
+   191→  cycleSec: number,
+   192→  campaigns: AdCampaignInfo[],
+   193→): Array<{ atMs: number; campaign: AdCampaignInfo | null }> {
+   194→  const instants = adBreakSpotInstants(elements, cycleSec, dayStartMs, dayStartMs + DAY_MS)
+   195→  const M = instants.length
+   196→  if (M === 0) return []
+   197→  const budgets = campaigns.map((c) => Math.max(0, c.spotsPerDay))
+   198→  const totalSold = Math.min(M, budgets.reduce((a, b) => a + b, 0))
+   199→  const remaining = [...budgets]
+   200→  const out: Array<{ atMs: number; campaign: AdCampaignInfo | null }> = []
+   201→  let s = 0
+   202→  for (let k = 0; k < M; k++) {
+   203→    let campaign: AdCampaignInfo | null = null
+   204→    if (
+   205→      s < totalSold &&
+   206→      Math.floor(((k + 1) * totalSold) / M) > Math.floor((k * totalSold) / M)
+   207→    ) {
+   208→      for (let attempt = 0; attempt < campaigns.length; attempt++) {
+   209→        const j = (s + attempt) % campaigns.length
+   210→        if (remaining[j] > 0) {
+   211→          const candidate = campaigns[j]
+   212→          remaining[j]--
+   213→          s++
+   214→          // Spots before the campaign's flight start stay unsold (house).
+   215→          if (candidate.startAtMs <= instants[k].atMs) campaign = candidate
+   216→          break
+   217→        }
+   218→      }
+   219→    }
+   220→    out.push({ atMs: instants[k].atMs, campaign })
+   221→  }
+   222→  return out
+   223→}
+   224→
+   225→/** Find the schedule entry for an absolute spot start (± half a slot gap). */
+   226→export function campaignForAdSlot(
+   227→  slotStartMs: number,
+   228→  schedule: Array<{ atMs: number; campaign: AdCampaignInfo | null }>,
+   229→): AdCampaignInfo | null {
+   230→  const TOL_MS = (TRACK_GAP_SEC * 1000) / 2
+   231→  for (const s of schedule) {
+   232→    if (Math.abs(s.atMs - slotStartMs) <= TOL_MS) return s.campaign
+   233→  }
+   234→  return null
+   235→}
+   236→
+   237→/** Clean Daypart window: 06:00–18:59 ET (explicit lyrics held). */
+   238→export function isCleanDaypart(nowMs: number = Date.now()): boolean {
+   239→  const wc = etWallClock(new Date(nowMs))
+   240→  return wc.hour >= 6 && wc.hour < 19
+   241→}
+   242→
+   243→/**
+   244→ * Build the program-clock wheel. Cached 60s so every poller sees the same
+   245→ * element order within a window; listener shouts re-sort the front of the
+   246→ * music blocks on the next refresh.
+   247→ */
+   248→export async function getRotationWheel(nowMs: number = Date.now()): Promise<{
+   249→  elements: RotationElement[]
+   250→  cycleSec: number
+   251→}> {
+   252→  const cached = globalForRotation.wavcRotationCache
+   253→  if (
+   254→    cached &&
+   255→    Array.isArray(cached.elements) &&
+   256→    cached.elements.length > 0 &&
+   257→    typeof cached.cycleSec === 'number' &&
+   258→    Date.now() - cached.fetchedAt < ROTATION_CACHE_TTL_MS
+   259→  ) {
+   260→    return cached
+   261→  }
+   262→
+   263→  const clean = isCleanDaypart(nowMs)
+   264→
+   265→  const [rows, weights, imagingRows, talkRows, campaignRows] = await Promise.all([
+   266→    db.track.findMany({ orderBy: { seedOrder: 'asc' } }),
+   267→    getRequestWeights(nowMs),
+   268→    db.track.findMany({ where: { playlist: 'Imaging' }, orderBy: { seedOrder: 'asc' } }),
+   269→    db.track.findMany({ where: { playlist: 'Talk' }, orderBy: { seedOrder: 'asc' } }),
+   270→    db.campaign.findMany({
+   271→      where: { active: true, startAt: { lte: new Date(nowMs) } },
+   272→      include: { sponsor: true },
+   273→      orderBy: { id: 'asc' },
+   274→    }),
+   275→  ])
+   276→
+   277→  const campaigns: AdCampaignInfo[] = campaignRows.map((c) => ({
+   278→    id: c.id,
+   279→    name: c.name,
+   280→    sponsorName: c.sponsor.name,
+   281→    creativeName: c.creativeName,
+   282→    spotsPerDay: c.spotsPerDay,
+   283→    startAtMs: c.startAt.getTime(),
+   284→  }))
+   285→
+   286→  // Music pool: everything except Imaging and Talk; Fallback tracks wait on
+   287→  // the bench unless a listener shout pulls them in. Daypart filter on top.
+   288→  let pool = rows.filter(
+   289→    (t) =>
+   290→      t.playlist !== 'Imaging' &&
+   291→      t.playlist !== 'Talk' &&
+   292→      (t.playlist !== 'Fallback' || (weights.get(t.id) ?? 0) > 0),
+   293→  )
+   294→  if (pool.length === 0) pool = rows.filter((t) => t.playlist !== 'Imaging' && t.playlist !== 'Talk')
+   295→  if (clean) {
+   296→    const cleanPool = pool.filter((t) => !t.explicit)
+   297→    if (cleanPool.length > 0) pool = cleanPool
+   298→  }
+   299→
+   300→  // Request-weighted ordering: top-3 hottest lead the wheel, the rest hold
+   301→  // seed order (stable — equal weights never reshuffle).
+   302→  const promoted = pool
+   303→    .filter((t) => (weights.get(t.id) ?? 0) > 0)
+   304→    .sort(
+   305→      (a, b) => (weights.get(b.id) ?? 0) - (weights.get(a.id) ?? 0) || a.seedOrder - b.seedOrder,
+   306→    )
+   307→    .slice(0, 3)
+   308→  const promotedIds = new Set(promoted.map((t) => t.id))
+   309→  const music = [...promoted, ...pool.filter((t) => !promotedIds.has(t.id))]
+   310→
+   311→  if (music.length === 0) {
+   312→    throw new Error('Rotation library is empty')
+   313→  }
+   314→
+   315→  const elements: RotationElement[] = []
+   316→  let blockIndex = 0
+   317→  for (let m = 0; m < music.length; m += BLOCK_SIZE) {
+   318→    for (let k = m; k < Math.min(m + BLOCK_SIZE, music.length); k++) {
+   319→      elements.push({
+   320→        kind: 'MUSIC',
+   321→        track: music[k],
+   322→        campaign: null,
+   323→        durSec: music[k].durationSec,
+   324→      })
+   325→    }
+   326→    // Program clock: station ID → ad break → talk/spotlight, round-robin.
+   327→    const breakKind = BREAK_PATTERN[blockIndex % BREAK_PATTERN.length]
+   328→    if (breakKind === 'AD_BREAK') {
+   329→      for (let spot = 0; spot < 2; spot++) {
+   330→        elements.push({ kind: 'AD_SPOT', track: null, campaign: null, durSec: AD_SPOT_SEC })
+   331→      }
+   332→    } else if (breakKind === 'TALK' && talkRows.length > 0) {
+   333→      const talkTrack = talkRows[Math.floor(blockIndex / BREAK_PATTERN.length) % talkRows.length]
+   334→      elements.push({
+   335→        kind: 'TALK',
+   336→        track: talkTrack,
+   337→        campaign: null,
+   338→        durSec: talkTrack.durationSec,
+   339→      })
+   340→    } else if (imagingRows.length > 0) {
+   341→      const idTrack = imagingRows[blockIndex % imagingRows.length]
+   342→      elements.push({
+   343→        kind: 'STATION_ID',
+   344→        track: idTrack,
+   345→        campaign: null,
+   346→        durSec: idTrack.durationSec,
+   347→      })
+   348→    }
+   349→    blockIndex++
+   350→  }
+   351→
+   352→  const cycleSec = elements.reduce((acc, e) => acc + e.durSec + TRACK_GAP_SEC, 0)
+   353→
+   354→  globalForRotation.wavcRotationCache = { elements, cycleSec, fetchedAt: Date.now() }
+   355→  return { elements, cycleSec }
+   356→}
+   357→
+   358→export type OnAir = {
+   359→  element: RotationElement
+   360→  /** Absolute slot start instant — used as the PlayLog playedAt (music/ID). */
+   361→  startedAt: Date
+   362→  /** Seconds elapsed inside the element window (floored). */
+   363→  elapsed: number
+   364→  /** Element duration in seconds. */
+   365→  duration: number
+   366→  /** Seconds remaining in the element window. */
+   367→  remaining: number
+   368→  /** 0..1 playback progress. */
+   369→  progress: number
+   370→  /** Index of the element inside the wheel. */
+   371→  index: number
+   372→}
+   373→
+   374→/**
+   375→ * Deterministic "what's on air now" from the wall clock over the element
+   376→ * wheel. Each element occupies `durSec + 12s gap` inside one repeating
+   377→ * cycle. If the clock sits in the inter-element gap we clamp elapsed to the
+   378→ * full duration (progress 1) — the UI reads that as "cueing up next".
+   379→ */
+   380→export function computeOnAir(
+   381→  elements: RotationElement[],
+   382→  cycleSec: number,
+   383→  nowMs: number = Date.now(),
+   384→): OnAir {
+   385→  if (elements.length === 0 || cycleSec <= 0) {
+   386→    throw new Error('Rotation wheel is empty')
+   387→  }
+   388→  const cycleMs = cycleSec * 1000
+   389→  const position = (((nowMs - ROTATION_ANCHOR_MS) % cycleMs) + cycleMs) % cycleMs
+   390→  // Start of the CURRENT cycle in absolute time — the wall-clock instant the
+   391→  // wheel last wrapped. Slot starts are true broadcast instants (this is what
+   392→  // PlayLog/ad_plays key on and what the ad schedule must match exactly).
+   393→  const cycleStartMs = nowMs - position
+   394→
+   395→  let slotStart = 0
+   396→  for (let i = 0; i < elements.length; i++) {
+   397→    const element = elements[i]
+   398→    const slotLenMs = (element.durSec + TRACK_GAP_SEC) * 1000
+   399→    if (position < slotStart + slotLenMs) {
+   400→      const elapsedRaw = Math.max(0, (position - slotStart) / 1000)
+   401→      const elapsed = Math.min(Math.floor(elapsedRaw), element.durSec)
+   402→      return {
+   403→        element,
+   404→        startedAt: new Date(cycleStartMs + slotStart),
+   405→        elapsed,
+   406→        duration: element.durSec,
+   407→        remaining: Math.max(0, element.durSec - elapsed),
+   408→        progress: element.durSec > 0 ? Math.min(1, elapsedRaw / element.durSec) : 0,
+   409→        index: i,
+   410→      }
+   411→    }
+   412→    slotStart += slotLenMs
+   413→  }
+   414→
+   415→  // Unreachable (modulo guarantees a slot hit) — safe fallback.
+   416→  const last = elements[elements.length - 1]
+   417→  return {
+   418→    element: last,
+   419→    startedAt: new Date(cycleStartMs),
+   420→    elapsed: 0,
+   421→    duration: last.durSec,
+   422→    remaining: last.durSec,
+   423→    progress: 0,
+   424→    index: elements.length - 1,
+   425→  }
+   426→}
+   427→
+   428→/** Next `count` elements in the wheel, wrapping around. */
+   429→export function getUpNextElements(
+   430→  elements: RotationElement[],
+   431→  index: number,
+   432→  count = 3,
+   433→): RotationElement[] {
+   434→  if (elements.length === 0) return []
+   435→  const out: RotationElement[] = []
+   436→  for (let k = 1; k <= count; k++) {
+   437→    out.push(elements[(index + k) % elements.length])
+   438→  }
+   439→  return out
+   440→}
+   441→
+   442→// ---------------------------------------------------------------------------
+   443→// Scheduled-show takeover (live programming)
+   444→// ---------------------------------------------------------------------------
+   445→
+   446→/** Cached 30s: one Show-table read per ~3 nowplaying polls. */
+   447→export async function getActiveShow(nowMs: number = Date.now()): Promise<Show | null> {
+   448→  const cached = globalForRotation.wavcShowCache
+   449→  let shows: Show[]
+   450→  if (cached && Array.isArray(cached.shows) && Date.now() - cached.fetchedAt < 30_000) {
+   451→    shows = cached.shows
+   452→  } else {
+   453→    shows = await db.show.findMany({
+   454→      orderBy: [
+   455→        { dayOfWeek: 'asc' },
+   456→        { startHour: 'asc' },
+   457→        { startMinute: 'asc' },
+   458→      ],
+   459→    })
+   460→    globalForRotation.wavcShowCache = { shows, fetchedAt: Date.now() }
+   461→  }
+   462→
+   463→  const wc = etWallClock(new Date(nowMs))
+   464→  return (
+   465→    shows.find((s) => {
+   466→      if (!s.active || s.dayOfWeek !== wc.dayOfWeek) return false
+   467→      const startMin = s.startHour * 60 + s.startMinute
+   468→      return wc.minuteOfDay >= startMin && wc.minuteOfDay < startMin + s.durationMin
+   469→    }) ?? null
+   470→  )
+   471→}
+   472→
+   473→// ---------------------------------------------------------------------------
+   474→// Listener simulation (deterministic, "breathes" with the day)
+   475→// ---------------------------------------------------------------------------
+   476→
+   477→/** 32-bit integer hash (murmur-style finalizer) — deterministic. */
+   478→function hash32(input: number): number {
+   479→  let x = Math.imul(input ^ 0x9e3779b9, 0x85ebca6b)
+   480→  x = Math.imul(x ^ (x >>> 13), 0xc2b2ae35)
+   481→  x ^= x >>> 16
+   482→  return x >>> 0
+   483→}
+   484→
+   485→/** Deterministic string hash (djb2 with 32-bit wrapping). */
+   486→export function stringHash(input: string): number {
+   487→  let h = 5381
+   488→  for (let i = 0; i < input.length; i++) {
+   489→    h = (Math.imul(h, 33) ^ input.charCodeAt(i)) >>> 0
+   490→  }
+   491→  return h >>> 0
+   492→}
+   493→
+   494→/**
+   495→ * Simulated listeners: circadian curve over the ET day (evening peak)
+   496→ * plus deterministic noise that changes every 15 seconds. Never < 3.
+   497→ */
+   498→export function computeListeners(nowMs: number = Date.now()): {
+   499→  current: number
+   500→  peak24h: number
+   501→} {
+   502→  const wc = etWallClock(new Date(nowMs))
+   503→  const hoursIntoDay = wc.minuteOfDay / 60
+   504→  // Peak around 20:00 ET (sin argument = pi/2 when hoursIntoDay - 14 = 6).
+   505→  const circadian = 26 * Math.sin((2 * Math.PI * (hoursIntoDay - 14)) / 24)
+   506→  const bucket = Math.floor(nowMs / LISTENER_BUCKET_MS)
+   507→  const noise = ((hash32(bucket) % 1000) / 1000 - 0.5) * 12
+   508→  const current = Math.max(3, Math.round(38 + circadian + noise))
+   509→  const peak24h = Math.round(current * 2) + 44
+   510→  return { current, peak24h }
+   511→}
+   512→
+   513→// ---------------------------------------------------------------------------
+   514→// PlayLog accumulation
+   515→// ---------------------------------------------------------------------------
+   516→
+   517→/**
+   518→ * Insert the current track slot into song history. Safe to call on every
+   519→ * poll: unique(trackId, playedAt) + swallowed P2002 makes it idempotent.
+   520→ */
+   521→export async function maybeLogPlays(
+   522→  trackId: string,
+   523→  startedAt: Date,
+   524→  source = 'AUTODJ',
+   525→): Promise<void> {
+   526→  try {
+   527→    await db.playLog.create({
+   528→      data: { trackId, playedAt: startedAt, source },
+   529→    })
+   530→  } catch {
+   531→    // P2002 unique-violation — this slot is already logged; ignore.
+   532→  }
+   533→}
+   534→
+   535→/**
+   536→ * Proof-of-play: log a SOLD sponsor spot at its broadcast instant. Safe on
+   537→ * every poll — unique(campaignId, playedAt) + swallowed P2002. The nightly
+   538→ * ad-sync backfills any slots missed while nobody was polling.
+   539→ */
+   540→export async function maybeLogAdPlay(
+   541→  campaignId: string,
+   542→  playedAt: Date,
+   543→  source = 'AUTODJ',
+   544→): Promise<void> {
+   545→  try {
+   546→    await db.adPlay.create({
+   547→      data: { campaignId, playedAt, source },
+   548→    })
+   549→  } catch {
+   550→    // P2002 — this spot is already ledgered; ignore.
+   551→  }
+   552→}
+   553→
+   554→// ---------------------------------------------------------------------------
+   555→// America/New_York wall-clock helpers
+   556→// ---------------------------------------------------------------------------
+   557→
+   558→const WEEKDAY_INDEX: Record<string, number> = {
+   559→  Sun: 0,
+   560→  Mon: 1,
+   561→  Tue: 2,
+   562→  Wed: 3,
+   563→  Thu: 4,
+   564→  Fri: 5,
+   565→  Sat: 6,
+   566→}
+   567→
+   568→export type EtWallClock = {
+   569→  year: number
+   570→  month: number // 1-12
+   571→  day: number // 1-31
+   572→  dayOfWeek: number // 0=Sun..6=Sat
+   573→  hour: number // 0-23
+   574→  minute: number
+   575→  minuteOfDay: number
+   576→  weekdayShort: string
+   577→}
+   578→
+   579→/** Wall-clock fields for the station timezone via Intl (DST-safe). */
+   580→export function etWallClock(date: Date = new Date()): EtWallClock {
+   581→  const fmt = new Intl.DateTimeFormat('en-US', {
+   582→    timeZone: STATION_TIMEZONE,
+   583→    year: 'numeric',
+   584→    month: '2-digit',
+   585→    day: '2-digit',
+   586→    weekday: 'short',
+   587→    hour: '2-digit',
+   588→    minute: '2-digit',
+   589→    hourCycle: 'h23',
+   590→  })
+   591→  const parts: Record<string, string> = {}
+   592→  for (const p of fmt.formatToParts(date)) parts[p.type] = p.value
+   593→  const hour = Number.parseInt(parts.hour ?? '0', 10) % 24
+   594→  const minute = Number.parseInt(parts.minute ?? '0', 10)
+   595→  return {
+   596→    year: Number.parseInt(parts.year ?? '1970', 10),
+   597→    month: Number.parseInt(parts.month ?? '1', 10),
+   598→    day: Number.parseInt(parts.day ?? '1', 10),
+   599→    dayOfWeek: WEEKDAY_INDEX[parts.weekday ?? 'Sun'] ?? 0,
+   600→    hour,
+   601→    minute,
+   602→    minuteOfDay: hour * 60 + minute,
+   603→    weekdayShort: parts.weekday ?? 'Sun',
+   604→  }
+   605→}
+   606→
+   607→/** UTC offset (minutes, e.g. -300 EST / -240 EDT) for the station timezone. */
+   608→export function etOffsetMinutes(date: Date = new Date()): number {
+   609→  const fmt = new Intl.DateTimeFormat('en-US', {
+   610→    timeZone: STATION_TIMEZONE,
+   611→    timeZoneName: 'longOffset',
+   612→  })
+   613→  const name =
+   614→    fmt.formatToParts(date).find((p) => p.type === 'timeZoneName')?.value ??
+   615→    'GMT-05:00'
+   616→  const m = /GMT([+-])(\d{1,2})(?::(\d{2}))?/.exec(name)
+   617→  if (!m) return -300
+   618→  const sign = m[1] === '-' ? -1 : 1
+   619→  return sign * (Number.parseInt(m[2], 10) * 60 + (m[3] ? Number.parseInt(m[3], 10) : 0))
+   620→}
+   621→
+   622→/**
+   623→ * The UTC instant corresponding to "local midnight today" in the station
+   624→ * timezone (handles EST/EDT). Used for playsToday-style counters and the
+   625→ * day-anchored sold-ad-slot schedule.
+   626→ */
+   627→export function etDayStartUTC(date: Date = new Date()): Date {
+   628→  const wc = etWallClock(date)
+   629→  return new Date(Date.UTC(wc.year, wc.month - 1, wc.day) - etOffsetMinutes(date) * 60_000)
+   630→}
+   631→
+   632→// ---------------------------------------------------------------------------
+   633→// Prisma-row -> DTO mappers (shared by the API routes)
+   634→// ---------------------------------------------------------------------------
+   635→
+   636→export function toTrackDTO(t: Track): TrackDTO {
+   637→  return {
+   638→    id: t.id,
+   639→    title: t.title,
+   640→    artist: t.artist,
+   641→    album: t.album,
+   642→    durationSec: t.durationSec,
+   643→    rightsId: t.rightsId,
+   644→    explicit: t.explicit,
+   645→    playlist: t.playlist,
+   646→    bpm: t.bpm,
+   647→  }
+   648→}
+   649→
+   650→export function toShowDTO(s: Show): ShowDTO {
+   651→  return {
+   652→    id: s.id,
+   653→    name: s.name,
+   654→    slug: s.slug,
+   655→    description: s.description,
+   656→    host: s.host,
+   657→    dayOfWeek: s.dayOfWeek,
+   658→    startHour: s.startHour,
+   659→    startMinute: s.startMinute,
+   660→    durationMin: s.durationMin,
+   661→    explicit: s.explicit,
+   662→    kind: s.kind === 'LIVE' ? 'LIVE' : 'PLAYLIST',
+   663→    accent: s.accent,
+   664→    active: s.active,
+   665→  }
+   666→}
+   667→
+   668→export function toSubmissionDTO(s: Submission): SubmissionDTO {
+   669→  return {
+   670→    id: s.id,
+   671→    artistName: s.artistName,
+   672→    email: s.email,
+   673→    trackTitle: s.trackTitle,
+   674→    genre: s.genre,
+   675→    explicit: s.explicit,
+   676→    city: s.city,
+   677→    state: s.state,
+   678→    socials: s.socials,
+   679→    fileName: s.fileName,
+   680→    fileSize: s.fileSize,
+   681→    notes: s.notes,
+   682→    status: s.status as SubmissionDTO['status'],
+   683→    agreementVersion: s.agreementVersion,
+   684→    agreementAcceptedAt: s.agreementAcceptedAt?.toISOString() ?? null,
+   685→    agreementIp: s.agreementIp,
+   686→    reviewNotes: s.reviewNotes,
+   687→    reviewedAt: s.reviewedAt?.toISOString() ?? null,
+   688→    rightsId: s.rightsId,
+   689→    createdAt: s.createdAt.toISOString(),
+   690→  }
+   691→}
+   692→
+   693→export function toRightsDTO(r: RightsLog): RightsDTO {
+   694→  return {
+   695→    id: r.id,
+   696→    trackTitle: r.trackTitle,
+   697→    artistName: r.artistName,
+   698→    owner: r.owner,
+   699→    sampleStatus: r.sampleStatus as RightsDTO['sampleStatus'],
+   700→    explicitFlag: r.explicitFlag,
+   701→    status: r.status as RightsDTO['status'],
+   702→    source: r.source as RightsDTO['source'],
+   703→    ownerProof: r.ownerProof,
+   704→    clearedAt: r.clearedAt?.toISOString() ?? null,
+   705→    createdAt: r.createdAt.toISOString(),
+   706→  }
+   707→}
+   708→
+   709→export function toCampaignDTO(
+   710→  c: Campaign,
+   711→  playsTotal: number,
+   712→  playsToday: number,
+   713→): CampaignDTO {
+   714→  return {
+   715→    id: c.id,
+   716→    name: c.name,
+   717→    spotsPerDay: c.spotsPerDay,
+   718→    creativeName: c.creativeName,
+   719→    startAt: c.startAt.toISOString(),
+   720→    endAt: c.endAt?.toISOString() ?? null,
+   721→    active: c.active,
+   722→    playsTotal,
+   723→    playsToday,
+   724→  }
+   725→}
+   726→
+   727→export function toAdPlayDTO(
+   728→  p: PlayLogLike & { campaign: Campaign & { sponsor: Sponsor } },
+   729→): AdPlayDTO {
+   730→  return {
+   731→    id: p.id,
+   732→    campaignId: p.campaignId,
+   733→    campaignName: p.campaign.name,
+   734→    sponsorName: p.campaign.sponsor.name,
+   735→    playedAt: p.playedAt.toISOString(),
+   736→    source: p.source,
+   737→  }
+   738→}
+   739→
+   740→// AdPlay structurally matches this shape; alias keeps the mapper readable.
+   741→type PlayLogLike = AdPlay
+   742→
+   743→export function toSponsorDTO(
+   744→  s: Sponsor & { campaigns: Campaign[] },
+   745→  playsTotalByCampaign: Map<string, number>,
+   746→  playsTodayByCampaign: Map<string, number>,
+   747→): SponsorDTO {
+   748→  return {
+   749→    id: s.id,
+   750→    name: s.name,
+   751→    contact: s.contact,
+   752→    tier: s.tier as SponsorDTO['tier'],
+   753→    monthlyRate: s.monthlyRate,
+   754→    status: s.status as SponsorDTO['status'],
+   755→    startAt: s.startAt.toISOString(),
+   756→    endAt: s.endAt?.toISOString() ?? null,
+   757→    campaigns: s.campaigns.map((c) =>
+   758→      toCampaignDTO(
+   759→        c,
+   760→        playsTotalByCampaign.get(c.id) ?? 0,
+   761→        playsTodayByCampaign.get(c.id) ?? 0,
+   762→      ),
+   763→    ),
+   764→  }
+   765→}
+   766→
+   767→/** Map a PlayLog row (with track) to the HistoryResponse entry shape. */
+   768→export function toHistoryEntry(p: PlayLog & { track: Track }): {
+   769→  id: string
+   770→  playedAt: string
+   771→  source: string
+   772→  track: TrackDTO
+   773→} {
+   774→  return {
+   775→    id: p.id,
+   776→    playedAt: p.playedAt.toISOString(),
+   777→    source: p.source,
+   778→    track: toTrackDTO(p.track),
+   779→  }
+   780→}
+   781→

@@ -6,6 +6,7 @@ import {
   getRotationWheel,
   DAY_MS,
 } from '@/lib/broadcast'
+import { requireOpsPin } from '@/lib/ops-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -20,8 +21,11 @@ const DEDUPE_TOLERANCE_MS = 90_000
  * House promos (unsold inventory) never appear in the ledger. Slots within
  * 90s of an existing row are skipped and P2002 is swallowed — idempotent.
  */
-export async function POST() {
+export async function POST(request: Request) {
   try {
+    const denied = await requireOpsPin(request)
+    if (denied) return denied
+
     const now = new Date()
     const nowMs = now.getTime()
     const windowStartMs = nowMs - DAY_MS

@@ -15,7 +15,9 @@ import {
   RefreshCw,
   AlertCircle,
   Lock,
+  LockOpen,
   Clock3,
+  KeyRound,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -23,8 +25,11 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useOpsPin } from '@/hooks/use-ops-pin'
+import { cn } from '@/lib/utils'
 import type { StatsResponse, SubmissionDTO } from '@/lib/station-types'
 
 const QUEUE_STATUSES = ['PENDING', 'IN_REVIEW', 'APPROVED', 'DECLINED'] as const
@@ -70,6 +75,22 @@ export function OpsSection() {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
   const [checks, setChecks] = useState<boolean[]>([])
+  const { unlocked, unlock, lock, authHeaders } = useOpsPin()
+  const [pinInput, setPinInput] = useState('')
+  const [pinBusy, setPinBusy] = useState(false)
+
+  async function handleUnlock() {
+    if (!pinInput.trim() || pinBusy) return
+    setPinBusy(true)
+    const ok = await unlock(pinInput.trim())
+    setPinBusy(false)
+    if (ok) {
+      setPinInput('')
+      toast.success('Control room unlocked — the desk is yours.')
+    } else {
+      toast.error('Wrong PIN — that key does not open this door (demo: 0913).')
+    }
+  }
 
   const refresh = useCallback(async () => {
     try {
@@ -134,7 +155,7 @@ export function OpsSection() {
     try {
       const res = await fetch(`/api/submissions/${encodeURIComponent(s.id)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ status, reviewNotes: notesMap[s.id] ?? undefined }),
       })
       if (!res.ok) {
@@ -159,9 +180,16 @@ export function OpsSection() {
   }
 
   async function runAdSync() {
+    if (!unlocked) {
+      toast.info('Control room locked — unlock below with the station PIN (demo: 0913).')
+      return
+    }
     setSyncing(true)
     try {
-      const res = await fetch('/api/ops/ad-sync', { method: 'POST' })
+      const res = await fetch('/api/ops/ad-sync', {
+        method: 'POST',
+        headers: authHeaders(),
+      })
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null
         toast.error(body?.error ?? `Ad sync failed (${res.status})`)
@@ -199,7 +227,7 @@ export function OpsSection() {
       className="space-y-6"
     >
       {/* ---- Section header ---- */}
-      <div className="flex items-start gap-3">
+      <div className="flex flex-wrap items-start gap-3">
         <div className="rounded-lg bg-primary/10 p-2 text-primary">
           <SlidersHorizontal className="h-5 w-5" aria-hidden />
         </div>
@@ -210,6 +238,40 @@ export function OpsSection() {
           <p className="text-sm text-muted-foreground">
             The control room — review submissions, watch the numbers, run the jobs.
           </p>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <Badge
+            variant="outline"
+            className={cn(
+              unlocked
+                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
+                : 'border-amber-500/30 bg-amber-500/10 text-amber-400',
+            )}
+            aria-live="polite"
+          >
+            {unlocked ? (
+              <>
+                <LockOpen className="mr-1 h-3 w-3" aria-hidden /> Unlocked
+              </>
+            ) : (
+              <>
+                <Lock className="mr-1 h-3 w-3" aria-hidden /> Locked
+              </>
+            )}
+          </Badge>
+          {unlocked && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 text-xs text-muted-foreground hover:text-foreground"
+              onClick={() => {
+                lock()
+                toast.info('Control room locked — mutating actions are disabled.')
+              }}
+            >
+              <Lock className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Lock
+            </Button>
+          )}
         </div>
       </div>
 
@@ -275,25 +337,71 @@ export function OpsSection() {
             <Card className="lg:col-span-2">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Submissions review queue</CardTitle>
-                <Tabs
-                  value={tab}
-                  onValueChange={(v) => setTab(v as QueueStatus)}
-                  className="mt-2"
-                >
-                  <TabsList className="h-9 w-full flex-wrap justify-start">
-                    {QUEUE_STATUSES.map((s) => (
-                      <TabsTrigger
-                        key={s}
-                        value={s}
-                        className={`h-8 px-2.5 text-xs ${STATUS_TAB_CLASSES[s]}`}
-                      >
-                        {s.replace('_', ' ')} ({counts[s]})
-                      </TabsTrigger>
-                    ))}
-                  </TabsList>
-                </Tabs>
+                {unlocked && (
+                  <Tabs
+                    value={tab}
+                    onValueChange={(v) => setTab(v as QueueStatus)}
+                    className="mt-2"
+                  >
+                    <TabsList className="h-9 w-full flex-wrap justify-start">
+                      {QUEUE_STATUSES.map((s) => (
+                        <TabsTrigger
+                          key={s}
+                          value={s}
+                          className={`h-8 px-2.5 text-xs ${STATUS_TAB_CLASSES[s]}`}
+                        >
+                          {s.replace('_', ' ')} ({counts[s]})
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </Tabs>
+                )}
               </CardHeader>
               <CardContent>
+                {!unlocked ? (
+                  <div className="flex flex-col items-center gap-3 rounded-lg border border-amber-500/25 bg-gradient-to-b from-amber-500/10 to-transparent px-6 py-8 text-center">
+                    <span className="flex h-12 w-12 items-center justify-center rounded-full border border-amber-500/40 bg-amber-500/15 text-amber-400 shadow-[0_0_30px_-8px_rgba(245,158,11,0.6)]">
+                      <Lock className="h-5 w-5" aria-hidden />
+                    </span>
+                    <div>
+                      <p className="text-sm font-bold">Control room locked</p>
+                      <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
+                        Review actions, gate decisions and ad sync require the station PIN. The
+                        dashboards stay public — the desk itself does not.
+                      </p>
+                    </div>
+                    <form
+                      className="flex w-full max-w-xs items-center gap-2"
+                      onSubmit={(e) => {
+                        e.preventDefault()
+                        void handleUnlock()
+                      }}
+                    >
+                      <Input
+                        type="password"
+                        inputMode="numeric"
+                        autoComplete="off"
+                        value={pinInput}
+                        onChange={(e) => setPinInput(e.target.value)}
+                        placeholder="Station PIN"
+                        className="h-9 flex-1 text-center font-mono tracking-[0.4em]"
+                        aria-label="Station PIN"
+                        maxLength={16}
+                      />
+                      <Button
+                        type="submit"
+                        size="sm"
+                        className="h-9"
+                        disabled={pinBusy || !pinInput.trim()}
+                      >
+                        <KeyRound className="mr-1.5 h-4 w-4" aria-hidden /> Unlock
+                      </Button>
+                    </form>
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground/70">
+                      Demo PIN 0913 · clears when the tab closes
+                    </p>
+                  </div>
+                ) : (
                 <div className="max-h-96 space-y-3 overflow-y-auto scrollbar-thin pr-1">
                   {queue.length === 0 && (
                     <p className="py-8 text-center text-sm text-muted-foreground">
@@ -390,6 +498,7 @@ export function OpsSection() {
                     </div>
                   ))}
                 </div>
+                )}
               </CardContent>
             </Card>
 
@@ -482,7 +591,11 @@ export function OpsSection() {
                       className={`mr-2 h-4 w-4 ${syncing ? 'animate-spin' : ''}`}
                       aria-hidden
                     />
-                    {syncing ? 'Running ad sync…' : 'Run ad sync'}
+                    {syncing
+                      ? 'Running ad sync…'
+                      : unlocked
+                        ? 'Run ad sync'
+                        : 'Unlock to run the nightly sync'}
                   </Button>
                 </CardContent>
               </Card>

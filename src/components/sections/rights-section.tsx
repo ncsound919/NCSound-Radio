@@ -40,6 +40,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { RightsDTO, StatsResponse } from '@/lib/station-types'
+import { useOpsPin } from '@/hooks/use-ops-pin'
 
 type RightsStatus = RightsDTO['status']
 
@@ -92,6 +93,7 @@ export function RightsSection() {
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('ALL')
   const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const { unlocked, authHeaders } = useOpsPin()
 
   const refresh = useCallback(async () => {
     try {
@@ -118,11 +120,15 @@ export function RightsSection() {
   }, [refresh])
 
   async function updateStatus(id: string, status: RightsStatus) {
+    if (!unlocked) {
+      toast.info('The ledger is read-only until you unlock the control room in Ops (demo PIN 0913).')
+      return
+    }
     setUpdatingId(id)
     try {
       const res = await fetch(`/api/rights/${encodeURIComponent(id)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ status }),
       })
       if (!res.ok) {
@@ -332,8 +338,12 @@ export function RightsSection() {
                             disabled={updatingId === r.id}
                             aria-label={`Update status for ${r.id}`}
                           >
-                            <MoreHorizontal className="h-3.5 w-3.5" aria-hidden />
-                            Update
+                            {unlocked ? (
+                              <MoreHorizontal className="h-3.5 w-3.5" aria-hidden />
+                            ) : (
+                              <Lock className="h-3.5 w-3.5 text-amber-500" aria-hidden />
+                            )}
+                            {unlocked ? 'Update' : 'Locked'}
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">

@@ -570,6 +570,8 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
   const isSponsorSpot = kind === 'AD_SPOT' && Boolean(data?.element?.sponsorName)
   const isHousePromo = kind === 'AD_SPOT' && !data?.element?.sponsorName
   const isTalk = kind === 'TALK'
+  const live = data?.liveShow ?? null
+  const liveIsShow = live?.kind === 'LIVE'
   const daypartNote = data?.daypart
     ? data.daypart.clean
       ? 'Clean Daypart — explicit lyrics held until 7:00 PM ET'
@@ -577,22 +579,61 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
     : 'Deterministic AutoDJ rotation — rights gate enforced'
 
   return (
-    <Card className="border-border/60 bg-card/70">
+    <Card
+      className={cn(
+        'bg-card/70 transition-shadow duration-500',
+        live
+          ? liveIsShow
+            ? 'border-red-500/50 shadow-[0_0_44px_-14px_rgba(239,68,68,0.55)]'
+            : 'border-primary/50 shadow-[0_0_44px_-14px_rgba(245,158,11,0.5)]'
+          : 'border-border/60',
+      )}
+    >
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-base font-semibold">
+        <CardTitle className="flex flex-wrap items-center gap-2 text-base font-semibold">
           <Disc3
             className={cn('h-4 w-4 text-primary', isPlaying && 'animate-vinyl')}
             aria-hidden="true"
           />
           Now Playing
+          {live && (
+            <span
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-[0.2em]',
+                liveIsShow ? 'bg-red-500/20 text-red-300' : 'bg-primary/15 text-primary',
+              )}
+            >
+              <span
+                className={cn(
+                  'animate-onair h-1.5 w-1.5 rounded-full',
+                  liveIsShow ? 'bg-red-400' : 'bg-primary',
+                )}
+                aria-hidden="true"
+              />
+              {liveIsShow ? 'Live show' : 'Playlist hour'}
+            </span>
+          )}
         </CardTitle>
-        <CardDescription>{daypartNote}</CardDescription>
+        <CardDescription>
+          {live
+            ? `${live.name} — ${live.host} · ${live.minutesLeft}m left, then back to the wheel`
+            : daypartNote}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {!data || !track ? (
           <Skeleton className="aspect-video w-full rounded-lg" aria-label="Loading now playing" />
         ) : (
-          <div className="relative aspect-video overflow-hidden rounded-lg border border-border/60">
+          <div
+            className={cn(
+              'relative aspect-video overflow-hidden rounded-lg border',
+              live
+                ? liveIsShow
+                  ? 'border-red-500/50'
+                  : 'border-primary/50'
+                : 'border-border/60',
+            )}
+          >
             <Image
               src="/station-texture.jpg"
               alt=""
@@ -601,6 +642,35 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
               sizes="(max-width: 1024px) 100vw, 768px"
               className="object-cover"
             />
+            {/* live-show broadcast bug — top strip like a TV station lower-third */}
+            {live && (
+              <div
+                className={cn(
+                  'absolute inset-x-0 top-0 z-10 flex items-center gap-2 bg-gradient-to-b from-background/95 to-transparent px-3 pb-4 pt-2 backdrop-blur-[2px] sm:px-4',
+                  liveIsShow ? 'from-red-950/80' : 'from-amber-950/70',
+                )}
+                role="status"
+              >
+                <span
+                  className={cn(
+                    'animate-onair h-2 w-2 shrink-0 rounded-full',
+                    liveIsShow ? 'bg-red-500' : 'bg-primary',
+                  )}
+                  aria-hidden="true"
+                />
+                <span
+                  className={cn(
+                    'truncate text-[10px] font-extrabold uppercase tracking-[0.22em] sm:text-[11px]',
+                    liveIsShow ? 'text-red-300' : 'text-primary',
+                  )}
+                >
+                  {liveIsShow ? 'Live' : 'Playlist hour'} — {live.name}
+                  <span className="ml-2 hidden font-semibold normal-case tracking-normal text-muted-foreground sm:inline">
+                    {liveIsShow ? 'with' : 'hosted by'} {live.host} · {live.minutesLeft}m left
+                  </span>
+                </span>
+              </div>
+            )}
             {/* element wash: music = deterministic hue · ID = neutral · ad = amber/red */}
             <div
               className="absolute inset-0"

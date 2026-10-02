@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { toRightsDTO } from '@/lib/broadcast'
+import { requireOpsPin } from '@/lib/ops-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,6 +22,9 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    const denied = await requireOpsPin(request)
+    if (denied) return denied
+
     const { id } = await params
     const body: unknown = await request.json().catch(() => null)
     const parsed = patchSchema.safeParse(body)
