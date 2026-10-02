@@ -20,9 +20,9 @@ export const dynamic = 'force-dynamic'
 export async function GET() {
   try {
     const nowMs = Date.now()
-    const [settings, tracks] = await Promise.all([
-      db.stationSetting.findMany(),
+    const [{ tracks, weights }, settings] = await Promise.all([
       getRotationTracks(),
+      db.stationSetting.findMany(),
     ])
     const settingsMap = new Map(settings.map((s) => [s.key, s.value]))
 
@@ -34,9 +34,17 @@ export async function GET() {
     }
 
     const onAir = computeOnAir(tracks, nowMs)
-    const next = getUpNext(tracks, onAir.index, 3).map(toTrackDTO)
+    const nextTracks = getUpNext(tracks, onAir.index, 3)
+    const next = nextTracks.map(toTrackDTO)
     const listeners = computeListeners(nowMs)
     await maybeLogPlays(onAir.track.id, onAir.startedAt)
+
+    // Request heat (7-day listener requests) for the current + upcoming tracks.
+    const heat: Record<string, number> = {}
+    for (const t of [onAir.track, ...nextTracks]) {
+      const count = weights.get(t.id) ?? 0
+      if (count > 0) heat[t.id] = count
+    }
 
     const streamUrl = process.env.AZURACAST_STREAM_URL || null
 
@@ -60,6 +68,7 @@ export async function GET() {
         progress: onAir.progress,
       },
       next,
+      heat,
       listeners,
       mode: streamUrl ? ('live' as const) : ('simulated' as const),
       streamUrl,

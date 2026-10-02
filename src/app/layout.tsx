@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
@@ -28,6 +28,14 @@ export const metadata: Metadata = {
   ],
   icons: {
     icon: "/station-logo.png",
+    apple: "/station-logo.png",
+  },
+  manifest: "/manifest.webmanifest",
+  applicationName: "WAVC 91.3",
+  appleWebApp: {
+    capable: true,
+    title: "WAVC 91.3",
+    statusBarStyle: "black-translucent",
   },
   openGraph: {
     title: "WAVC 91.3 FM — Carolina Waves",
@@ -35,6 +43,10 @@ export const metadata: Metadata = {
     siteName: "WAVC 91.3 FM",
     type: "website",
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#16130f",
 };
 
 export default function RootLayout({

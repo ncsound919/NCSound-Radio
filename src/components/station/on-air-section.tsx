@@ -7,6 +7,7 @@ import {
   ArrowRight,
   CalendarClock,
   Disc3,
+  Flame,
   Gauge,
   Heart,
   History,
@@ -15,11 +16,13 @@ import {
   MessageSquare,
   Pause,
   Play,
+  Share2,
   ShieldCheck,
   TrendingUp,
   Upload,
   Users,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -35,13 +38,16 @@ import { LiveChat } from '@/components/sections/live-chat'
 import { RequestLine } from '@/components/station/request-line'
 import { useNowPlaying } from '@/hooks/use-nowplaying'
 import { useStationPlayer } from '@/hooks/use-station-player'
+import { shareStation } from '@/lib/share'
 import type {
   HistoryResponse,
+  ListenersHistoryResponse,
   NowPlayingResponse,
   SponsorsResponse,
   StatsResponse,
 } from '@/lib/station-types'
 import { cn } from '@/lib/utils'
+import { Sparkline } from '@/components/station/sparkline'
 
 // ------------------------------------------------------------------ helpers
 
@@ -313,6 +319,23 @@ function Hero({
               <CalendarClock aria-hidden="true" />
               Schedule
             </Button>
+            <Button
+              type="button"
+              size="lg"
+              variant="ghost"
+              className="h-11 px-4"
+              onClick={async () => {
+                const result = await shareStation()
+                if (result === 'copied') {
+                  toast.success('Stream link copied — pass it on.')
+                } else if (result === 'failed') {
+                  toast.error('Could not share — copy wavc.fm from the address bar.')
+                }
+              }}
+            >
+              <Share2 aria-hidden="true" />
+              Share
+            </Button>
           </div>
 
           <p className="mt-4 flex items-center gap-2 text-sm text-muted-foreground" aria-live="polite">
@@ -359,6 +382,7 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
               src="/station-texture.jpg"
               alt=""
               fill
+              priority
               sizes="(max-width: 1024px) 100vw, 768px"
               className="object-cover"
             />
@@ -448,6 +472,10 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
 // ----------------------------------------------------------------- up next
 
 function UpNextCard({ data }: { data: NowPlayingResponse | null }) {
+  const duration = data?.current.duration ?? 0
+  const remaining = data?.current.remaining ?? 0
+  const toNextPct = duration > 0 ? Math.min(100, Math.max(0, ((duration - remaining) / duration) * 100)) : 0
+
   return (
     <Card className="border-border/60 bg-card/70">
       <CardHeader>
@@ -457,7 +485,20 @@ function UpNextCard({ data }: { data: NowPlayingResponse | null }) {
         </CardTitle>
         <CardDescription>AutoDJ rotation queue</CardDescription>
       </CardHeader>
-      <CardContent className="space-y-1">
+      <CardContent className="space-y-3">
+        {/* countdown to the next spin — fills as the current track plays out */}
+        <div className="rounded-md border border-border/50 bg-background/40 px-3 py-2">
+          <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span>Next spin in</span>
+            <span className="font-mono text-primary">~{fmtTime(remaining)}</span>
+          </div>
+          <Progress
+            value={toNextPct}
+            className="mt-1.5 h-1"
+            aria-label="Time until the next track"
+          />
+        </div>
+
         {!data ? (
           <div className="space-y-2">
             {[0, 1, 2].map((i) => (
@@ -467,30 +508,47 @@ function UpNextCard({ data }: { data: NowPlayingResponse | null }) {
         ) : data.next.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">Queue is empty.</p>
         ) : (
-          data.next.map((t, i) => (
-            <div
-              key={t.id}
-              className="flex items-center gap-3 rounded-md border border-transparent px-2 py-2 transition-colors hover:border-border hover:bg-accent/40"
-            >
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-border bg-background/60 font-mono text-[10px] text-muted-foreground">
-                {i + 1}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{t.title}</p>
-                <p className="truncate text-xs text-muted-foreground">{t.artist}</p>
-              </div>
-              <span className="shrink-0 font-mono text-xs text-muted-foreground">
-                {fmtTime(t.durationSec)}
-              </span>
-              <Badge
-                variant="outline"
-                className="hidden shrink-0 border-border/70 text-[10px] font-medium text-muted-foreground sm:inline-flex"
-              >
-                {t.playlist}
-              </Badge>
-            </div>
-          ))
+          <div className="space-y-1">
+            {data.next.map((t, i) => {
+              const heat = data.heat?.[t.id] ?? 0
+              return (
+                <div
+                  key={t.id}
+                  className="flex items-center gap-3 rounded-md border border-transparent px-2 py-2 transition-colors hover:border-border hover:bg-accent/40"
+                >
+                  <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded border border-border bg-background/60 font-mono text-[10px] text-muted-foreground">
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium">{t.title}</p>
+                    <p className="truncate text-xs text-muted-foreground">{t.artist}</p>
+                  </div>
+                  {heat > 0 && (
+                    <span
+                      title={`${heat} listener request${heat === 1 ? '' : 's'} this week — hot tracks jump the wheel`}
+                      className="inline-flex shrink-0 items-center gap-0.5 rounded border border-red-500/30 bg-red-500/10 px-1 py-0.5 text-[10px] font-bold text-red-400"
+                    >
+                      <Flame className="h-3 w-3" aria-hidden="true" />
+                      {heat}
+                    </span>
+                  )}
+                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                    {fmtTime(t.durationSec)}
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className="hidden shrink-0 border-border/70 text-[10px] font-medium text-muted-foreground sm:inline-flex"
+                  >
+                    {t.playlist}
+                  </Badge>
+                </div>
+              )
+            })}
+          </div>
         )}
+        <p className="text-[10px] leading-relaxed text-muted-foreground">
+          Listener shouts bump the hottest tracks up the wheel — send one from the request line.
+        </p>
       </CardContent>
     </Card>
   )
@@ -527,21 +585,38 @@ function RecentlyPlayedCard({ trackKey }: { trackKey?: string }) {
           </p>
         ) : (
           <ul className="max-h-96 space-y-1 overflow-y-auto pr-1 scrollbar-thin">
-            {data.plays.map((play) => (
+            {data.plays.map((play, idx) => (
               <li
                 key={play.id}
-                className="flex items-center gap-3 rounded-md px-2 py-2 transition-colors hover:bg-accent/40"
+                className={cn(
+                  'group flex items-center gap-3 rounded-md px-2 py-2 transition-colors hover:bg-accent/40',
+                  idx === 0 &&
+                    'border-l-2 border-primary bg-gradient-to-r from-primary/10 to-transparent hover:from-primary/15'
+                )}
               >
                 <span
                   aria-hidden="true"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-gradient-to-br from-primary/30 via-primary/15 to-red-500/20 text-sm font-bold text-primary"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-gradient-to-br from-primary/30 via-primary/15 to-red-500/20 text-sm font-bold text-primary transition-transform group-hover:scale-105"
                 >
                   {(play.track.title.charAt(0) || '?').toUpperCase()}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{play.track.title}</p>
+                  <p className="truncate text-sm font-medium">
+                    {play.track.title}
+                    {idx === 0 && (
+                      <span className="ml-2 rounded-sm bg-primary/15 px-1 py-0.5 align-middle text-[9px] font-bold uppercase tracking-wider text-primary">
+                        Last spin
+                      </span>
+                    )}
+                  </p>
                   <p className="truncate text-xs text-muted-foreground">{play.track.artist}</p>
                 </div>
+                <Badge
+                  variant="outline"
+                  className="hidden shrink-0 border-border/70 text-[10px] text-muted-foreground md:inline-flex"
+                >
+                  {play.track.playlist}
+                </Badge>
                 <span className="hidden shrink-0 font-mono text-[10px] text-muted-foreground sm:inline">
                   {play.track.rightsId}
                 </span>
@@ -561,6 +636,8 @@ function RecentlyPlayedCard({ trackKey }: { trackKey?: string }) {
 
 function StatsStrip() {
   const { data, error, retry } = useJson<StatsResponse>('/api/stats')
+  const { data: listenerHistory } = useJson<ListenersHistoryResponse>('/api/listeners/history')
+  const trend = listenerHistory ? listenerHistory.points.map((p) => p.v) : []
 
   const tiles = data
     ? [
@@ -568,21 +645,29 @@ function StatsStrip() {
           icon: Users,
           label: 'Listeners Now',
           value: data.listeners.current.toLocaleString(),
+          sub: 'listener trend · last 24h',
+          spark: true,
         },
         {
           icon: TrendingUp,
           label: 'Peak 24h',
           value: data.listeners.peak24h.toLocaleString(),
+          sub: 'evening peak · ~8 PM ET',
+          spark: false,
         },
         {
           icon: ShieldCheck,
           label: 'Cleared Tracks',
           value: `${data.library.cleared}/${data.library.tracks}`,
+          sub: 'rights gate enforced',
+          spark: false,
         },
         {
           icon: Disc3,
           label: 'Programming',
-          value: `${data.library.totalHours} hrs on the wheel`,
+          value: `${data.library.totalHours} hrs`,
+          sub: 'on the AutoDJ wheel',
+          spark: false,
         },
       ]
     : null
@@ -597,12 +682,31 @@ function StatsStrip() {
         [0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-24 rounded-xl" />)
       ) : (
         tiles.map((tile) => (
-          <div key={tile.label} className="rounded-xl border border-border/60 bg-card/60 p-4">
+          <div
+            key={tile.label}
+            className="card-glow flex flex-col rounded-xl border border-border/60 bg-card/60 p-4 transition-shadow"
+          >
             <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted-foreground">
               <tile.icon className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
               {tile.label}
             </div>
             <p className="mt-2 break-words text-2xl font-bold text-primary">{tile.value}</p>
+            <div className="mt-auto border-t border-border/40 pt-2">
+              {tile.spark ? (
+                trend.length > 1 ? (
+                  <Sparkline
+                    values={trend}
+                    width={220}
+                    height={36}
+                    className="h-9 w-full"
+                    ariaLabel="Listeners over the last 24 hours"
+                  />
+                ) : (
+                  <Skeleton className="h-9 w-full" />
+                )
+              ) : null}
+              <p className="mt-1 text-[10px] text-muted-foreground">{tile.sub}</p>
+            </div>
           </div>
         ))
       )}

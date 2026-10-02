@@ -194,9 +194,37 @@ export function StationHeader({
                   </button>
                 ))}
               </nav>
-              <div className="mt-auto flex items-center justify-between border-t border-border/60 px-3 pb-2">
-                <OnAirBadge />
-                <EtClock />
+              <div className="mt-auto space-y-3">
+                {/* keyboard shortcut hint (the shortcuts also work on desktop) */}
+                <div className="mx-3 rounded-md border border-border/60 bg-background/40 px-3 py-2">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                    Quick keys
+                  </p>
+                  <ul className="mt-1.5 space-y-1 text-[11px] text-muted-foreground">
+                    <li className="flex items-center justify-between">
+                      <span>Play / pause</span>
+                      <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
+                        Space
+                      </kbd>
+                    </li>
+                    <li className="flex items-center justify-between">
+                      <span>Switch panels</span>
+                      <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
+                        1–6
+                      </kbd>
+                    </li>
+                    <li className="flex items-center justify-between">
+                      <span>All shortcuts</span>
+                      <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
+                        ?
+                      </kbd>
+                    </li>
+                  </ul>
+                </div>
+                <div className="flex items-center justify-between border-t border-border/60 px-3 pb-2">
+                  <OnAirBadge />
+                  <EtClock />
+                </div>
               </div>
             </SheetContent>
           </Sheet>

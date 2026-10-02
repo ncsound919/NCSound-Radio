@@ -34,12 +34,24 @@ export type NowPlayingResponse = {
     progress: number // 0..1
   }
   next: TrackDTO[]
+  /** Request heat (7-day listener requests): trackId -> count, only > 0 entries. */
+  heat: Record<string, number>
   listeners: {
     current: number
     peak24h: number
   }
   mode: 'simulated' | 'live'
   streamUrl: string | null
+  serverTime: string
+}
+
+export type ListenerPoint = { t: string; v: number }
+
+export type ListenersHistoryResponse = {
+  points: ListenerPoint[]
+  current: number
+  peak24h: number
+  timezone: string
   serverTime: string
 }
 
@@ -210,6 +222,8 @@ export type TrackRequestResponse = {
   count: number
   message: string
 }
+
+export type ShareResult = 'shared' | 'copied' | 'failed'
 
 export type TracksResponse = {
   tracks: Array<{

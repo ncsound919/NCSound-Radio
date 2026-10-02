@@ -220,3 +220,42 @@ Stage Summary (current goals/completed/verification):
 - App now has 6 station surfaces + request line + mount switcher + full keyboard control. All 13 API routes healthy.
 - Unresolved/risks: none blocking. Notes: (1) stale-Prisma-client after schema change requires dev-server restart — flagged for future rounds; (2) 64k switch is a UI preference (real bitrate comes from AZURACAST_STREAM_URL mount when connected); (3) request-line spam safety = unique constraint + 32-char names; consider per-IP rate limit if exposed publicly.
 - Next-phase recommendations: listener count sparkline history, "up next" voting weights into AutoDJ ordering, share/copy-stream-link buttons, mobile sheet shortcut hint, admin auth for Ops tab.
+
+---
+Task ID: 5
+Agent: main (Z.ai Code) — cron webDevReview round 2
+Task: QA assessment + flagship features (request-weighted AutoDJ, listener trend sparkline, share, Media Session, PWA) + styling polish.
+
+Work Log (Current project status):
+- QA pass first via agent-browser (desktop 1440px + mobile 390px): all 10 GET API routes 200, chat relay up on :3003, all 6 tabs render, sticky footer verified, zero page errors on fresh load. Found 1 issue: Next.js LCP warning for /station-texture.jpg. No blocking bugs → proceeded to feature work (worklog Task 4 next-phase recommendations).
+
+Work Log (Changes):
+- FEATURE 1 — Request-weighted AutoDJ rotation (voting weights into ordering, the flagship):
+  * broadcast.ts: getRotationTracks() now returns { tracks, weights } — after fetching the library it groups TrackRequest over a rolling 7-day window (getRequestWeights) and stable-sorts: most-requested tracks promoted to the FRONT of the wheel (weight desc, then seedOrder). Same 60s cache, so all pollers see identical order between refreshes; a new listener shout re-sorts the wheel within ≤60s. Cache-hit path now validates weights instanceof Map (defensive against stale globalThis cache after hot reload — this bit during the round).
+  * /api/nowplaying: new `heat: Record<trackId, count>` field (7d request counts for current + next, only >0 entries).
+  * E2E-verified live: POSTed a request for "Bathroom Wall Classics" (was next[0]) → after the 60s cache TTL it was plucked out of the queue and promoted to the front block of the wheel (next became R0019→R0020→R0021). Test row deleted after.
+- FEATURE 2 — Listener trend sparkline:
+  * NEW GET /api/listeners/history — 97 points (24h @ 15-min steps) sampled from the deterministic circadian listener simulation (pure clock function, zero DB writes); contract type ListenersHistoryResponse + ListenerPoint in station-types.ts.
+  * NEW src/components/station/sparkline.tsx — dependency-free SVG area+line sparkline (amber gradient, oklch tokens, end-dot, aria-label).
+  * StatsStrip (On Air): "Listeners Now" tile now carries the 24h sparkline + caption; all four tiles got sub-caption lines (evening peak ~8 PM ET / rights gate enforced / on the AutoDJ wheel) and card-glow hover.
+- FEATURE 3 — Up Next upgrades: "NEXT SPIN IN ~m:ss" countdown panel with Progress bar (fills toward the next track), red Flame request-heat badges on queued tracks from data.heat, and honest footnote "Listener shouts bump the hottest tracks up the wheel".
+- FEATURE 4 — Share the station: src/lib/share.ts shareStation() (Web Share API → clipboard fallback, AbortError-safe); Share button in hero + share icon button in player bar; toasts 'Stream link copied — pass it on.' Browser-verified.
+- FEATURE 5 — Media Session API: player-bar effects set navigator.mediaSession.metadata (title/artist/album/artwork) and playbackState + play/pause action handlers → OS lock-screen/media-key controls drive the station store. Verified via eval: state=playing, metadata populated.
+- FEATURE 6 — PWA installability: public/manifest.webmanifest (name/short_name/standalone/theme #16130f/logo icon) + layout.tsx metadata.manifest, appleWebApp, applicationName, Viewport.themeColor.
+- FEATURE 7 — Mobile nav sheet now ends with a "Quick keys" kbd hint card (Space / 1–6 / ?) above the ON AIR badge + clock.
+- STYLING (mandatory polish): Recently Played rows — first row highlighted with primary left-border + gradient wash + "LAST SPIN" chip, per-row playlist badges (md+), avatar scale on hover; card-glow on stat tiles; LCP fix (priority on the now-playing texture image — warning count now 0 on fresh load).
+- Contract changes: NowPlayingResponse.heat added; ListenersHistoryResponse/ListenerPoint/ShareResult types added. No breaking changes to existing consumers.
+
+Verification:
+- bun run lint clean; bunx tsc --noEmit clean (app files); dev.log has zero runtime errors since the edits settled; manifest 200.
+- agent-browser E2E: share toast, mobile Quick keys sheet, Media Session metadata, sparkline render, countdown bar, LAST SPIN highlight all visually confirmed; rotation advancement unaffected; fresh reload = zero console errors/warnings.
+
+Stage Summary (current goals/completed/verification):
+- Station now has a living request→rotation feedback loop (shouts audibly change programming), listener trend visualization, OS-level media integration, installability, and share loops.
+- 12 API routes total (11 + listeners/history). All healthy.
+
+Unresolved/risks & next-phase recommendations:
+- Heat badges only show while a hot track sits in current/next — with all hot tracks clustered at the wheel front, badges appear mainly during the front-block window each cycle (~every 90 min). Acceptable (honest model), but consider capping promotion to top-3 hottest if badge visibility matters more.
+- Rotation re-sort can visibly shuffle "Up Next" when a request lands (within 60s) — by design; PlayLog dedupe keeps history consistent.
+- "Cleared tracks 23/22" tile remains a known cosmetic nuance (approved tracks await upload).
+- Next ideas: per-IP rate limit on requests, Ops admin auth, listener-history persistence if AZURACAST_STREAM_URL goes live (replace simulation with real Icecast listener counts), "up next" tie-in showing which requests are queued.

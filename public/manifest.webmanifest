@@ -1,0 +1,16 @@
+{
+  "name": "WAVC 91.3 FM — Carolina Waves",
+  "short_name": "WAVC 91.3",
+  "description": "The Carolinas' independent hip-hop signal. Live stream, request line, and rights-cleared artist submissions.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#16130f",
+  "theme_color": "#16130f",
+  "icons": [
+    {
+      "src": "/station-logo.png",
+      "sizes": "1024x1024",
+      "purpose": "any"
+    }
+  ]
+}

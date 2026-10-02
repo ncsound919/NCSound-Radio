@@ -55,25 +55,66 @@ export const LAUNCH_UTC_MS = Date.UTC(2025, 9, 1)
 // AutoDJ rotation engine
 // ---------------------------------------------------------------------------
 
-type RotationCache = { tracks: Track[]; fetchedAt: number }
+type RotationCache = {
+  tracks: Track[]
+  weights: Map<string, number>
+  fetchedAt: number
+}
 
 const globalForRotation = globalThis as unknown as {
   wavcRotationCache: RotationCache | undefined
 }
 
-/** Rotation library (everything except Imaging), cached for 60s. */
-export async function getRotationTracks(): Promise<Track[]> {
+/**
+ * Listener-request weights (last 7 days): trackId -> request count.
+ * Feeds both the request-weighted rotation and the "heat" readouts.
+ */
+export async function getRequestWeights(nowMs: number = Date.now()): Promise<Map<string, number>> {
+  const since = new Date(nowMs - 7 * 86_400_000)
+  const groups = await db.trackRequest.groupBy({
+    by: ['trackId'],
+    where: { createdAt: { gte: since } },
+    _count: { trackId: true },
+  })
+  return new Map(groups.map((g) => [g.trackId, g._count.trackId]))
+}
+
+/**
+ * Rotation library (everything except Imaging), cached for 60s.
+ * Request-weighted: the most-requested CLEARED tracks from the last 7 days
+ * are promoted to the front of the rotation (stable sort — equal weight keeps
+ * seedOrder). All pollers within the same cache window see the same order, so
+ * the AutoDJ stays deterministic between cache refreshes while listener
+ * shouts genuinely bump tracks up the wheel.
+ */
+export async function getRotationTracks(): Promise<{
+  tracks: Track[]
+  weights: Map<string, number>
+}> {
   const now = Date.now()
   const cached = globalForRotation.wavcRotationCache
-  if (cached && now - cached.fetchedAt < ROTATION_CACHE_TTL_MS) {
-    return cached.tracks
+  if (
+    cached &&
+    cached.weights instanceof Map &&
+    now - cached.fetchedAt < ROTATION_CACHE_TTL_MS
+  ) {
+    return cached
   }
-  const tracks = await db.track.findMany({
-    where: { playlist: { not: 'Imaging' } },
-    orderBy: { seedOrder: 'asc' },
+  const [rows, weights] = await Promise.all([
+    db.track.findMany({
+      where: { playlist: { not: 'Imaging' } },
+      orderBy: { seedOrder: 'asc' },
+    }),
+    getRequestWeights(now),
+  ])
+  const tracks = [...rows].sort((a, b) => {
+    const wa = weights.get(a.id) ?? 0
+    const wb = weights.get(b.id) ?? 0
+    if (wa !== wb) return wb - wa
+    return a.seedOrder - b.seedOrder
   })
-  globalForRotation.wavcRotationCache = { tracks, fetchedAt: now }
-  return tracks
+  globalForRotation.wavcRotationCache = { tracks, weights, fetchedAt: now }
+  return { tracks, weights }
 }
 
 export type OnAir = {

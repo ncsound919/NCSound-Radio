@@ -1,12 +1,14 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Pause, Play, SignalHigh, SignalLow, Volume2, VolumeX } from 'lucide-react'
+import { Pause, Play, Share2, SignalHigh, SignalLow, Volume2, VolumeX } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { Slider } from '@/components/ui/slider'
 import { useNowPlaying } from '@/hooks/use-nowplaying'
 import { useStationPlayer, type StreamQuality } from '@/hooks/use-station-player'
+import { shareStation } from '@/lib/share'
 import { cn } from '@/lib/utils'
 
 function fmtTime(sec: number): string {
@@ -54,6 +56,48 @@ export function PlayerBar() {
       setVolume(0)
     }
   }
+
+  const handleShare = async () => {
+    const result = await shareStation()
+    if (result === 'copied') {
+      toast.success('Stream link copied — pass it on.')
+    } else if (result === 'failed') {
+      toast.error('Could not share — copy wavc.fm from the address bar.')
+    }
+  }
+
+  // OS media controls (lock screen / media keys): advertise the on-air track
+  // and wire the hardware play/pause buttons to the station store.
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator) || !track) return
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: track.title,
+        artist: track.artist,
+        album: 'WAVC 91.3 FM — Carolina Waves',
+        artwork: [{ src: '/station-logo.png', sizes: '1024x1024', type: 'image/png' }],
+      })
+    } catch {
+      /* media session is best-effort */
+    }
+  }, [track])
+
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+    try {
+      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused'
+      navigator.mediaSession.setActionHandler('play', () => {
+        const s = useStationPlayer.getState()
+        if (!s.isPlaying) s.toggle()
+      })
+      navigator.mediaSession.setActionHandler('pause', () => {
+        const s = useStationPlayer.getState()
+        if (s.isPlaying) s.toggle()
+      })
+    } catch {
+      /* media session is best-effort */
+    }
+  }, [isPlaying])
 
   return (
     <section
@@ -160,6 +204,19 @@ export function PlayerBar() {
             className="w-20"
           />
         </div>
+
+        {/* Share the station */}
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="hidden h-8 w-8 md:inline-flex"
+          onClick={handleShare}
+          aria-label="Share the station"
+          title="Share the station"
+        >
+          <Share2 className="h-4 w-4" aria-hidden="true" />
+        </Button>
 
         {/* Studio preview badge */}
         {isPlaying && previewSynth && (
