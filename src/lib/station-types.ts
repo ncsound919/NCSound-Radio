@@ -285,12 +285,29 @@ export type ChartEntry = {
   lastPlayedAt: string | null
   /** True when this entry is spinning on the wheel right now. */
   onAirNow: boolean
+  /**
+   * Rank in the previous comparable window (the 7 days ending 24h ago).
+   * null = the track was not charting then — a NEW entry this week.
+   */
+  prevRank: number | null
+}
+
+/** The entry that climbed the most versus the previous window. */
+export type ChartMover = {
+  trackId: string
+  title: string
+  artist: string
+  /** Positive = positions climbed. */
+  delta: number
+  rank: number
 }
 
 export type ChartsResponse = {
   week: ChartEntry[]
   /** Total PlayLog rows (music + imaging) in the trailing 7 days. */
   totalSpins7d: number
+  /** Biggest week-over-week climber (null = too little history or no climb ≥ 2). */
+  mover: ChartMover | null
   timezone: string
   serverTime: string
 }

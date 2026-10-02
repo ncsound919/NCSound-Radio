@@ -1,0 +1,188 @@
+   170→
+   171→---
+   172→Task ID: 3
+   173→Agent: main (Z.ai Code)
+   174→Task: Integration, E2E verification via agent-browser, bug fixes.
+   175→
+   176→Work Log:
+   177→- Verified dev server healthy (200 on /), all 11 API routes returning 200, lint clean, tsc clean (app files).
+   178→- agent-browser E2E walkthrough (desktop 1280px + mobile 390px):
+   179→  * On Air: hero, Listen Live toggle (STUDIO PREVIEW synth starts, EQ animates), Now Playing art + progress, Up Next, Recently Played, live stats, sponsor ticker, footer.
+   180→  * AutoDJ rotation confirmed live: track advanced Grist Mill Grind -> Linen & Loops -> Blue Ridge Static with correct Clean Daypart playlist + rights IDs.
+   181→  * Chat: joined as "DJ Agent", message broadcast verified end-to-end.
+   182→  * Schedule: 7-day grid, Fri highlighted, current-show logic correct (AutoDJ rotation at 11 AM Fri), mobile day-selector works.
+   183→  * Submit: filled form, opened v1.1 agreement dialog, I Agree checked the box, submitted -> toast "#L8WABT" -> success panel.
+   184→  * Ops: approved "Maritime Bells" -> toast "rights record R9003 issued", cleared tracks 22->23, queue updated. Bandwidth projection + checklist render.
+   185→  * Rights: ledger shows R9003 CLEARED, gate banner, search/filter present.
+   186→  * Sponsors: packages, sponsor cards with spot progress, proof-of-play ledger; "Run nightly sync now" -> toast "Synced 18 new ad plays", 64->82 plays/7d.
+   187→  * Submit validation: empty form -> inline red error + toast. Mobile nav sheet + mobile schedule verified.
+   188→- FIXED BUG 1: chat socket unreachable when app served directly from :3000 (dev/verification path) — added direct-relay fallback in createChatSocket() (port 3003 with CORS) while keeping the XTransformPort gateway path for production preview.
+   189→- FIXED BUG 2: stats "cleared 25/22" — /api/stats cleared count now only counts R-prefixed rights records (excludes IMG01-03), so it can never exceed library tracks.
+   190→- Transient hydration warning investigated: full SSR-vs-DOM diff showed only legitimate post-hydration state updates; clean reload shows no issue badge and no console errors.
+   191→
+   192→Stage Summary:
+   193→- App is fully functional and browser-verified on desktop + mobile. All golden paths pass: play/pause synth, chat, submit->approve->rights issuance, ad-sync proof-of-play, schedule, ledger editing, validation.
+   194→- Known cosmetic notes: "Cleared tracks 23/22" tile reflects cleared rights records vs tracks on the wheel (real-world accurate: approved tracks await upload). Sandbox clock is 2026 (dates in seeds/UI reflect that).
+   195→- Chat relay running on :3003 (setsid, bun --hot). Restart cmd: cd mini-services/chat-service && setsid --fork bun run dev > chat.log 2>&1 &
+   196→
+   197→---
+   198→Task ID: 4
+   199→Agent: main (Z.ai Code) — cron webDevReview round
+   200→Task: QA assessment + new features (request line, quality switcher, keyboard shortcuts) + styling polish.
+   201→
+   202→Work Log (Current project status):
+   203→- QA pass first: all API routes 200, fresh page load with ZERO console errors, footer sticky verified (footer bottom == viewport height), AutoDJ rotation still advancing correctly. No blocking bugs found → proceeded to feature work.
+   204→
+   205→Work Log (Changes):
+   206→- FEATURE 1 — Listener Request Line (the flagship addition):
+   207→  * prisma/schema.prisma: new TrackRequest model { trackId → Track (relation), listenerName, note?, createdAt } with @@unique([trackId, listenerName]) (one shout per listener per track) + createdAt index. db:push applied.
+   208→  * GET /api/requests → { top (6 most-requested CLEARED tracks, 7d window, groupBy+track join), recent (8 latest shouts w/ notes), totalToday (ET day), totalAllTime }.
+   209→  * POST /api/requests { trackId, listenerName(1-32), note?(≤140) } → rights-gate enforced (403 if track's rights record ≠ CLEARED), 409 on duplicate listener+track (P2002), 201 otherwise with live count.
+   210→  * GET /api/tracks → cleared-library picker feed (only rights with CLEARED status exposed; imaging excluded).
+   211→  * src/components/station/request-line.tsx: composer card (searchable track picker with outside-click close + explicit E chips + rightsId, on-air name remembered in localStorage 'wavc-onair-name', optional shout-out) + "Most wanted" leaderboard (Flame counts, #1 highlighted) + "Fresh shouts" feed. Mounted on On Air tab between Recently Played and stats.
+   212→  * API contract extended in src/lib/station-types.ts (RequestsResponse, TrackRequestResponse, TracksResponse, RequestTopEntry, RequestRecentEntry).
+   213→- FEATURE 2 — Stream mount switcher in player bar: 128k (Mount 1, SignalHigh) / 64k (Mount 2 HE-AAC, SignalLow) segmented control (xl+ screens), persisted to localStorage 'wavc-stream-quality' via new quality/setQuality in use-station-player store (StreamQuality type exported).
+   214→- FEATURE 3 — Keyboard shortcuts: new src/hooks/use-keyboard-shortcuts.ts (Space = play/pause with typing-target guard, 1-6 = tabs, ? = help dialog, Esc = close) wired in app-shell; new src/components/station/shortcuts-dialog.tsx (kbd-styled help card); footer keyboard hint button opens it.
+   215→- STYLING (mandatory polish): .signal-wave animated amber/red sine-line divider atop the footer (SVG data-URI, wave-drift keyframes); .card-glow hover halo on interactive cards (used on request composer); amber ::selection; smooth scrolling; request-line flame accents.
+   216→- Fixed during round: TrackRequest↔Track relation initially missing (Prisma include failed) — added relation + regenerated client + restarted dev server.
+   217→- Verified via agent-browser E2E: request submitted ("CronReviewer → Sweet Tea Ceremonies", toast + count 8→9 + fresh shout + leaderboard update), duplicate correctly rejected (count stayed 9, 409 path), Space toggled play (Pause button + STUDIO PREVIEW badge), quality switch to Mount 2 active, "?" dialog opened, "2"/"1" tab jumps work, signal wave renders. lint clean, tsc clean.
+   218→
+   219→Stage Summary (current goals/completed/verification):
+   220→- App now has 6 station surfaces + request line + mount switcher + full keyboard control. All 13 API routes healthy.
+   221→- Unresolved/risks: none blocking. Notes: (1) stale-Prisma-client after schema change requires dev-server restart — flagged for future rounds; (2) 64k switch is a UI preference (real bitrate comes from AZURACAST_STREAM_URL mount when connected); (3) request-line spam safety = unique constraint + 32-char names; consider per-IP rate limit if exposed publicly.
+   222→- Next-phase recommendations: listener count sparkline history, "up next" voting weights into AutoDJ ordering, share/copy-stream-link buttons, mobile sheet shortcut hint, admin auth for Ops tab.
+   223→
+   224→---
+   225→Task ID: 5
+   226→Agent: main (Z.ai Code) — cron webDevReview round 2
+   227→Task: QA assessment + flagship features (request-weighted AutoDJ, listener trend sparkline, share, Media Session, PWA) + styling polish.
+   228→
+   229→Work Log (Current project status):
+   230→- QA pass first via agent-browser (desktop 1440px + mobile 390px): all 10 GET API routes 200, chat relay up on :3003, all 6 tabs render, sticky footer verified, zero page errors on fresh load. Found 1 issue: Next.js LCP warning for /station-texture.jpg. No blocking bugs → proceeded to feature work (worklog Task 4 next-phase recommendations).
+   231→
+   232→Work Log (Changes):
+   233→- FEATURE 1 — Request-weighted AutoDJ rotation (voting weights into ordering, the flagship):
+   234→  * broadcast.ts: getRotationTracks() now returns { tracks, weights } — after fetching the library it groups TrackRequest over a rolling 7-day window (getRequestWeights) and stable-sorts: most-requested tracks promoted to the FRONT of the wheel (weight desc, then seedOrder). Same 60s cache, so all pollers see identical order between refreshes; a new listener shout re-sorts the wheel within ≤60s. Cache-hit path now validates weights instanceof Map (defensive against stale globalThis cache after hot reload — this bit during the round).
+   235→  * /api/nowplaying: new `heat: Record<trackId, count>` field (7d request counts for current + next, only >0 entries).
+   236→  * E2E-verified live: POSTed a request for "Bathroom Wall Classics" (was next[0]) → after the 60s cache TTL it was plucked out of the queue and promoted to the front block of the wheel (next became R0019→R0020→R0021). Test row deleted after.
+   237→- FEATURE 2 — Listener trend sparkline:
+   238→  * NEW GET /api/listeners/history — 97 points (24h @ 15-min steps) sampled from the deterministic circadian listener simulation (pure clock function, zero DB writes); contract type ListenersHistoryResponse + ListenerPoint in station-types.ts.
+   239→  * NEW src/components/station/sparkline.tsx — dependency-free SVG area+line sparkline (amber gradient, oklch tokens, end-dot, aria-label).
+   240→  * StatsStrip (On Air): "Listeners Now" tile now carries the 24h sparkline + caption; all four tiles got sub-caption lines (evening peak ~8 PM ET / rights gate enforced / on the AutoDJ wheel) and card-glow hover.
+   241→- FEATURE 3 — Up Next upgrades: "NEXT SPIN IN ~m:ss" countdown panel with Progress bar (fills toward the next track), red Flame request-heat badges on queued tracks from data.heat, and honest footnote "Listener shouts bump the hottest tracks up the wheel".
+   242→- FEATURE 4 — Share the station: src/lib/share.ts shareStation() (Web Share API → clipboard fallback, AbortError-safe); Share button in hero + share icon button in player bar; toasts 'Stream link copied — pass it on.' Browser-verified.
+   243→- FEATURE 5 — Media Session API: player-bar effects set navigator.mediaSession.metadata (title/artist/album/artwork) and playbackState + play/pause action handlers → OS lock-screen/media-key controls drive the station store. Verified via eval: state=playing, metadata populated.
+   244→- FEATURE 6 — PWA installability: public/manifest.webmanifest (name/short_name/standalone/theme #16130f/logo icon) + layout.tsx metadata.manifest, appleWebApp, applicationName, Viewport.themeColor.
+   245→- FEATURE 7 — Mobile nav sheet now ends with a "Quick keys" kbd hint card (Space / 1–6 / ?) above the ON AIR badge + clock.
+   246→- STYLING (mandatory polish): Recently Played rows — first row highlighted with primary left-border + gradient wash + "LAST SPIN" chip, per-row playlist badges (md+), avatar scale on hover; card-glow on stat tiles; LCP fix (priority on the now-playing texture image — warning count now 0 on fresh load).
+   247→- Contract changes: NowPlayingResponse.heat added; ListenersHistoryResponse/ListenerPoint/ShareResult types added. No breaking changes to existing consumers.
+   248→
+   249→Verification:
+   250→- bun run lint clean; bunx tsc --noEmit clean (app files); dev.log has zero runtime errors since the edits settled; manifest 200.
+   251→- agent-browser E2E: share toast, mobile Quick keys sheet, Media Session metadata, sparkline render, countdown bar, LAST SPIN highlight all visually confirmed; rotation advancement unaffected; fresh reload = zero console errors/warnings.
+   252→
+   253→Stage Summary (current goals/completed/verification):
+   254→- Station now has a living request→rotation feedback loop (shouts audibly change programming), listener trend visualization, OS-level media integration, installability, and share loops.
+   255→- 12 API routes total (11 + listeners/history). All healthy.
+   256→
+   257→Unresolved/risks & next-phase recommendations:
+   258→- Heat badges only show while a hot track sits in current/next — with all hot tracks clustered at the wheel front, badges appear mainly during the front-block window each cycle (~every 90 min). Acceptable (honest model), but consider capping promotion to top-3 hottest if badge visibility matters more.
+   259→- Rotation re-sort can visibly shuffle "Up Next" when a request lands (within 60s) — by design; PlayLog dedupe keeps history consistent.
+   260→- "Cleared tracks 23/22" tile remains a known cosmetic nuance (approved tracks await upload).
+   261→- Next ideas: per-IP rate limit on requests, Ops admin auth, listener-history persistence if AZURACAST_STREAM_URL goes live (replace simulation with real Icecast listener counts), "up next" tie-in showing which requests are queued.
+   262→
+   263→---
+   264→Task ID: 6
+   265→Agent: main (Z.ai Code) — cron webDevReview round 3
+   266→Task: QA assessment via agent-browser, then flagship feature round: program clock (station IDs + ad breaks), dayparting, requester tie-in, rate limits, bug fixes.
+   267→
+   268→Work Log (Current project status):
+   269→- QA pass first: page + all 11 API routes 200, chat relay up. Found via QA: (1) ARCHITECTURE GAP — no dayparting (explicit tracks aired any hour; "Fallback" tracks dominated regular rotation at noon, contradicting the Clean Daypart 6a–7p plan and Fallback-as-safety-net semantics); (2) PRE-EXISTING BUG — computeOnAir returned slot starts relative to the 2025 rotation anchor (startedAt/PlayLog timestamps frozen at 2025-01-01T00:xx, history timeAgo wrong, ledger could never align with broadcast times); (3) intermittent dev-only hydration warning (Radix aria-controls useId mismatch on the mobile Sheet trigger).
+   270→- No blocking bugs otherwise → proceeded to feature work.
+   271→
+   272→Work Log (Changes):
+   273→- FEATURE 1 — PROGRAM CLOCK in the rotation engine (the plan's 节目时钟, now real): the AutoDJ wheel is an element sequence of MUSIC blocks (3 songs) → STATION_ID (imaging spin) or AD BREAK (2×30s spots) after every 2nd block. ~60 min cycle: IDs every ~20 min, ad breaks every ~30 min. IDs/spins log to PlayLog (song history now includes imaging, like real stations); ad spots do NOT log to song history (they have their own ledger).
+   274→- FEATURE 2 — DAYPARTING + FALLBACK BENCH (rights/clean gate at engine level): 06:00–19:00 ET excludes explicit tracks from the wheel; Fallback playlist tracks are benched and only join the wheel when a listener shout pulls them in (weight > 0). E2E-verified: requesting "Holler Anthem" (bench) inserted it into the wheel within the 60s cache TTL while the other 3 bench tracks stayed out.
+   275→- FEATURE 3 — ON-AIR AD SCHEDULING + TRUE PROOF-OF-PLAY: adSpotScheduleForDay() is THE shared deterministic schedule (Bresenham-spread sold spots across the ET day, round-robin within per-campaign spotsPerDay budgets, flight-start guard). The on-air clock resolves each spot's creative from it (sold → sponsor creative; unsold → house promo), AND logs sold spots to ad_plays lazily at the exact broadcast instant (maybeLogAdPlay, idempotent like song history). POST /api/ops/ad-sync refactored to the same day-anchored schedule as a backfill (inserted exactly 6/4/8 = budgets; legacy rolling-window rows purged). Ledger and broadcast are now the same truth: playsToday/spotsPerDay in the sponsors UI reflects what actually aired (3/6, 3/4, 3/8 verified).
+   276→- FEATURE 4 — NOWPLAYING CONTRACT v3: new fields `element` ({kind, campaignName?, sponsorName?, creativeName?}), `daypart` ({clean, label}), `requestedBy` (who shouted for current/upcoming tracks, max 3 names), `next[]` entries extended with elementKind + sponsorName. All consumers updated: player bar shows STATION ID (amber mic chip) / SPONSORED or PROMO (red megaphone chip) states and "AD — {sponsor}" titling; Now Playing card renders per-element washes + stamps (STATION ID neutral, AD BREAK red/amber, HOUSE PROMO dark muted with "your brand could be here"); Up Next renders mic/megaphone element icons, dashed imaging rows, red sponsor-spot rows, "shouted by @name" chips; countdown card gains "Cueing up next…" pulse state during the inter-element gap; hero gains a live daypart chip ("Clean Daypart · 6a–7p ET" / "Open rotations · full library"); schedule hourly-clock note corrected to match engine behavior.
+   277→- FEATURE 5 — RATE LIMITS (in-memory, sandbox-scale, src/lib/rate-limit.ts): POST /api/requests → 5/min/IP (429 "Easy on the shout-outs…"), POST /api/submissions → 3/10min/IP. E2E-verified: 5×201 then 429 on request #6; test rows cleaned.
+   278→- FIXED BUG (pre-existing): computeOnAir now returns TRUE absolute slot starts (cycleStartMs = nowMs − position within cycle) instead of anchor-relative 2025 timestamps → PlayLog/nowplaying/history timestamps are real broadcast instants; 25 legacy anchor-era PlayLog rows purged; history now accumulates per spin (verified: Station ID spin 16:27:23 → Piedmont Gold 16:27:45).
+   279→- FIXED BUG (this round's own): stale-shape globalThis wheel cache guard hardened (Array.isArray(cached.elements)) — the documented hot-reload trap bit again during development.
+   280→- FIXED (UX noise): intermittent Radix aria-controls hydration warning on the mobile Sheet trigger — suppressHydrationWarning on the trigger (attribute self-corrects on open); 6/6 clean reloads after fix.
+   281→- Verified AD states via real render path with fetch-intercepted mocked payloads (sold sponsor + house promo), since the next live sold spot was ~45 min out; STATION_ID state captured LIVE on air.
+   282→
+   283→Verification:
+   284→- bun run lint clean; bunx tsc --noEmit → 0 src errors; dev.log clean of runtime errors; all 11 GET routes + POSTs 200.
+   285→- agent-browser E2E (desktop 1280 + mobile 390): hero daypart chip, STATION ID on-air capture, mocked sold/house AD captures, Up Next element icons + requester chips + heat, chat join+message, schedule, ops review queue, sponsors honest delivery bars, mobile sheet + Quick keys. Fresh loads: zero console issues after the hydration fix.
+   286→
+   287→Stage Summary (current goals/completed/verification):
+   288→- The station now runs a real program clock: music blocks, legal IDs, sponsor/house ad breaks, clean dayparting, and a request line that pulls bench tracks onto the wheel — with an ad ledger that matches broadcast instants exactly.
+   289→- 11 API routes unchanged in count; NowPlayingResponse contract extended (element/daypart/requestedBy/next[].elementKind) — additive, no breaking changes.
+   290→- Unresolved/risks: (1) ad-schedule instants recompute from the current 60s-cached wheel — if the wheel changes near a daypart boundary or library edit, sold/house assignment for specific instants can shift (live-logged rows are always exact; the sync backfill can drift ±1 slot on transition days; accepted for the sim, documented); (2) house promos dominate unsold inventory by design (18 sold/day vs ~96 break slots); (3) hydration warning fix is trigger-scoped — if other Radix components start warning similarly, same pattern applies; (4) "Cleared tracks 23/22" tile nuance remains.
+   291→- Next-phase recommendations: per-show 'ON AIR' takeover of the player bar when a LIVE show is scheduled (currently only the schedule grid shows it); Ops admin PIN gate; listener-history persistence swap for real Icecast counts when AZURACAST_STREAM_URL goes live; cap exposure: house-promo creative pool (2-3 variants) instead of a single house spot copy.
+   292→
+   293→---
+   294→Task ID: 7
+   295→Agent: main (Z.ai Code) — cron webDevReview round 4
+   296→Task: QA assessment via agent-browser, then: verify liveShow takeover E2E, Ops PIN gate (flagship), styling polish.
+   297→
+   298→Work Log (Current project status):
+   299→- Read worklog: Tasks 0-6 complete. Discovered an UNRECORDED intermediate round had already implemented two of Task 6's next-phase recommendations: (1) `LiveShowInfo` in the contract + `getActiveShow()` show cache (30s TTL) + liveShow in /api/nowplaying + hero banner & player-bar takeover; (2) house-promo creative pool (HOUSE_PROMOS, 3 variants, housePromoForSlot rotates by 10-min slot hash). Both were verified THIS round E2E before further building.
+   300→- QA pass first (desktop 1280 + mobile 390): all API routes 200 (listeners + ops parents 404 by design; real routes are /api/listeners/history + /api/ops/ad-sync), chat relay healthy via gateway (200), all 6 tabs render, sticky footer OK, fresh browser session = ZERO console errors/warnings, request-weighted rotation + bench-pull (Holler Anthem pulled by shout, aired live), heat/requester chips all working. No blocking bugs found.
+   301→- Dev.log investigation: two nowplaying 500s ("Cannot read properties of undefined (reading 'length')" at getRotationWheel) — both occurred exactly at "✓ Compiled" moments (requests racing a hot-reload recompile with a transiently stale globalThis wheel cache). Dev-mode artifact, self-healing (next poll 200); the Array.isArray guard is present in source. Documented, no action.
+   302→
+   303→Work Log (Changes):
+   304→- VERIFIED LIVE-SHOW TAKEOVER E2E (real render path, no mocks): temporarily shifted Carolina Cypher (Fri LIVE show) start 21:00→12:40 via DB, waited out the 30s show cache, and captured: liveShow populated in API (kind LIVE, accent red, minutesLeft 86) → hero red "LIVE NOW" banner, player-bar "LIVE — Carolina Cypher · with 910 Rex" + red LIVE SHOW chip, Up Next countdown continuing normally. Restored to 21:00, liveShow correctly null again.
+   305→- FEATURE — NOW PLAYING CARD LIVE TAKEOVER (this round's build): the on-air card now mirrors the broadcast state — red border + red glow shadow when a LIVE show is on air (amber glow for PLAYLIST hours), "LIVE SHOW"/"PLAYLIST HOUR" chip in the card title, description swaps to "{show} — {host} · {minutesLeft}m left, then back to the wheel", and a TV-style broadcast bug strip across the top of the visualizer (pulsing dot + "LIVE — CAROLINA CYPHER · with 910 Rex · 79m left", red-950/amber-950 gradient wash). Verified with the shifted show, live capture saved.
+   306→- FEATURE — OPS CONTROL-ROOM PIN GATE (flagship; last open Task 6 recommendation):
+   307→  * Server: src/lib/ops-auth.ts (getOpsPin from StationSetting `ops_pin`, default 0913; requireOpsPin guard returns 401 JSON). POST /api/ops/auth validates PIN (rate-limited 10/5min/IP via existing rate-limit util). Gated mutations: PATCH /api/submissions/[id], PATCH /api/rights/[id], POST /api/ops/ad-sync — 401 without/with wrong `x-ops-pin` header, verified by curl matrix (no PIN 401, wrong PIN 401, right PIN passes gate to validation, gated ad-sync 401, rights PATCH 401).
+   308→  * Client: src/hooks/use-ops-pin.ts — useSyncExternalStore over sessionStorage ('wavc-ops-pin'), hydration-safe (server snapshot = locked), cross-tab via storage event; unlock() validates once then stores; lock() clears; authHeaders() merges `x-ops-pin` into mutating fetches.
+   309→  * Ops UI: header badge Locked (amber) / Unlocked (emerald) + Lock button; review queue + tabs replaced by an amber-glow lock panel ("Control room locked", PIN input with wide tracking, Unlock button, "Demo PIN 0913 · clears when the tab closes") while dashboards (stats/bandwidth/system status/checklist) stay public; ad-sync button label becomes "Unlock to run the nightly sync" + info toast when locked. review() sends the header and surfaces 401 errors via toast.
+   310→  * Rights UI: status Update dropdown shows a "Locked" amber-lock button when the room is locked (clicking a status item toasts the unlock hint); sends header when unlocked.
+   311→  * Seeded StationSetting ops_pin=0913 (idempotent upsert).
+   312→  * Browser E2E: locked panel render, wrong PIN 9999 → error toast "Wrong PIN — that key does not open this door (demo: 0913)", correct PIN → success toast + queue revealed + "Run ad sync" → "Synced 0 new ad plays" (idempotent, correct), Rights tab shows Update (unlocked) in same tab session, tab switch keeps unlock, fresh session locked again.
+   313→- STYLING (mandatory polish): live card red glow + broadcast bug strip; lock panel amber-glow design with concentric ring icon; header lock/unlock badges. House-promo variants visually confirmed on air ("House promo — sp… Your brand here: daypa…" variant 3 in Up Next) alongside a sold "qcc-morning-roast" Sponsor Spot row.
+   314→- FIXED during round: duplicate `import { toast }` in rights-section.tsx (from this round's edit) caught and removed before final verification.
+   315→
+   316→Verification:
+   317→- bun run lint clean; bunx tsc --noEmit 0 src errors; fresh browser session (agent-browser close → open): 0 console errors/warnings; all mutating routes gated and verified; liveShow take/restore cycle clean; DB left in original state (show restored, no test rows).
+   318→
+   319→Stage Summary (current goals/completed/verification):
+   320→- The station now has a complete broadcast identity system (hero + player bar + now-playing card all follow the live show) and a real access boundary: public dashboards, PIN-gated control room. All three of Task 6's next-phase recommendations are now done (player-bar takeover, house-promo pool, PIN gate); listener-history persistence swap remains gated on a real AZURACAST_STREAM_URL by design.
+   321→- API surface unchanged in count (12 GET + 5 POST/PATCH); /api/nowplaying contract untouched this round (liveShow was already additive); new internal-only route POST /api/ops/auth.
+   322→- Unresolved/risks: (1) PIN is demo-grade by design (constant from DB, sessionStorage, no hashing) — fine for sandbox, needs real auth (NextAuth) before public deployment; (2) hot-reload wheel-cache race can 500 a single poll in dev (documented, self-healing); (3) "Cleared tracks 23/22" tile nuance remains (approved-awaiting-upload); (4) PLAYLIST-kind liveShow takeover (amber variant) verified by code symmetry only — Overnight Rotation window is 1-6 AM ET.
+   323→- Next-phase recommendations: (a) per-IP rate limit is on requests/submissions/PIN — consider one on POST /api/submissions attachments if uploads go live; (b) "up next" panel could list which listener requests are queued for upcoming tracks end-to-end; (c) admin auth swap to NextAuth when multi-user Ops is needed; (d) schedule tab could deep-link from the ON AIR NOW card to the hero.
+   324→
+   325→---
+   326→Task ID: 8
+   327→Agent: main (Z.ai Code) — cron webDevReview round 5
+   328→Task: Status assessment + agent-browser QA, then bug fixes + new features (Wave Chart, real spectrum visualizer, listener favorites, schedule deep-link) + styling polish.
+   329→
+   330→Work Log (Current project status):
+   331→- Read worklog: Tasks 0-7 complete. Project was stable: 12 GET + 5 POST/PATCH routes, full broadcast clock, PIN-gated control room, live-show takeover. Lint clean, tsc clean (only pre-existing examples/ + skills/ folder errors), dev.log healthy.
+   332→- QA first (agent-browser, desktop 1280 + mobile 390): all 6 tabs render, zero console errors on fresh session, chat relay healthy, sticky footer OK. Found 2 issues: (1) stale scroll position survived tab switches (deep scroll on On Air landed mid-footer on Schedule); (2) the long-documented "Cleared Tracks 23/22" tile nuance — DB verified root cause: an APPROVED submission's R-record is CLEARED before its Track lands on the wheel, so counting CLEARED R-records overshoots the track count.
+   333→
+   334→Work Log (Bug fixes):
+   335→- FIXED stats tile: /api/stats now counts music tracks whose rightsId is CLEARED (fetch CLEARED ids -> filter Track rows) instead of counting CLEARED records. Tile now reads 25/25 with sub "every spin rights-checked"; the awaiting-upload record stays in the submissions pipeline where it belongs.
+   336→- FIXED scroll reset: AppShell useEffect on `tab` -> window.scrollTo({top:0}). Verified: scrollY 3001 -> 0 after tab switch.
+   337→- FIXED React console error found in E2E: "getServerSnapshot should be cached" — use-favorites.ts now returns a module-level EMPTY constant.
+   338→
+   339→Work Log (New features):
+   340→- FEATURE 1 — THE WAVE CHART (weekly leaderboard): new GET /api/charts aggregates PlayLog 7d via groupBy (top 8 by spins), joins 7d TrackRequest shouts as tie-breaker, flags onAirNow from the 3 most recent PlayLog rows, excludes Imaging from charting. New ChartsResponse/ChartEntry contract in station-types.ts. New WaveChartCard (src/components/station/wave-chart-card.tsx): animated staggered rows (framer-motion), gradient rank medals for top 3, per-row spins-share bar, flame shout chips, pulsing ON AIR badge, rights-gate footnote. Verified live: 805 spins in 7d, ranks ordered, ON AIR pulse matches the wheel.
+   341→- FEATURE 2 — REAL SPECTRUM VISUALIZER: SynthEngine master chain now taps an AnalyserNode (fftSize 128, smoothing 0.78) exposed via getAnalyser(); stop() disconnects it cleanly. New SpectrumCanvas (src/components/station/spectrum-canvas.tsx): DPR-aware canvas, amber->orange->red gradient bars + decaying peak-hold caps, logscaled low weighting, idle sine-floor animation, prefers-reduced-motion (static frame), polls analyser attach for ~2.5s to win the isPlaying/start() race. Replaced the fake CSS keyframe EQ strip in the Now Playing card (player bar keeps the tiny CSS bars). Verified LIVE: painted pixel count changes frame-to-frame (6187 -> 6527) with audio running.
+   342→- FEATURE 3 — MY WAVES (listener favorites): use-favorites.ts external store over localStorage ('wavc-favorites-v1', max 30, metadata snapshot, cross-tab via storage event, hydration-safe server snapshot). Heart surfaces: FavoriteHeartButton in Recently Played rows (hover-reveal on desktop, always on mobile), the Now Playing overlay (alwaysVisible), and TrackDialog footer (Saved state). New MyWavesCard: saved list with live "On air now" pulse + weekly heat, Shout button that prefills the request line, unheart, empty state. One-shot toast per spin when a favorited track airs while tuned in (announcedRef dedupe). Verified E2E: hearts persist to localStorage, card populates, toast fired live on mobile when Blue Ridge Static (a hearted track) was on air.
+   343→- FEATURE 4 — SCHEDULE DEEP-LINK (Task 7 recommendation d): ScheduleSection takes onNavigate; the ON AIR NOW badge is now a button that navigates to the On Air panel (wired through AppShell). Note: badge only exists when a show is on air, so verified by code path symmetry with the header nav; render verified.
+   344→- STYLING (mandatory polish): AnimatedStat (use-count-up.ts, rAF ease-out, reduced-motion snap) ticks the four stats tiles like a console counter; .bg-noise SVG-turbulence grain overlays on hero + now-playing visual (kills gradient banding); .hover-lift rise-on-hover for the two new cards; .text-glow-red utility; .animate-heart-pop bounce on heart save; global prefers-reduced-motion guard for all ambient animations (onair/eq/vinyl/ticker/float/wave).
+   345→- Refactors: useJson extracted from on-air-section.tsx to src/hooks/use-json.ts; ErrorLine extracted to src/components/station/error-line.tsx (shared by new cards). New files: src/app/api/charts/route.ts, src/hooks/{use-json,use-count-up,use-favorites}.ts, src/components/station/{spectrum-canvas,wave-chart-card,my-waves-card,error-line}.tsx.
+   346→
+   347→Verification:
+   348→- bun run lint clean; bunx tsc --noEmit -> 0 src errors; fresh agent-browser session: 0 console errors/warnings after the getServerSnapshot fix.
+   349→- APIs verified: /api/charts returns ranked rows with spins/shouts/onAirNow; /api/stats library now 25/25 cleared.
+   350→- E2E (desktop + mobile): heart save/remove from all three surfaces, My Waves live toast, Wave Chart rows + ON AIR pulse, canvas animates with audio, tab scroll reset, dialogs, chat, all tabs render. dev.log 500s this session were only the documented hot-reload wheel-cache race at recompile instants (self-healing, next poll 200).
+   351→
+   352→Stage Summary (current goals/completed/verification):
+   353→- The On Air panel now has a full listener loop: hear it -> see it (real spectrum) -> love it (My Waves hearts) -> get told when it airs (toast) -> shout for it (request prefill), and artists get a weekly chart computed from the same audited PlayLog ledger as broadcast.
+   354→- API surface: 13 GET + 5 POST/PATCH (new /api/charts); NowPlayingResponse contract untouched this round; ChartsResponse added additively.
+   355→- Unresolved/risks: (1) chart onAirNow derives from the 3 most recent PlayLog rows, so during ad breaks/IDs the badge points at the last music spin rather than the literal current element — acceptable semantics ("last spun"); (2) favorites are device-local by design; syncing them would need an account or anonymous id; (3) PIN gate still demo-grade (documented in Task 7); (4) hot-reload wheel-cache race remains a dev-only artifact.
+
+[showing lines 170-355 of 357; use offset=356 with limit to continue reading]

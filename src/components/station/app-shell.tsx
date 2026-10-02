@@ -106,6 +106,8 @@ export function AppShell() {
               play &middot;{' '}
               <kbd className="rounded border border-border bg-muted px-1 font-mono text-[10px]">1–6</kbd>{' '}
               switch panels &middot;{' '}
+              <kbd className="rounded border border-border bg-muted px-1 font-mono text-[10px]">S</kbd>{' '}
+              sleep timer &middot;{' '}
               <kbd className="rounded border border-border bg-muted px-1 font-mono text-[10px]">?</kbd>{' '}
               shortcuts
             </span>

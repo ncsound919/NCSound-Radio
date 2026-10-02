@@ -35,10 +35,16 @@ type StationPlayerStore = {
   volume: number // 0..1
   previewSynth: boolean // true = WebAudio studio preview, false = silent UI
   quality: StreamQuality // hi = Mount 1 (128 kbps AAC), mobile = Mount 2 (64 kbps HE-AAC)
+  /** Epoch ms when the sleep timer expires; null = no timer. */
+  sleepEndsAt: number | null
   toggle: () => void
   setVolume: (v: number) => void
   setPreviewSynth: (b: boolean) => void
   setQuality: (q: StreamQuality) => void
+  /** minutes = null cancels the timer. */
+  setSleepTimer: (minutes: number | null) => void
+  /** Fire the fade-out + stop. Idempotent; safe to call repeatedly at expiry. */
+  expireSleep: () => void
 }
 
 let enginePromise: Promise<SynthEngine | null> | null = null
@@ -64,6 +70,9 @@ async function startEngine(volume: number): Promise<void> {
   try {
     const engine = await loadEngine()
     if (!engine) return
+    // If a sleep-timer fade was in flight, cancel it so a manual restart
+    // isn't ramped to silence by the queued linear ramp.
+    engine.cancelFade()
     engine.setVolume(volume)
     if (!engine.isRunning) engine.start()
   } catch {
@@ -95,15 +104,30 @@ function syncAudio(isPlaying: boolean, previewSynth: boolean, volume: number): v
   else stopEngine()
 }
 
+/** The loaded engine (or null) — used by the reactive-hero audio-level hook. */
+export function getLoadedEngine(): SynthEngine | null {
+  return engineInstance
+}
+
+const SLEEP_FADE_SEC = 4
+let sleepFading = false
+let sleepBailed = false // set when the listener toggles playback mid-fade
+
 export const useStationPlayer = create<StationPlayerStore>()((set, get) => ({
   isPlaying: false,
   volume: 0.8,
   previewSynth: true,
   quality: 'hi',
+  sleepEndsAt: null,
 
   toggle: () => {
     const next = !get().isPlaying
     set({ isPlaying: next })
+    // Manual pause cancels a pending sleep timer — expiry path stops the
+    // engine directly and never routes through toggle(), so this is safe.
+    if (!next && get().sleepEndsAt) set({ sleepEndsAt: null })
+    // Any manual toggle during the expiry fade means the listener took over.
+    if (sleepFading) sleepBailed = true
     syncAudio(next, get().previewSynth, get().volume)
   },
 
@@ -126,4 +150,49 @@ export const useStationPlayer = create<StationPlayerStore>()((set, get) => ({
       /* private mode */
     }
   },
+
+  setSleepTimer: (minutes: number | null) => {
+    if (minutes === null || minutes <= 0) {
+      set({ sleepEndsAt: null })
+      return
+    }
+    set({ sleepEndsAt: Date.now() + minutes * 60_000 })
+  },
+
+  expireSleep: () => {
+    if (sleepFading) return
+    const endsAt = get().sleepEndsAt
+    if (endsAt === null || Date.now() < endsAt) return
+    sleepFading = true
+    sleepBailed = false
+    set({ sleepEndsAt: null })
+    try {
+      if (get().isPlaying) {
+        engineInstance?.fadeOut(SLEEP_FADE_SEC)
+        // After the fade: hard-stop + flip the UI off — unless the listener
+        // toggled playback mid-fade (then they own the transport).
+        setTimeout(() => {
+          try {
+            if (!sleepBailed) {
+              stopEngine()
+              set({ isPlaying: false })
+            }
+          } finally {
+            sleepFading = false
+          }
+        }, SLEEP_FADE_SEC * 1000 + 150)
+        return
+      }
+    } catch {
+      /* never break the UI over audio */
+    }
+    sleepFading = false
+  },
 }))
+
+// Dev/QA handle: lets browser tooling drive the transport directly
+// (e.g. fast-forwarding the sleep timer in E2E checks). Stripped in prod builds.
+if (process.env.NODE_ENV !== 'production' && typeof window !== 'undefined') {
+  ;(window as unknown as { __wavcPlayer?: typeof useStationPlayer }).__wavcPlayer =
+    useStationPlayer
+}

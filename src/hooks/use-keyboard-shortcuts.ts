@@ -4,6 +4,7 @@
  * Keyboard shortcuts for the station console:
  *   Space   -> play / pause (ignored while typing)
  *   1..6    -> switch tabs
+ *   S       -> sleep timer on (30 min) / off
  *   ?       -> toggle the shortcuts dialog
  *   Escape  -> close the shortcuts dialog
  *
@@ -11,6 +12,7 @@
  * help dialog.
  */
 import { useCallback, useEffect, useState } from 'react'
+import { toast } from 'sonner'
 import { useStationPlayer } from '@/hooks/use-station-player'
 import { TAB_IDS, type TabId } from '@/lib/station-types'
 
@@ -31,6 +33,8 @@ export function useKeyboardShortcuts(onTabChange: (t: TabId) => void): [
 ] {
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const toggle = useStationPlayer((s) => s.toggle)
+  const sleepEndsAt = useStationPlayer((s) => s.sleepEndsAt)
+  const setSleepTimer = useStationPlayer((s) => s.setSleepTimer)
 
   const handler = useCallback(
     (e: KeyboardEvent) => {
@@ -51,12 +55,25 @@ export function useKeyboardShortcuts(onTabChange: (t: TabId) => void): [
         onTabChange(TAB_IDS[idx - 1])
         return
       }
+      if (e.key === 's' || e.key === 'S') {
+        e.preventDefault()
+        if (sleepEndsAt) {
+          setSleepTimer(null)
+          toast('Sleep timer off.')
+        } else {
+          setSleepTimer(30)
+          toast('Sleep timer — 30 minutes.', {
+            description: 'Press S again to cancel; the stream fades out on schedule.',
+          })
+        }
+        return
+      }
       if (e.key === '?') {
         e.preventDefault()
         setShortcutsOpen((v) => !v)
       }
     },
-    [onTabChange, shortcutsOpen, toggle],
+    [onTabChange, shortcutsOpen, toggle, sleepEndsAt, setSleepTimer],
   )
 
   useEffect(() => {

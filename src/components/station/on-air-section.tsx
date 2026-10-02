@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import Image from 'next/image'
 import { motion } from 'framer-motion'
 import {
@@ -57,6 +57,7 @@ import { useCountUp } from '@/hooks/use-count-up'
 import { useJson } from '@/hooks/use-json'
 import { useNowPlaying } from '@/hooks/use-nowplaying'
 import { useStationPlayer } from '@/hooks/use-station-player'
+import { useAudioLevel } from '@/hooks/use-audio-level'
 import { shareStation } from '@/lib/share'
 import type {
   HistoryResponse,
@@ -420,6 +421,11 @@ function Hero({
   const isPlaying = useStationPlayer((s) => s.isPlaying)
   const toggle = useStationPlayer((s) => s.toggle)
 
+  // Reactive hero: the master-chain analyser writes --audio-level on this
+  // element (~30fps, zero re-renders) and the glow layers read it via calc().
+  const heroRef = useRef<HTMLElement | null>(null)
+  useAudioLevel(heroRef, '--audio-level', isPlaying)
+
   const chips = [
     { icon: Gauge, label: '128 kbps AAC' },
     { icon: ShieldCheck, label: 'Rights-cleared library' },
@@ -436,9 +442,25 @@ function Hero({
   return (
     <FadeIn>
       <section
+        ref={heroRef}
         aria-label="Station introduction"
         className="relative overflow-hidden rounded-xl border border-border/60"
+        style={{ '--audio-level': '0' } as CSSProperties}
       >
+        {/* audio-reactive halo — breathes with the master-chain output while playing */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 -top-24 h-64"
+          style={{
+            background:
+              'radial-gradient(60% 100% at 50% 100%, oklch(0.72 0.16 70 / 0.5) 0%, oklch(0.6 0.19 35 / 0.28) 45%, transparent 75%)',
+            opacity: 'calc(0.1 + var(--audio-level, 0) * 0.85)',
+            transform: 'scale(calc(1 + var(--audio-level, 0) * 0.08))',
+            transformOrigin: '50% 100%',
+            transition: 'opacity 90ms linear',
+            filter: 'blur(6px)',
+          }}
+        />
         <Image
           src="/station-hero.jpg"
           alt="Inside the WAVC 91.3 broadcast studio"

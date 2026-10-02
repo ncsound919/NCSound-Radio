@@ -8,7 +8,7 @@
  */
 
 import { motion } from 'framer-motion'
-import { Flame, Mic, Radio, Trophy } from 'lucide-react'
+import { Flame, Mic, Radio, TrendingUp, Trophy } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -24,6 +24,37 @@ function timeAgoShort(iso: string, serverMs: number): string {
   const hrs = Math.floor(min / 60)
   if (hrs < 24) return `${hrs}h ago`
   return `${Math.floor(hrs / 24)}d ago`
+}
+
+/** Week-over-week movement chip: ▲ climbed · ▼ fell · NEW entered the chart. */
+function MoverChip({ rank, prevRank }: { rank: number; prevRank: number | null }) {
+  if (prevRank === null) {
+    return (
+      <span
+        title="New on the chart — it was not ranking in the previous window"
+        className="relative inline-flex shrink-0 items-center rounded border border-primary/40 bg-primary/10 px-1 py-0.5 text-[9px] font-extrabold uppercase tracking-wider text-primary"
+      >
+        New
+      </span>
+    )
+  }
+  const delta = prevRank - rank
+  if (delta === 0) return null
+  const up = delta > 0
+  return (
+    <span
+      title={`Was #${prevRank} in the previous window`}
+      className={cn(
+        'relative inline-flex shrink-0 items-center gap-0.5 rounded border px-1 py-0.5 font-mono text-[9px] font-bold leading-3',
+        up
+          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400'
+          : 'border-red-500/30 bg-red-500/5 text-red-400/90',
+      )}
+    >
+      {up ? '▲' : '▼'}
+      {Math.abs(delta)}
+    </span>
+  )
 }
 
 const RANK_STYLES: Record<number, string> = {
@@ -67,7 +98,39 @@ export function WaveChartCard() {
             Not enough spins logged yet — the chart builds itself after the first hour on air.
           </p>
         ) : (
-          <ol className="max-h-96 space-y-1.5 overflow-y-auto pr-1 scrollbar-thin" aria-label="Weekly track chart">
+          <>
+            {data.mover && (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.35, ease: 'easeOut' }}
+                className="mb-2.5 flex items-center gap-2.5 rounded-md border border-emerald-500/25 bg-gradient-to-r from-emerald-500/10 via-primary/[0.06] to-transparent px-3 py-2"
+                role="status"
+              >
+                <span
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-emerald-500/40 bg-emerald-500/15"
+                  aria-hidden="true"
+                >
+                  <TrendingUp className="h-3.5 w-3.5 text-emerald-400" />
+                </span>
+                <p className="min-w-0 text-xs leading-tight">
+                  <span className="font-bold uppercase tracking-wider text-emerald-400">
+                    Biggest mover
+                  </span>{' '}
+                  <span className="font-semibold text-foreground">
+                    {data.mover.title} — {data.mover.artist}
+                  </span>{' '}
+                  <span className="font-mono text-emerald-400/90">▲{data.mover.delta}</span>
+                  <span className="text-muted-foreground">
+                    {' '}· now #{data.mover.rank} on the chart
+                  </span>
+                </p>
+              </motion.div>
+            )}
+            <ol
+              className="max-h-96 space-y-1.5 overflow-y-auto pr-1 scrollbar-thin"
+              aria-label="Weekly track chart"
+            >
             {rows.map((row, idx) => (
               <motion.li
                 key={row.trackId}
@@ -97,6 +160,8 @@ export function WaveChartCard() {
                 >
                   {row.rank}
                 </span>
+
+                <MoverChip rank={row.rank} prevRank={row.prevRank} />
 
                 <div className="relative min-w-0 flex-1">
                   <p className="flex items-center gap-2 truncate text-sm font-medium">
@@ -155,12 +220,17 @@ export function WaveChartCard() {
                 </Badge>
               </motion.li>
             ))}
-          </ol>
+            </ol>
+          </>
         )}
         <p className="mt-3 flex items-center gap-1.5 text-[10px] leading-relaxed text-muted-foreground">
           <Mic className="h-3 w-3 shrink-0" aria-hidden="true" />
           Every counted spin passed the rights gate — the chart is an audit trail with rhythm.
           <Radio className="h-3 w-3 shrink-0" aria-hidden="true" />
+        </p>
+        <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground/70">
+          Movement compares against the previous seven days (ending 24h ago), read from the same
+          ledger — nothing is hand-picked.
         </p>
       </CardContent>
     </Card>

@@ -218,6 +218,12 @@ export function StationHeader({
                       </kbd>
                     </li>
                     <li className="flex items-center justify-between">
+                      <span>Sleep timer</span>
+                      <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
+                        S
+                      </kbd>
+                    </li>
+                    <li className="flex items-center justify-between">
                       <span>All shortcuts</span>
                       <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground/80">
                         ?

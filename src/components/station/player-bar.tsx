@@ -5,17 +5,27 @@ import {
   Mic,
   Megaphone,
   MessageSquareQuote,
+  Moon,
   Pause,
   Play,
   Radio,
   Share2,
   SignalHigh,
   SignalLow,
+  Timer,
   Volume2,
   VolumeX,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Progress } from '@/components/ui/progress'
 import { Slider } from '@/components/ui/slider'
 import { useNowPlaying } from '@/hooks/use-nowplaying'
@@ -28,6 +38,16 @@ function fmtTime(sec: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
+function fmtSleepCountdown(ms: number): string {
+  const s = Math.max(0, Math.ceil(ms / 1000))
+  const h = Math.floor(s / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  const sec = s % 60
+  return h > 0
+    ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
+    : `${m}:${String(sec).padStart(2, '0')}`
+}
+
 export function PlayerBar() {
   const { data, lastFetch } = useNowPlaying()
   const isPlaying = useStationPlayer((s) => s.isPlaying)
@@ -37,6 +57,9 @@ export function PlayerBar() {
   const setQuality = useStationPlayer((s) => s.setQuality)
   const toggle = useStationPlayer((s) => s.toggle)
   const setVolume = useStationPlayer((s) => s.setVolume)
+  const sleepEndsAt = useStationPlayer((s) => s.sleepEndsAt)
+  const setSleepTimer = useStationPlayer((s) => s.setSleepTimer)
+  const expireSleep = useStationPlayer((s) => s.expireSleep)
 
   // Local one-second ticker so the progress bar moves smoothly between polls.
   const [now, setNow] = useState(() => Date.now())
@@ -61,6 +84,31 @@ export function PlayerBar() {
   const track = current?.track
   const upNext = data?.next?.[0]
   const liveShow = data?.liveShow ?? null
+
+  // Sleep-timer countdown + expiry (driven off the same 1s ticker as the progress bar).
+  const sleepRemainingMs = sleepEndsAt ? Math.max(0, sleepEndsAt - now) : 0
+  useEffect(() => {
+    if (!sleepEndsAt || now < sleepEndsAt) return
+    expireSleep()
+    toast('Sleep timer — good night.', {
+      description: 'The stream faded out on schedule. Tune back in anytime.',
+    })
+  }, [now, sleepEndsAt, expireSleep])
+
+  const handleSetSleep = (minutes: number | null) => {
+    setSleepTimer(minutes)
+    if (minutes === null) {
+      toast('Sleep timer off.')
+    } else {
+      const at = new Date(Date.now() + minutes * 60_000).toLocaleTimeString([], {
+        hour: 'numeric',
+        minute: '2-digit',
+      })
+      toast(`Sleep timer set — fading out at ${at}.`, {
+        description: `${minutes} minutes of waves left, then quiet.`,
+      })
+    }
+  }
 
   const handleMute = () => {
     if (muted) {
@@ -292,6 +340,81 @@ export function PlayerBar() {
             aria-label="Volume"
             className="w-20"
           />
+        </div>
+
+        {/* Sleep timer */}
+        <div className="flex shrink-0 items-center">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className={cn(
+                  'h-8 w-8 shrink-0',
+                  sleepEndsAt && 'text-primary hover:text-primary',
+                )}
+                aria-label={sleepEndsAt ? 'Sleep timer — active' : 'Sleep timer'}
+                title="Sleep timer"
+              >
+                {sleepEndsAt ? (
+                  <Timer className="h-4 w-4" aria-hidden="true" />
+                ) : (
+                  <Moon className="h-4 w-4" aria-hidden="true" />
+                )}
+              </Button>
+            </DropdownMenuTrigger>
+            {sleepEndsAt && (
+              <DropdownMenuTrigger asChild>
+                <span
+                  role="timer"
+                  aria-label="Sleep timer countdown"
+                  title="Sleep timer — click to change"
+                  className="hidden h-5 cursor-pointer select-none items-center rounded-sm border border-primary/40 bg-primary/10 px-1.5 font-mono text-[10px] font-bold tabular-nums text-primary sm:inline-flex"
+                >
+                  {fmtSleepCountdown(sleepRemainingMs)}
+                </span>
+              </DropdownMenuTrigger>
+            )}
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuLabel className="flex items-center gap-2 text-xs">
+                <Moon className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
+                Sleep timer
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              {sleepEndsAt && (
+                <div
+                  className="px-2 pb-1.5 font-mono text-xs tabular-nums text-primary"
+                  role="timer"
+                  aria-live="off"
+                >
+                  Fading out in {fmtSleepCountdown(sleepRemainingMs)}
+                </div>
+              )}
+              {[15, 30, 45, 60, 90].map((m) => (
+                <DropdownMenuItem
+                  key={m}
+                  onClick={() => handleSetSleep(m)}
+                  className="justify-between text-xs"
+                >
+                  <span>{m} minutes</span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {m >= 60
+                      ? `${Math.floor(m / 60)}h ${m % 60 ? `${m % 60}m` : ''}`.trim()
+                      : `${m}m`}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => handleSetSleep(null)}
+                disabled={!sleepEndsAt}
+                className="text-xs text-muted-foreground"
+              >
+                Turn off
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {/* Share the station */}

@@ -21,6 +21,7 @@ const TAB_LABELS: Record<string, string> = {
 
 const ROWS: Array<{ keys: string[]; action: string }> = [
   { keys: ['Space'], action: 'Play / pause the stream' },
+  { keys: ['S'], action: 'Sleep timer — 30 min on / off' },
   { keys: ['?'], action: 'Open this shortcut card' },
   { keys: ['Esc'], action: 'Close dialogs' },
 ]

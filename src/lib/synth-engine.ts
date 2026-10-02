@@ -149,6 +149,32 @@ export class SynthEngine {
     }
   }
 
+  /**
+   * Smoothly ramp the master gain to silence over `seconds` (sleep-timer fade).
+   * Does NOT stop the loop — the caller decides when to stop() afterwards.
+   */
+  fadeOut(seconds = 4): void {
+    try {
+      if (!this.master || !this.ctx) return
+      const now = this.ctx.currentTime
+      const gain = this.master.gain
+      gain.cancelScheduledValues(now)
+      const current = gain.value
+      gain.setValueAtTime(current, now)
+      gain.linearRampToValueAtTime(0.0001, now + Math.max(0.5, seconds))
+    } catch {}
+  }
+
+  /** Cancel any in-flight fade and restore gain control (manual restart path). */
+  cancelFade(): void {
+    try {
+      if (!this.master || !this.ctx) return
+      const gain = this.master.gain
+      gain.cancelScheduledValues(this.ctx.currentTime)
+      gain.setValueAtTime(Math.max(0.0001, gain.value), this.ctx.currentTime)
+    } catch {}
+  }
+
   dispose(): void {
     this.stop()
     const ctx = this.ctx
