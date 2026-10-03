@@ -29,7 +29,17 @@ export interface RadioStationConfig {
   autoWebhookOnTrackChange: boolean;
   autoFailoverEnabled: boolean;
   autoApproveRequests: boolean;
-  estimatedListeners: number;
+  /**
+   * Where the embeddable widget reads now-playing from. Defaults to the
+   * station app, which serves it from the live engine.
+   */
+  nowPlayingApiUrl: string;
+  /**
+   * Real Icecast count, pushed in from BroadcastLink. null means "not
+   * measured". It must never be defaulted to a number: an operator reading a
+   * fabricated listener figure has no way to tell it from a real one.
+   */
+  listeners: number | null;
 }
 
 export interface RadioSongRequest {
@@ -112,7 +122,10 @@ export class RadioBroadcastEngine {
     autoWebhookOnTrackChange: true,
     autoFailoverEnabled: true,
     autoApproveRequests: false,
-    estimatedListeners: 42,
+    listeners: null,
+    // The console itself cannot know this; the station app reads it from the
+    // engine, which reads it from Icecast.
+    nowPlayingApiUrl: "http://127.0.0.1:3100/api/nowplaying",
   };
 
   isOnAir = false;
@@ -455,7 +468,10 @@ export class RadioBroadcastEngine {
         mount: this.config.mountPoint,
         onAir: this.isOnAir,
         uptimeSec,
-        listeners: this.config.estimatedListeners,
+        // The onAir payload declares a numeric listener count because webhooks
+        // downstream expect one. The console cannot measure it, so report 0
+        // and let the reading stand as "none seen" rather than inventing one.
+        listeners: this.config.listeners ?? 0,
       },
       nowPlaying: {
         id: activeTrack.id,
@@ -515,7 +531,10 @@ export class RadioBroadcastEngine {
                 },
                 {
                   name: "👥 Listeners",
-                  value: `${payload.station.listeners} Tuned In`,
+                  value:
+                    payload.station.listeners == null
+                      ? "Not measured"
+                      : `${payload.station.listeners} Tuned In`,
                   inline: true,
                 },
               ],
@@ -591,15 +610,19 @@ export class RadioBroadcastEngine {
   </div>
 </div>
 <script>
-// Auto-refresh Now Playing from Radio API
+// Auto-refresh now playing from the real engine, via the station app's API.
+// The old /api/radio/nowplaying endpoint was a hardcoded fixture and has been
+// removed; pointing at it made the widget display a track that never aired.
 setInterval(async function() {
   try {
-    var res = await fetch('/api/radio/nowplaying');
+    var res = await fetch('${this.config.nowPlayingApiUrl}');
     if (res.ok) {
       var data = await res.json();
-      if (data.nowPlaying) {
-        document.getElementById('hrp-title').innerText = data.nowPlaying.title;
-        document.getElementById('hrp-artist').innerText = data.nowPlaying.artist + ' (' + data.nowPlaying.bpm + ' BPM)';
+      var cur = data.current && data.current.track;
+      if (cur) {
+        document.getElementById('hrp-title').innerText = cur.title;
+        document.getElementById('hrp-artist').innerText =
+          cur.artist + (cur.bpm ? ' (' + cur.bpm + ' BPM)' : '');
       }
     }
   } catch(e) {}

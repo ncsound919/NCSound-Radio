@@ -49,6 +49,7 @@ import type {
   TransitionPreset,
 } from "./engine/types";
 import { RadioBroadcastEngine } from "./engine/radioBroadcast";
+import { broadcastLink, type BroadcastStatus } from "./engine/broadcastLink";
 import type { RadioNowPlayingPayload, RadioSongRequest, StationSweeper } from "./engine/radioBroadcast";
 
 const presets = transitions as TransitionPreset[];
@@ -3598,50 +3599,54 @@ async function syncRadioStateToServer() {
       : undefined
   );
 
-  try {
-    const res = await fetch("/api/radio/sync", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data.commands && Array.isArray(data.commands)) {
-        for (const cmd of data.commands) {
-          handleRemoteRadioCommand(cmd);
-        }
-      }
-    }
-  } catch {}
-}
-
-function handleRemoteRadioCommand(cmd: { command: string; param?: any }) {
-  if (cmd.command === "skip") {
-    void triggerPrimaryAction();
-    toast(`📡 Remote Radio Command Executed: Skip Track`);
-  } else if (cmd.command === "play") {
-    void mixer.ctx.resume().then(() => {
-      mixer.play();
-      toast(`📡 Remote Radio Command Executed: Play`);
-    });
-  } else if (cmd.command === "pause") {
-    mixer.pause();
-    toast(`📡 Remote Radio Command Executed: Pause`);
-  } else if (cmd.command === "jingle") {
-    radio.triggerJingle();
-    toast(`📡 Remote Radio Command Executed: Inject Station Jingle`);
-  } else if (cmd.command === "vibe" && typeof cmd.param === "string") {
-    const tpl = templates.find(t => t.id === cmd.param);
-    if (tpl) {
-      selectedTemplateId = tpl.id;
-      $("marathonArcLabel").textContent = `ENERGY ARC: ${tpl.name.toUpperCase()}`;
-      autoSequenceQueueSilently();
-      renderQueue();
-      renderPartyTemplates();
-      saveBoothPrefs();
-      toast(`📡 Remote Radio Command Executed: Set Vibe to ${tpl.name}`);
+  // Outbound webhook only. This used to POST the payload to /api/radio/sync, a
+  // vite endpoint that stored it in a hardcoded fixture and replied with queued
+  // "remote commands" - a loop between the console and itself. Broadcast truth
+  // now arrives from ingest via BroadcastLink.
+  if (radio.config.webhookUrl) {
+    try {
+      await fetch(radio.config.webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch {
+      /* the operator's webhook is theirs to debug */
     }
   }
+}
+
+/**
+ * Fold real broadcast measurements into the local view.
+ *
+ * The console mixes locally, so decks and the master bus come from mixer.info().
+ * Listener count and stream state cannot be measured here at all, so they are
+ * taken from ingest and left null when it cannot be reached.
+ */
+function applyBroadcastStatus(s: BroadcastStatus) {
+  radio.config.listeners = s.listeners;
+
+  const fmt = (n: number | null) => (n == null ? "--" : String(n));
+  const set = (id: string, text: string) => {
+    const el = $(id);
+    if (el) el.textContent = text;
+  };
+
+  // These three badges exist in index.html next to the broadcast heading.
+  set("radioListenersBadge", `LISTENERS: ${fmt(s.listeners)}`);
+  set(
+    "radioStreamBadge",
+    s.streamOnAir === null
+      ? "STREAM: unknown"
+      : `STREAM: ${s.streamOnAir ? "ON AIR" : "OFF AIR"}${s.icecastVersion ? ` (${s.icecastVersion})` : ""}`,
+  );
+
+  // The console runs its own local graph. Flag it when the broadcast feed is
+  // not on air so nobody reads local meters as the broadcast signal.
+  document.body.classList.toggle(
+    "broadcast-offline",
+    !s.connected || s.streamOnAir !== true,
+  );
 }
 
 function onTrackTransitionTriggered(incomingTrack?: { id: string; name: string; artist: string; genre: string; analysis: TrackAnalysis }) {
@@ -3881,23 +3886,15 @@ function initRadioStation() {
   renderSweeperButtons();
   renderRadioRequests();
 
-  // Initial populate with 2 sample listener requests
-  radio.submitSongRequest({
-    query: "Midnight Warehouse",
-    requester: "Alex (Berlin)",
-    message: "Drop some heavy acid synth please!",
-  });
-  radio.submitSongRequest({
-    query: "Neon Ignition",
-    requester: "Maya (Tokyo)",
-    message: "Great groove today, love the station!",
-  });
-  renderRadioRequests();
+  // No sample requests are seeded here. This used to push two fictional
+  // requests ("Alex (Berlin)", "Maya (Tokyo)") into the queue on every boot,
+  // where they were indistinguishable from real listener activity and stayed
+  // on screen for an operator to act on. Use the "+ Simulate Request" button
+  // when you actually want test data.
 
-  // Periodic server state sync (every 3 seconds)
-  setInterval(() => {
-    void syncRadioStateToServer();
-  }, 3000);
+  // Broadcast telemetry: real listener counts and stream state from ingest,
+  // which polls Icecast. Polled on its own cadence rather than every frame.
+  broadcastLink.start(applyBroadcastStatus);
 }
 
 // 13. Initialize Built-In Studio Crate

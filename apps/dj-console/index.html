@@ -1059,8 +1059,12 @@
             <span class="mono" id="radioOnAirText">RADIO: STANDBY</span>
           </div>
           <h2 class="radio-heading">Online Radio Station Broadcast Hub</h2>
-          <span class="mono radio-tagline-badge" id="radioListenersBadge">👥 42 LISTENERS</span>
-          <span class="mono radio-tagline-badge" id="radioUptimeBadge">UPTIME: 00:00:00</span>
+          <!-- Real values are written by applyBroadcastStatus() in main.ts from
+               the ingest service, which polls Icecast. The placeholder is "not
+               measured", never a number: this element used to ship a literal 42. -->
+          <span class="mono radio-tagline-badge" id="radioListenersBadge">LISTENERS: --</span>
+          <span class="mono radio-tagline-badge" id="radioStreamBadge">STREAM: --</span>
+          <span class="mono radio-tagline-badge" id="radioUptimeBadge">LOCAL UPTIME: 00:00:00</span>
         </div>
         <div class="radio-top-actions mono">
           <button type="button" id="radioMasterOnAirBtn" class="hw-btn-red radio-onair-btn" title="Toggle Master Radio Station Broadcast Stream (ON AIR)">
@@ -1169,15 +1173,19 @@
               </button>
             </div>
 
-            <!-- REST API Quick Reference -->
+            <!-- Control-plane API. These live in the ingest service (packages/ingest),
+                 reachable from this page through the vite proxy at /ingest.
+                 The previous /api/radio/* set was a vite fixture serving
+                 hardcoded values and has been removed. -->
             <details class="radio-api-details">
-              <summary>📡 REST API ENDPOINTS FOR AUTOMATION &amp; BOTS</summary>
+              <summary>📡 CONTROL API (INGEST SERVICE)</summary>
               <div class="api-endpoints-list">
-                <div class="api-endpoint-item"><code>GET /api/radio/nowplaying</code><span>Live AzuraCast/Icecast JSON for website players</span></div>
-                <div class="api-endpoint-item"><code>GET /api/radio/status</code><span>Detailed broadcast telemetry &amp; listeners</span></div>
-                <div class="api-endpoint-item"><code>POST /api/radio/request</code><span>Inbound song requests from listeners/bots</span></div>
-                <div class="api-endpoint-item"><code>POST /api/radio/control</code><span>Remote control API (skip, play, jingle, vibe)</span></div>
-                <div class="api-endpoint-item"><code>GET /api/radio/stream-info</code><span>ICY Title stream metadata format</span></div>
+                <div class="api-endpoint-item"><code>GET /ingest/health</code><span>Engine readiness and crate size</span></div>
+                <div class="api-endpoint-item"><code>GET /ingest/status</code><span>Real engine state and Icecast listener counts</span></div>
+                <div class="api-endpoint-item"><code>GET /ingest/stream</code><span>Per-mount stream telemetry</span></div>
+                <div class="api-endpoint-item"><code>GET /ingest/crate</code><span>The broadcast crate actually on the engine</span></div>
+                <div class="api-endpoint-item"><code>POST /ingest/command</code><span>Send a station-core command (transport, mix, cue, sync, autopilot)</span></div>
+                <div class="api-endpoint-item"><code>WS /ingest/ws</code><span>Live stream.status and command.result frames</span></div>
               </div>
             </details>
           </div>
