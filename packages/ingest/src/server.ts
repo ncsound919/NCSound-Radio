@@ -113,6 +113,7 @@ export class IngestService {
           // engine has a crate loaded and is actually broadcasting.
           const engine = this.engine.status;
           const ready = engine.state === "playing" || engine.state === "idle";
+          const harbor = this.engine.harbor?.status ?? null;
           return this.json({
             ok: true,
             ready,
@@ -120,6 +121,22 @@ export class IngestService {
             crateSize: engine.autopilot.crateSize,
             icecast: this.icecast.status?.icecast.reachable ?? false,
             onAir: engine.onAir !== null,
+            /**
+             * The engine -> Liquidsoap link, which nothing else exposes. Without
+             * it, a station that renders audio but fails to publish looks
+             * identical to one that is broadcasting.
+             */
+            harbor: harbor
+              ? {
+                  connected: harbor.connected,
+                  bytesSent: harbor.bytesSent,
+                  framesSent: harbor.framesSent,
+                  connectedAt: harbor.connectedAt,
+                  reconnects: harbor.reconnects,
+                  nextRetryAtMs: harbor.nextRetryAtMs,
+                  lastError: harbor.lastError,
+                }
+              : null,
           });
         }
         case "/status":

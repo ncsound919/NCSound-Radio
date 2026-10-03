@@ -417,7 +417,20 @@ export class HeadlessEngine {
       this.syncTitle();
 
       if (this.harbor) {
-        await this.harbor.connect(undefined, this.title);
+        /**
+         * A missing or refusing Liquidsoap must not stop the station coming up.
+         * The publisher reconnects on a backoff, so the engine starts, renders,
+         * and starts publishing the moment the harbor appears. Throwing here
+         * meant a cold boot with Liquidsoap still booting produced no station at
+         * all, which is the worst possible failure for a 24/7 broadcaster.
+         */
+        try {
+          await this.harbor.connect(undefined, this.title);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          this.lastError = `liquidsoap not reachable at start (${msg}); retrying`;
+          console.error(`[engine] ${this.lastError}`);
+        }
       }
       await this.ringer.start(this.mixer.getMasterOutputNode());
       this.applyHeadroomGuard();
