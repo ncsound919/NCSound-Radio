@@ -6,12 +6,21 @@
  * s16le PCM back. ffmpeg is already a dependency of the WSL Liquidsoap stack
  * and is on PATH on Windows.
  *
- * Decoded buffers are cached by (path, mtime) so a crate reloaded on a schedule
- * does not re-decode the whole library every cycle.
+ * Memory is the constraint that shaped this file. A real library is not eight
+ * short clips: 66 tracks decoded to 48 kHz stereo float32 is about 4.8 GB of
+ * AudioBuffer, which does not fit alongside the rest of the station on a 16 GB
+ * machine. So a track is described by its path and its analysis, and its PCM is
+ * only materialised when a deck is about to play it.
+ *
+ * Analysis is cached to disk, because it needs the decoded buffer but does not
+ * need to keep it. The first scan of a new library pays for the analysis; every
+ * start after that reads small JSON files and decodes nothing until playback
+ * asks for it.
  */
 
 import { spawn } from "node:child_process";
-import { stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { analyze } from "../engine/analysis";
 import type { TrackAnalysis } from "@ncsound/station-core";
 
@@ -21,10 +30,16 @@ export type DecodedTrack = {
   id: string;
   title: string;
   artist: string;
+  album: string | null;
   durationSec: number;
   sampleRate: number;
   channels: number;
-  buffer: AudioBuffer;
+  /**
+   * Decoded PCM, or null until materialised. Callers that hand a track to the
+   * mixer must call materialize() first; a buffer left null here is the normal
+   * state for a crate that is loaded but idle.
+   */
+  buffer: AudioBuffer | null;
   analysis: TrackAnalysis | null;
 };
 
@@ -33,6 +48,12 @@ export type DecodeOptions = {
   channels?: number;
   ffmpeg?: string;
   timeoutMs?: number;
+  /** Directory for the on-disk analysis cache. Omit to disable caching. */
+  cacheDir?: string;
+  /** Library root, used to derive artist/album from the directory layout. */
+  rootDir?: string;
+  /** Probe embedded tags. Off skips 66 ffprobe spawns. */
+  readTags?: boolean;
 };
 
 const FFMPEG = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
@@ -71,7 +92,7 @@ async function run(
   });
 }
 
-/** Decode one file. Runs the real analyser so BPM/key are measured, not guessed. */
+/** Decode one file's PCM. Runs the real analyser when no cached analysis exists. */
 export async function decodeTrack(
   ctx: BaseAudioContext,
   path: string,
@@ -111,28 +132,170 @@ export async function decodeTrack(
     for (let i = 0; i < frames; i++) f[i] = view[i] / 32768;
   }
 
-  const { artist, title } = splitName(path);
-  return {
+  const { artist, title, album } = await describeTrack(path, opts.rootDir ?? ".", opts.readTags !== false);
+  const track: DecodedTrack = {
     path,
     id: idForPath(path),
     title,
     artist: artist || "Unknown artist",
+    album,
     durationSec: frames / sampleRate,
     sampleRate,
     channels,
     buffer,
-    analysis: safeAnalyze(buffer),
+    analysis: null,
+  };
+
+  // Cache-first: a library analysed before is not re-analysed just because its
+  // PCM had to be decoded again.
+  const cached = opts.cacheDir ? await readMetaCache(path, opts.cacheDir) : null;
+  track.analysis = cached?.analysis ?? safeAnalyze(buffer);
+
+  if (opts.cacheDir && !cached) {
+    await writeMetaCache(
+      path,
+      {
+        analysis: track.analysis as TrackAnalysis,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        durationSec: track.durationSec,
+      },
+      opts.cacheDir,
+    );
+  }
+
+  return track;
+}
+
+/**
+ * Ensure a track has decoded PCM, decoding it if necessary.
+ *
+ * This is the call every mixer hand-off must go through. It is safe to call
+ * repeatedly: a track that already has a buffer returns immediately.
+ */
+export async function materialize(
+  track: DecodedTrack,
+  ctx: BaseAudioContext,
+  opts: DecodeOptions = {},
+): Promise<DecodedTrack> {
+  if (track.buffer) return track;
+  const decoded = await decodeTrack(ctx, track.path, opts);
+  // Keep the identity fields from the scan so a reload cannot renumber the set.
+  track.durationSec = decoded.durationSec;
+  track.sampleRate = decoded.sampleRate;
+  track.channels = decoded.channels;
+  track.buffer = decoded.buffer;
+  track.analysis = decoded.analysis ?? track.analysis;
+  return track;
+}
+
+/**
+ * Everything cached per file, so a restart reads one small JSON per track
+ * instead of decoding and re-analysing the whole library.
+ */
+type TrackMeta = {
+  analysis: TrackAnalysis;
+  title: string;
+  artist: string;
+  album: string | null;
+  durationSec: number;
+};
+
+/**
+ * Read embedded tags with ffprobe, returning null when the file carries none.
+ *
+ * Best-effort by design: plenty of real libraries have been produced by tools
+ * that strip tags, and spawning ffprobe per file is only worth it once because
+ * the result is cached alongside the analysis.
+ */
+async function probeTags(
+  path: string,
+): Promise<{ title?: string; artist?: string; album?: string } | null> {
+  const bin = process.platform === "win32" ? "ffprobe.exe" : "ffprobe";
+  let doc: { format?: { tags?: Record<string, string> } };
+  try {
+    const raw = await run(
+      bin,
+      ["-v", "error", "-show_entries", "format_tags", "-of", "json", path],
+      10_000,
+    );
+    doc = JSON.parse(raw.toString()) as typeof doc;
+  } catch {
+    return null;
+  }
+
+  const tags = doc.format?.tags;
+  if (!tags) return null;
+
+  // ffprobe casing varies by container and tag version.
+  const pick = (key: string) => {
+    for (const k of [key, key.toLowerCase(), key.toUpperCase()]) {
+      const v = tags[k];
+      if (typeof v === "string" && v.trim()) return v.trim();
+    }
+    return undefined;
+  };
+
+  const title = pick("title");
+  const artist = pick("artist");
+  const album = pick("album");
+  if (!title && !artist && !album) return null;
+  return {
+    ...(title ? { title } : {}),
+    ...(artist ? { artist } : {}),
+    ...(album ? { album } : {}),
   };
 }
 
-function splitName(path: string): { artist: string; title: string } {
-  const base = path.replace(/\\/g, "/").split("/").pop() ?? path;
+/**
+ * Work out artist, album and title for a file.
+ *
+ * Order of preference, because each is right in a different real library:
+ *   1. Embedded tags, when the file has them.
+ *   2. <Artist>/<Album>/<Track>.mp3 directory layout. Filenames like
+ *      "1.Intro.mp3" carry no artist at all and the folder is the only place
+ *      the information exists - parsing the filename produced "Unknown artist"
+ *      for every track in a library that was perfectly well organised.
+ *   3. An "Artist - Title" filename pattern.
+ *   4. The filename stem as the title.
+ */
+async function describeTrack(
+  path: string,
+  rootDir: string,
+  useTags: boolean,
+): Promise<{ title: string; artist: string; album: string | null }> {
+  const norm = (p: string) => p.replace(/\\/g, "/");
+  const root = norm(rootDir).replace(/\/+$/, "");
+  const full = norm(path);
+  const rel = full.startsWith(root) ? full.slice(root.length) : full;
+
+  const parts = rel.split("/").filter(Boolean);
+  const base = parts[parts.length - 1] ?? "";
   const stem = base.replace(/\.[^.]+$/, "");
-  const m =
-    stem.match(/^\s*\d+[.\-_ ]+(.+?)\s+-\s+(.+)$/) ??
-    stem.match(/^(.+?)\s+-\s+(.+)$/);
-  if (m) return { artist: m[1].trim(), title: m[2].trim() };
-  return { artist: "", title: stem.replace(/_/g, " ").trim() };
+  // Strip a leading track number: "01. Intro", "1 - Intro", "01_Intro".
+  const stemNoNum = stem.replace(/^\s*\d+\s*[.\-_)\]]?\s*/, "");
+  const titleFromName = (stemNoNum || stem).replace(/_/g, " ").trim();
+
+  const albumDir = parts.length >= 2 ? parts[parts.length - 2] : null;
+  const artistDir = parts.length >= 3 ? parts[parts.length - 3] : null;
+
+  const m = stem.match(/^\s*\d+[.\-_ ]+(.+?)\s+-\s+(.+)$/) ?? stem.match(/^(.+?)\s+-\s+(.+)$/);
+
+  const fallback = {
+    title: titleFromName || (m?.[2]?.trim() ?? stem.trim()),
+    artist: artistDir ?? m?.[1]?.trim() ?? "",
+    album: albumDir,
+  };
+
+  if (!useTags) return fallback;
+  const tags = await probeTags(path);
+  if (!tags) return fallback;
+  return {
+    title: tags.title ?? fallback.title,
+    artist: tags.artist ?? fallback.artist,
+    album: tags.album ?? fallback.album,
+  };
 }
 
 /**
@@ -154,29 +317,122 @@ export type CrateLoadResult = {
 
 const AUDIO_EXT = new Set([".mp3", ".wav", ".flac", ".ogg", ".oga", ".m4a", ".aac", ".opus", ".aiff", ".aif"]);
 
-/** Decode every audio file in a directory. Failures are reported, not thrown. */
-export async function loadCrate(
+function isAudioName(name: string): boolean {
+  const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
+  return AUDIO_EXT.has(ext);
+}
+
+// ---- analysis cache -------------------------------------------------------
+
+/** Cache key: file identity plus size and mtime, so an edited file re-analyses. */
+async function analysisKey(path: string): Promise<string> {
+  const s = await stat(path);
+  return `${s.size.toString(36)}-${Math.floor(s.mtimeMs).toString(36)}`;
+}
+
+async function readMetaCache(path: string, cacheDir: string): Promise<TrackMeta | null> {
+  try {
+    const key = await analysisKey(path);
+    const raw = await readFile(join(cacheDir, `${idForPath(path)}-${key}.json`), "utf8");
+    const parsed = JSON.parse(raw) as TrackMeta;
+    // A cache entry that cannot drive playback or sequencing is worse than none.
+    if (typeof parsed?.analysis?.bpm !== "number") return null;
+    if (typeof parsed?.analysis?.firstBeat !== "number") return null;
+    if (typeof parsed?.title !== "string") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function writeMetaCache(path: string, meta: TrackMeta, cacheDir: string): Promise<void> {
+  try {
+    const key = await analysisKey(path);
+    await mkdir(cacheDir, { recursive: true });
+    await writeFile(join(cacheDir, `${idForPath(path)}-${key}.json`), JSON.stringify(meta));
+  } catch {
+    /* the cache is an optimisation; never fail a load because of it */
+  }
+}
+
+// ---- scanning -------------------------------------------------------------
+
+/**
+ * Walk a library directory for audio files.
+ *
+ * Recursive, because real music libraries are organised in artist/album
+ * subfolders. The previous implementation filtered on `isFile()` at the top
+ * level only, so a library of 66 tracks arranged in subdirectories reported
+ * zero tracks and the station silently fell back to a single synthesised loop.
+ */
+export async function scanLibrary(
   ctx: BaseAudioContext,
   dir: string,
   opts: DecodeOptions = {},
 ): Promise<CrateLoadResult> {
-  const { readdir } = await import("node:fs/promises");
-  const entries = (await readdir(dir, { withFileTypes: true }))
-    .filter((e) => e.isFile())
-    .map((e) => e.name)
-    .filter((n) => AUDIO_EXT.has(("." + n.split(".").pop()?.toLowerCase()) as string))
-    .sort();
+  const found: string[] = [];
+
+  async function walk(current: string): Promise<void> {
+    let entries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+    try {
+      entries = await readdir(current, { withFileTypes: true });
+    } catch (err) {
+      throw new Error(`cannot read library directory ${current}: ${(err as Error).message}`);
+    }
+    // Sort within each level so the crate order is stable across runs.
+    const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name));
+    for (const e of sorted) {
+      const full = join(current, e.name);
+      if (e.isDirectory()) {
+        await walk(full);
+      } else if (e.isFile() && isAudioName(e.name)) {
+        found.push(full.replace(/\\/g, "/"));
+      }
+    }
+  }
+
+  await walk(dir.replace(/[\\/]+$/, ""));
 
   const tracks: DecodedTrack[] = [];
   const failed: Array<{ path: string; error: string }> = [];
-  for (const name of entries) {
-    const path = `${dir}/${name}`.replace(/\\/g, "/");
+
+  for (const path of found) {
     try {
-      await stat(path);
+      const cached = opts.cacheDir ? await readMetaCache(path, opts.cacheDir) : null;
+
+      if (cached) {
+        // Everything the station needs for sequencing and display, no PCM held.
+        tracks.push({
+          path,
+          id: idForPath(path),
+          title: cached.title,
+          artist: cached.artist,
+          album: cached.album ?? null,
+          durationSec: cached.durationSec,
+          sampleRate: opts.sampleRate ?? ctx.sampleRate,
+          channels: opts.channels ?? 2,
+          buffer: null,
+          analysis: cached.analysis,
+        });
+        continue;
+      }
+
+      // Cache miss: decode, analyse, describe, and keep the buffer. This is the
+      // slow path and happens once per file for the life of the cache.
       tracks.push(await decodeTrack(ctx, path, opts));
     } catch (err) {
       failed.push({ path, error: err instanceof Error ? err.message : String(err) });
     }
   }
+
   return { tracks, failed };
+}
+
+/** Backwards-compatible alias: scanning is now the crate load. */
+export async function loadCrate(
+  ctx: BaseAudioContext,
+  dir: string,
+  opts: DecodeOptions = {},
+): Promise<CrateLoadResult> {
+  return scanLibrary(ctx, dir, opts);
 }

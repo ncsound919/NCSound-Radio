@@ -17,7 +17,7 @@ import {
 } from "../engine/marathon";
 import type { MarathonCandidate } from "../engine/marathon";
 import type { Mixer } from "../engine/mixer";
-import type { DecodedTrack } from "./decode";
+import { materialize, type DecodedTrack, type DecodeOptions } from "./decode";
 import type {
   PartyTemplate,
   TrackAnalysis,
@@ -34,6 +34,11 @@ export type AutopilotOptions = {
   cueAheadSec?: number;
   /** Do not replay a track until the crate has been fully rotated. */
   respectRotation?: boolean;
+  /**
+   * Decode settings used when a track has to be materialised for a deck.
+   * Should match what the crate was scanned with so the analysis cache hits.
+   */
+  decode?: DecodeOptions;
   /** Called when a track change lands, so the station can update metadata. */
   onTrackChange?: (track: DecodedTrack, plan: TransitionPlan) => void;
 };
@@ -86,7 +91,7 @@ function anchorOf(a: TrackAnalysis | null | undefined): { bpm: number; key?: str
 
 export class Autopilot {
   private readonly mixer: Mixer;
-  private readonly opts: Required<Omit<AutopilotOptions, "onTrackChange">>;
+  private readonly opts: Required<Omit<AutopilotOptions, "onTrackChange">> & { decode: DecodeOptions };
   private readonly onTrackChange: AutopilotOptions["onTrackChange"];
 
   crate: DecodedTrack[] = [];
@@ -105,8 +110,11 @@ export class Autopilot {
       durationMin: opts.durationMin ?? 240,
       defaultEnergy: opts.defaultEnergy ?? 0.55,
       cueAheadSec: opts.cueAheadSec ?? 8,
-      respectRotation: opts.respectRotation ?? true,
-    };
+respectRotation: opts.respectRotation ?? true,
+        // Passed through to decode/materialize so autopilot decodes with the same
+        // ffmpeg settings and analysis cache the crate was scanned with.
+        decode: opts.decode ?? {},
+      };
     this.onTrackChange = opts.onTrackChange;
   }
 
@@ -135,13 +143,24 @@ export class Autopilot {
     this.history = [];
   }
 
-  /** Begin on `track` (or the first crate entry) when the engine is idle. */
-  start(track?: DecodedTrack): boolean {
+  /** Decode settings used when a deck needs a track's PCM. */
+  setDecodeOptions(decode: DecodeOptions): void {
+    this.opts.decode = decode;
+  }
+
+  /**
+   * Begin on `track` (or the first crate entry) when the engine is idle.
+   *
+   * Async because a crate entry carries no PCM until it is materialised, so the
+   * first deck load has to decode before it can hand a buffer to the mixer.
+   */
+  async start(track?: DecodedTrack): Promise<boolean> {
     const first = track ?? this.crate[0];
     if (!first) return false;
     if (this.mixer.playing && this.playing) return false;
 
-    this.mixer.loadBuffer(0, first.buffer, first.analysis ?? undefined);
+    await materialize(first, this.mixer.ctx, this.opts.decode);
+    this.mixer.loadBuffer(0, first.buffer as AudioBuffer, first.analysis ?? undefined);
     this.mixer.play();
     this.playing = { track: first, startedAtMs: Date.now(), next: null, plan: null };
     this.schedule();
@@ -164,7 +183,7 @@ export class Autopilot {
     const remaining = info.remaining;
 
     if (!this.playing.next) {
-      if (remaining <= this.opts.cueAheadSec) this.armNext();
+      if (remaining <= this.opts.cueAheadSec) void this.armNext();
       return;
     }
 
@@ -189,7 +208,7 @@ export class Autopilot {
     }
   }
 
-  private armNext(): void {
+  private async armNext(): Promise<void> {
     const current = this.playing;
     if (!current || current.next) return;
     if (this.crate.length === 0) return;
@@ -214,6 +233,10 @@ export class Autopilot {
 
     const info = this.mixer.info();
     const idleSlot = (info?.deck === 0 ? 1 : 0) as 0 | 1;
+    // Cue the next track by decoding it now, so the mix-in happens on the bar
+    // line rather than after an ffmpeg round trip.
+    await materialize(track, this.mixer.ctx, this.opts.decode);
+    if (!track.buffer) return;
     this.mixer.loadBuffer(idleSlot, track.buffer, track.analysis ?? undefined);
 
     const preset = pickSmartTransitionPreset(

@@ -15,7 +15,7 @@ import type {
   DjCommand,
 } from "@ncsound/station-core";
 import { djCommandSchema } from "@ncsound/station-core/schema";
-import type { DecodedTrack, HeadlessEngine } from "@ncsound/dj-engine";
+import { materialize, type DecodedTrack, type HeadlessEngine } from "@ncsound/dj-engine";
 
 export type DispatcherDeps = {
   engine: HeadlessEngine;
@@ -55,7 +55,11 @@ function clamp(v: number, lo: number, hi: number, what: string): number {
 }
 
 export class CommandDispatcher {
-  constructor(private readonly deps: DispatcherDeps) {}
+  constructor(
+    private readonly deps: DispatcherDeps,
+    /** Decode settings for cueing a crate track; must match the crate scan. */
+    private readonly decodeOpts: { sampleRate?: number; cacheDir?: string } = {},
+  ) {}
 
   private get engine(): HeadlessEngine {
     return this.deps.engine;
@@ -194,6 +198,8 @@ export class CommandDispatcher {
       case "cue.track": {
         const slot = command.slot ?? this.otherSlot();
         const track = this.crateTrack(command.trackId);
+        await materialize(track, mixer.ctx, this.decodeOpts);
+        if (!track.buffer) fail("INTERNAL", "could not decode ");
         const analysis = mixer.loadBuffer(slot, track.buffer, track.analysis ?? undefined);
         return { slot, trackId: track.id, bpm: analysis.bpm, key: analysis.key };
       }
@@ -202,6 +208,8 @@ export class CommandDispatcher {
         if (!trackId) fail("NO_SUCH_REQUEST", `no queued request "${command.requestId}"`);
         const slot = this.otherSlot();
         const track = this.crateTrack(trackId);
+        await materialize(track, mixer.ctx, this.decodeOpts);
+        if (!track.buffer) fail("INTERNAL", "could not decode ");
         const analysis = mixer.loadBuffer(slot, track.buffer, track.analysis ?? undefined);
         return { slot, trackId: track.id, requestId: command.requestId, bpm: analysis.bpm };
       }
@@ -279,7 +287,7 @@ export class CommandDispatcher {
 
       // ---- autopilot ----------------------------------------------------
       case "autopilot.set":
-        if (command.enabled) engine.autopilot.start();
+        if (command.enabled) await engine.autopilot.start();
         else engine.autopilot.stop();
         return { enabled: engine.autopilot.enabled };
       case "autopilot.setVibe":
@@ -297,6 +305,8 @@ export class CommandDispatcher {
       case "library.load": {
         const slot = command.slot ?? this.otherSlot();
         const track = this.crateTrack(command.path);
+        await materialize(track, mixer.ctx, this.decodeOpts);
+        if (!track.buffer) fail("INTERNAL", "could not decode ");
         const analysis = mixer.loadBuffer(slot, track.buffer, track.analysis ?? undefined);
         return { slot, trackId: track.id, bpm: analysis.bpm };
       }

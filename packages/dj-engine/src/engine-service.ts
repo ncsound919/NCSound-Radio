@@ -50,6 +50,11 @@ export type HeadlessEngineOptions = {
   };
   /** Directory of audio files to broadcast. Falls back to synthesised tracks. */
   libraryDir?: string;
+  /**
+   * Where the decoded-analysis cache lives. Omit to re-analyse the library on
+   * every start, which costs about a second per track.
+   */
+  analysisCacheDir?: string;
   /** Energy curve driving autopilot sequencing. */
   template?: PartyTemplate | null;
 };
@@ -364,6 +369,8 @@ export class HeadlessEngine {
       if (this.opts.libraryDir) {
         const loaded = await loadCrate(ctx, this.opts.libraryDir, {
           sampleRate: this.sampleRate,
+          cacheDir: this.opts.analysisCacheDir,
+          rootDir: this.opts.libraryDir,
         });
         crate = loaded.tracks;
         this.decodeFailures = loaded.failed;
@@ -378,6 +385,7 @@ export class HeadlessEngine {
             id: idForPath("builtin://" + (spec.title ?? "studio")),
             title: spec.title ?? "Studio Feed",
             artist: spec.artist ?? "NCSound Radio",
+            album: null,
             durationSec: buffer.duration,
             sampleRate: buffer.sampleRate,
             channels: buffer.numberOfChannels,
@@ -390,8 +398,14 @@ export class HeadlessEngine {
       this.crate = crate;
       this.autopilot.setCrate(crate);
       if (this.opts.template) this.autopilot.setTemplate(this.opts.template);
+      // Autopilot decodes on demand; it needs the same cache the scan used.
+      this.autopilot.setDecodeOptions({
+        sampleRate: this.sampleRate,
+        cacheDir: this.opts.analysisCacheDir,
+        rootDir: this.opts.libraryDir,
+      });
 
-      const started = this.autopilot.start(crate[0]);
+      const started = await this.autopilot.start(crate[0]);
       if (!started) throw new Error("autopilot refused to start");
       this.syncTitle();
 

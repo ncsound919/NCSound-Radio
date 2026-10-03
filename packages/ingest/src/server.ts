@@ -43,12 +43,20 @@ export class IngestService {
   constructor(opts: IngestOptions = {}) {
     this.opts = opts;
     this.engine = new HeadlessEngine(opts.engine ?? {});
-    this.dispatcher = new CommandDispatcher({
-      engine: this.engine,
-      isAuthorised: opts.isAuthorised,
-      resolveCueRequest: opts.resolveCueRequest,
-      playImaging: opts.playImaging,
-    });
+    this.dispatcher = new CommandDispatcher(
+      {
+        engine: this.engine,
+        isAuthorised: opts.isAuthorised,
+        resolveCueRequest: opts.resolveCueRequest,
+        playImaging: opts.playImaging,
+      },
+      // Cueing decodes on demand, so it must use the same settings and the same
+      // analysis cache as the crate scan.
+      {
+        sampleRate: opts.engine?.sampleRate ?? 48000,
+        cacheDir: opts.engine?.analysisCacheDir,
+      },
+    );
     this.icecast = new IcecastPoller(opts.icecast ?? {});
   }
 

@@ -30,3 +30,5 @@ analysis/out/
 *.db-journal
 *.db-wal
 *.db-shm
+# decoded-analysis cache: regenerated from the library, never committed
+.ncsound-cache/

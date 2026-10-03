@@ -1298,7 +1298,18 @@ export class Mixer {
   }
 
   loadBuffer(slot: 0 | 1, buf: AudioBuffer, overrideAnalysis?: Partial<TrackAnalysis>): TrackAnalysis {
-    const analyzed = { ...analyze(buf), ...overrideAnalysis };
+    // Analysing costs about a second per track and the crate already has a
+    // cached analysis for every file. Recomputing it here and then overwriting
+    // it with the override threw that second away on every single cue.
+    const hasCompleteOverride =
+      overrideAnalysis != null &&
+      typeof overrideAnalysis.bpm === "number" &&
+      typeof overrideAnalysis.firstBeat === "number";
+
+    const analyzed = hasCompleteOverride
+      ? ({ ...overrideAnalysis } as TrackAnalysis)
+      : { ...analyze(buf), ...overrideAnalysis };
+
     this.decks[slot].load(buf, analyzed, this.autoGainEnabled);
     return analyzed;
   }

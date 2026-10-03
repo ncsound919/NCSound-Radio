@@ -18,7 +18,10 @@ $log = Join-Path $env:TEMP "ncsound-ingest.log"
 
 Write-Host "== starting ingest =="
 if (Test-Path $log) { Remove-Item $log -Force }
-$env:NCSOUND_LIBRARY = Join-Path $root "library"
+# Default to the operator's real library. The first run analyses it (~100s for 66
+# tracks) and caches; later runs start in about a second.
+$env:NCSOUND_LIBRARY = if ($env:NCSOUND_LIBRARY) { $env:NCSOUND_LIBRARY } else { "C:\Users\User\Music\music" }
+Write-Host "   library: $($env:NCSOUND_LIBRARY)"
 $proc = Start-Process -FilePath "bun" `
   -ArgumentList "run", "src/main.ts" `
   -WorkingDirectory (Join-Path $root "packages\ingest") `
