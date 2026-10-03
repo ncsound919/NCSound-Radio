@@ -9,12 +9,12 @@ Web Audio engine does the actual mixing, sequencing and transitions, and it runs
 ```
 packages/
   station-core/    The contract. Types + zod schemas every process agrees on.
-  scratch-agent/   Deterministic scratch-routine synthesis (vitest).
-  dj-engine/       (planned) Party DJ's engine, ported headless.
-  ingest/          (planned) render-ahead pump -> PCM -> Liquidsoap.
+  scratch-agent/   Deterministic scratch-routine synthesis.
+  dj-engine/       Party DJ's engine, running headless. Owns the timeline.
+  ingest/          (planned) Control channel + Icecast stats reader.
 apps/
   station-web/     Next.js 16 operator + listener site (Prisma/SQLite).
-  dj-console/      Vite + TS DJ booth UI.
+  dj-console/      Vite + TS DJ booth UI (browser-only bits: crate, MIDI).
 analysis/          (planned) Python: essentia/madmom beat+key, demucs stems.
 infra/
   icecast.xml      Icecast 2.4 config. Two mounts, source auth, admin.
@@ -23,7 +23,70 @@ infra/
   station-up.sh    Start both daemons (WSL).
   station-down.sh  Stop both.
   station-verify.sh End-to-end proof the chain actually streams.
+  engine-up.sh     Start the headless engine (Windows side).
 ```
+
+## Running the engine
+
+The engine is a normal Node/Bun process on the **Windows** side. Liquidsoap and
+Icecast run in WSL, and WSL2 forwards localhost, so the engine ingests over
+`127.0.0.1:8008`.
+
+```sh
+wsl -u root sh infra/station-up.sh     # liquidsoap + icecast (WSL)
+bun packages/dj-engine/src/run.ts      # the engine (this shell)
+wsl -u root sh infra/station-verify.sh # prove the chain streams
+```
+
+Liquidsoap logs the moment the engine takes over:
+
+```
+[input.harbor:3] Decoding...
+[switch:3] Switch to input.harbor with transition.
+```
+
+### How the engine runs without an audio device
+
+`node-web-audio-api` provides the Web Audio implementation. Three findings,
+each verified before being relied on:
+
+1. A real-time `AudioContext({ sinkId: { type: 'none' } })` **does** advance its
+   clock at wall-clock rate without a device (measured ratio 1.006 over 2s).
+   A bare `new AudioContext()` throws `DeviceNotAvailable`.
+2. `createScriptProcessor` **works** headless (~46 callbacks/sec at 2048 frames,
+   the correct cadence). `createMediaStreamDestination` is *not* implemented
+   (upstream #91) and `AudioWorklet` is unavailable, so ScriptProcessor is the
+   only capture path.
+3. `AudioBuffer`s are safe to reuse across `OfflineAudioContext`s, so decoded
+   tracks can be rendered into any number of windows later.
+
+The mixer needed exactly one change: `ctx = new AudioContext()` became
+`constructor(context?: AudioContext)`. Its only browser coupling was mic
+talkover and `MediaRecorder`, both already guarded.
+
+### The engine must send WAV, not raw PCM
+
+This cost real debugging. Publishing raw interleaved s16le with
+`Content-Type: audio/L16;rate=48000;channels=2` authenticated fine, registered
+the harbor mountpoint, and returned HTTP 200 — while Liquidsoap logged:
+
+```
+[decoder:3] Unable to find a decoder for stream mime-type audio/L16 ...
+[harbor:4] Harbor.Make(T).Unknown_codec
+```
+
+Liquidsoap cannot decode raw L16 over HTTP. It needs an encoded container, so
+the publisher now streams WAV (44-byte header with `0xFFFFFFFF` sizes, then
+bare frames) as `audio/wav`. Raise `settings.log.level` to 4 in `wavc.liq` to
+see harbor-level errors; the "Switch to input.harbor" line is at level 3.
+
+### Getting the audio request actually on the wire
+
+A streaming upload must pass a `ReadableStream` as the request `body` with
+`duplex: "half"`. Writing to `response.body` instead silently discards
+everything while local byte counters keep incrementing — which looks like a
+working publisher right up until the listener hears the fallback source.
+`packages/dj-engine/test` and the A/B check in git history cover this.
 
 ## Running the stream (WSL2)
 
@@ -134,4 +197,15 @@ each carrying an envelope id for correlation and replay protection.
 | station-web | `bunx next build` | 21 routes |
 | dj-console | `bun run test` | 9 suites |
 | dj-console | `bunx tsc --noEmit` | clean |
-| scratch-agent | `bunx vitest run` | 15 pass |
+| dj-engine | `bun test ./test/` | 5 pass |
+| dj-engine | `bunx tsc --noEmit` | clean |
+| scratch-agent | `bunx tsc --noEmit` | clean |
+
+All five packages are clean under `bun run typecheck` at the repo root.
+
+`scratch-agent` has no test script of its own: its behaviour is covered by
+dj-console's nine suites, which exercise the scratch agent, sentence mode and
+autoscratch against the real implementation. Its former vitest test targeted
+the older scratch-agent variant and is parked with that variant in
+`.merge-park/scratch-agent-variant-b/`, kept in case that implementation is
+ever wanted back.

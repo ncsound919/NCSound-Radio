@@ -6,7 +6,7 @@ import {
   pickSmartTransitionPreset,
   scoreNextTrackCandidate,
   sequenceCrateForParty,
-} from "../src/engine/marathon";
+} from "@wavc/dj-engine/marathon";
 import {
   categorizeTrackAcoustics,
   searchAndFilterCrate,

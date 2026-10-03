@@ -1,7 +1,10 @@
 /**
- * The engine now lives in @wavc/dj-engine; these types come from
- * @wavc/station-core via that package. This file stays so existing
- * `./engine/types` imports in the console keep working.
+ * Re-exported from @wavc/station-core.
+ *
+ * These were originally declared here and duplicated again in station-web's
+ * station-types.ts. station-core is now the single source of truth so the
+ * engine, the ingest service and the station site cannot drift apart.
+ * apps/dj-console/src/engine/types.ts re-exports from here.
  */
 
 export type {
@@ -28,6 +31,6 @@ export type {
   TransitionPreset,
   TransitionStyle,
   WaveformBands,
-} from "@wavc/dj-engine/engine/types";
+} from "@wavc/station-core";
 
-export { CROSSFADER_CURVES, PITCH_FADER_RANGES } from "@wavc/dj-engine/engine/types";
+export { CROSSFADER_CURVES, PITCH_FADER_RANGES } from "@wavc/station-core";

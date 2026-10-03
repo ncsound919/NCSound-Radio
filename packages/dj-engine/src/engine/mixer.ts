@@ -40,7 +40,7 @@ import {
   runScratchAgent,
   sentenceDirectorFn,
   sourceStart,
-} from "../scratch-agent";
+} from "@wavc/scratch-agent";
 import type {
   DirectorFn,
   Placed,
@@ -49,7 +49,7 @@ import type {
   ScratchConfig,
   SliceBank,
   Style,
-} from "../scratch-agent";
+} from "@wavc/scratch-agent";
 import type {
   BattleSampleId,
   CrossfaderCurve,
@@ -114,17 +114,23 @@ function extractNormalizedMono(b: AudioBuffer): Float32Array {
   return out;
 }
 
-/** Two pro decks + Smart Transition Engine + 90s Scratch Agent System + Turntable Autoscratch. */
+/**
+ * Two pro decks + Smart Transition Engine + 90s Scratch Agent System + Turntable Autoscratch.
+ *
+ * The AudioContext is injectable so this can run headless. A bare
+ * `new AudioContext()` needs an output device, so the server passes a context
+ * built with `sinkId: { type: 'none' }` from node-web-audio-api instead.
+ */
 export class Mixer {
-  ctx = new AudioContext();
-  masterGain = this.ctx.createGain();
-  subsonicFilter = this.ctx.createBiquadFilter();
-  masterLimiter = this.ctx.createDynamicsCompressor();
-  masterAnalyser = this.ctx.createAnalyser();
-  private splitMerger = this.ctx.createChannelMerger(2);
-  private cueBusGain = this.ctx.createGain();
+  ctx: AudioContext;
+  masterGain: GainNode;
+  subsonicFilter: BiquadFilterNode;
+  masterLimiter: DynamicsCompressorNode;
+  masterAnalyser: AnalyserNode;
+  private splitMerger: ChannelMergerNode;
+  private cueBusGain: GainNode;
 
-  decks = [new Deck(this.ctx), new Deck(this.ctx)];
+  decks: [Deck, Deck];
   active = 0;
   playing = false;
 
@@ -226,7 +232,18 @@ export class Mixer {
     gateSamples: Float32Array;
   } | null = null;
 
-  constructor() {
+  constructor(context?: AudioContext) {
+    this.ctx = context ?? new AudioContext();
+
+    this.masterGain = this.ctx.createGain();
+    this.subsonicFilter = this.ctx.createBiquadFilter();
+    this.masterLimiter = this.ctx.createDynamicsCompressor();
+    this.masterAnalyser = this.ctx.createAnalyser();
+    this.splitMerger = this.ctx.createChannelMerger(2);
+    this.cueBusGain = this.ctx.createGain();
+
+    this.decks = [new Deck(this.ctx), new Deck(this.ctx)];
+
     this.masterGain.gain.value = 0.92;
 
     // 26 Hz high-pass subsonic rumble filter for club PA protection

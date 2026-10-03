@@ -8,8 +8,7 @@ import type { DirectorContext } from "./director/rulesDirector";
 import { buildContext, rulesDirector } from "./director/rulesDirector";
 import { eventToPrimitive, renderTimeline } from "./scratch/render";
 import type { Placed } from "./scratch/render";
-import { MAIN_SRC } from "./schemas";
-import type { DirectorPlan, Grid, ScratchEvent, Slice, SliceBank, Style } from "./schemas";
+import type { DirectorPlan, Grid, ScratchEvent, SliceBank, Style } from "./schemas";
 
 /** Return null to fall back to the rules director. */
 export type DirectorFn = (ctx: DirectorContext, seed: number, cfg: ScratchConfig) => Promise<DirectorPlan | null>;
@@ -17,9 +16,7 @@ export type DirectorFn = (ctx: DirectorContext, seed: number, cfg: ScratchConfig
 export const rulesDirectorFn: DirectorFn = async (ctx, seed, cfg) => rulesDirector(ctx, seed, cfg);
 
 export interface RunOpts {
-  src: Float32Array; // mono; the source for slices without a src_id
-  /** Extra sources by slice `src_id` (e.g. words cut from other records). Must already be mono at `fs`. */
-  sources?: Record<string, Float32Array>;
+  src: Float32Array; // mono
   fs: number;
   bank: SliceBank;
   grid: Grid;
@@ -41,10 +38,6 @@ export interface Attempt {
 
 export interface RunResult {
   audio: Float64Array; // pre-limiter mix of the scratch only
-  rateTimeline: Float32Array; // instantaneous platter velocity across timeline
-  dispTimeline: Float32Array; // platter groove displacement across timeline
-  gateTimeline: Float32Array; // optical crossfader gate (0..1) across timeline
-  posSecTimeline: Float32Array; // source groove position in seconds across timeline
   events: ScratchEvent[];
   plan: DirectorPlan;
   passed: boolean;
@@ -62,15 +55,6 @@ export async function runScratchAgent(o: RunOpts): Promise<RunResult> {
   let cfg: ScratchConfig = { ...DEFAULT_CONFIG, ...o.cfg };
   const director = o.director ?? rulesDirectorFn;
   const srcDuration = o.src.length / o.fs;
-  const bufferFor = (sl: Slice): Float32Array => {
-    const id = sl.src_id ?? MAIN_SRC;
-    if (id === MAIN_SRC) return o.src;
-    const b = o.sources?.[id];
-    if (!b) throw new Error(`slice ${sl.id} needs source "${id}" but it was not passed in sources`);
-    return b;
-  };
-  const srcDurations: Record<string, number> = { [MAIN_SRC]: srcDuration };
-  for (const [id, b] of Object.entries(o.sources ?? {})) srcDurations[id] = b.length / o.fs;
   const phraseStartTime = beatToTime(o.grid.beats, o.phraseStartBeat);
   const phraseSec = (60 / o.grid.bpm) * cfg.beats_per_bar * o.bars;
   const totalSec = phraseStartTime + phraseSec + cfg.tail_s;
@@ -93,25 +77,16 @@ export async function runScratchAgent(o: RunOpts): Promise<RunResult> {
       seed,
       phraseStartBeat: o.phraseStartBeat,
       srcDuration,
-      srcDurations,
       intensityScale: scale,
     });
     const byId = new Map(o.bank.slices.map((s) => [s.id, s]));
-    const bufs = events.map((e) => bufferFor(byId.get(e.slice_id)!));
-    const placed: Placed[] = events.map((e, i) => ({
+    const placed: Placed[] = events.map((e) => ({
       t0: e.t0,
       prim: eventToPrimitive(e),
       s0: sourceStart(byId.get(e.slice_id)!, cfg),
       gain: e.params.gain ?? 1,
-      src: bufs[i],
     }));
-    const { audio, rateTimeline, dispTimeline, gateTimeline, posSecTimeline, rendered } = renderTimeline(
-      o.src,
-      o.fs,
-      placed,
-      totalSec,
-      cfg
-    );
+    const { audio, rendered } = renderTimeline(o.src, o.fs, placed, totalSec, cfg);
 
     const report = evaluate({
       events,
@@ -120,7 +95,6 @@ export async function runScratchAgent(o: RunOpts): Promise<RunResult> {
       grid: o.grid,
       style: o.style,
       srcLenSamples: o.src.length,
-      srcLenByEvent: bufs.map((b) => b.length),
       srcDuration,
       phraseStartTime,
       cfg,
@@ -130,19 +104,7 @@ export async function runScratchAgent(o: RunOpts): Promise<RunResult> {
     const failing = report.checks.filter((c) => !c.passed && c.action !== "report").map((c) => c.name);
     const cfgChanges: string[] = [];
     attempts.push({ seed, director: used, report, failing, cfgChanges });
-    last = {
-      audio,
-      rateTimeline,
-      dispTimeline,
-      gateTimeline,
-      posSecTimeline,
-      events,
-      plan,
-      passed: report.passed,
-      attempts,
-      seed,
-      cfg,
-    };
+    last = { audio, events, plan, passed: report.passed, attempts, seed, cfg };
     if (report.passed) return last;
 
     // adjust for the next try, based only on what just failed

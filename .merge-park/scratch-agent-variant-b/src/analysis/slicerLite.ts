@@ -18,7 +18,7 @@ export function detectOnsets(x: ArrayLike<number>, sr: number, o: OnsetOpts = {}
   const hop = o.hop ?? 256;
   const minGap = o.minGapS ?? 0.06;
   const delta = o.delta ?? 0.35;
-  const halfWin = Math.max(1, Math.round(((o.medianS ?? 0.1) * sr) / hop));
+  const halfWin = Math.max(1, Math.round((o.medianS ?? 0.1) * sr / hop));
 
   const nFrames = Math.max(0, Math.floor((x.length - frame) / hop));
   const logE = new Float64Array(nFrames);

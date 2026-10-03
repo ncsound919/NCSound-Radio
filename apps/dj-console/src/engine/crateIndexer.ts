@@ -1,4 +1,4 @@
-import { evaluateHarmonicMatch } from "./sync";
+import { evaluateHarmonicMatch } from "@wavc/dj-engine/sync";
 import type { EnergyTier, TrackAcousticMetadata, TrackAnalysis, WaveformBands } from "./types";
 
 export interface ParsedAudioMetadata {

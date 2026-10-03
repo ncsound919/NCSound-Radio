@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { calculateHarmonicKeyShift, processWsolaTimePitch } from "../src/engine/timePitchEngine";
-import { pickExactSyncRate } from "../src/engine/sync";
+import { calculateHarmonicKeyShift, processWsolaTimePitch } from "@wavc/dj-engine/timePitchEngine";
+import { pickExactSyncRate } from "@wavc/dj-engine/sync";
 
 const close = (a: number, b: number, e = 1e-4) => assert.ok(Math.abs(a - b) < e, `${a} !~ ${b}`);
 

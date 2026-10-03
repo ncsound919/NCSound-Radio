@@ -1,16 +1,46 @@
 {
   "name": "@wavc/scratch-agent",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "test": "vitest run", "typecheck": "tsc --noEmit" },
+  "description": "Deterministic scratch-routine synthesis: slice analysis, director, composer, critic, renderer.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schemas": "./src/schemas.ts",
+    "./config": "./src/config.ts",
+    "./pipeline": "./src/pipeline.ts",
+    "./analysis/slicerLite": "./src/analysis/slicerLite.ts",
+    "./analysis/banks": "./src/analysis/banks.ts",
+    "./scratch/primitives": "./src/scratch/primitives.ts",
+    "./scratch/render": "./src/scratch/render.ts",
+    "./scratch/curves": "./src/scratch/curves.ts",
+    "./scratch/resample": "./src/scratch/resample.ts",
+    "./director/rulesDirector": "./src/director/rulesDirector.ts",
+    "./director/sentenceDirector": "./src/director/sentenceDirector.ts",
+    "./director/llmDirector": "./src/director/llmDirector.ts",
+    "./composer/compose": "./src/composer/compose.ts",
+    "./composer/placement": "./src/composer/placement.ts",
+    "./critic/rules": "./src/critic/rules.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@wavc/station-core": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
-  },
-  "peerDependencies": { "react": ">=18" }
+  }
 }

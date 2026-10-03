@@ -1,4 +1,4 @@
-import { analyze } from "../src/engine/analysis";
+import { analyze } from "@wavc/dj-engine/analysis";
 const SR = 44100;
 function track(bpm: number, first = 0.37, dense = false, secs = 60) {
   const d = new Float32Array(SR * secs), p = 60 / bpm;

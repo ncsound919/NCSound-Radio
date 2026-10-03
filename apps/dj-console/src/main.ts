@@ -1,6 +1,6 @@
 import "./style.css";
-import { Mixer } from "./engine/mixer";
-import type { AgentTriggerOutput, ScratchArchetypeId } from "./engine/mixer";
+import { Mixer } from "@wavc/dj-engine/mixer";
+import type { AgentTriggerOutput, ScratchArchetypeId } from "@wavc/dj-engine/mixer";
 import { MidiControllerEngine } from "./engine/midi";
 import type { MidiControlId, MidiControllerProfileId, MidiJogMode } from "./engine/midi";
 import {
@@ -10,17 +10,17 @@ import {
   pickSmartTransitionPreset,
   scoreNextTrackCandidate,
   sequenceCrateForParty,
-} from "./engine/marathon";
-import { BATTLE_CUT_SLICES, SCRATCH_PATTERNS } from "./engine/scratch";
+} from "@wavc/dj-engine/marathon";
+import { BATTLE_CUT_SLICES, SCRATCH_PATTERNS } from "@wavc/dj-engine/scratch";
 import {
   calculatePitchedKey,
   computeBeatPhaseDifference,
   detectTempoMultiplierCandidate,
   evaluateHarmonicMatch,
   pickExactSyncRate,
-} from "./engine/sync";
-import { calculateHarmonicKeyShift } from "./engine/timePitchEngine";
-import { BUILTIN_TRACK_SPECS, synthesizeStudioTrack } from "./engine/synthTracks";
+} from "@wavc/dj-engine/sync";
+import { calculateHarmonicKeyShift } from "@wavc/dj-engine/timePitchEngine";
+import { BUILTIN_TRACK_SPECS, synthesizeStudioTrack } from "@wavc/dj-engine/synthTracks";
 import {
   categorizeTrackAcoustics,
   clearIndexedDbCrate,
@@ -31,8 +31,8 @@ import {
   searchAndFilterCrate,
 } from "./engine/crateIndexer";
 import type { CrateIndexRecord, CrateSearchFilters, CrateSearchResultItem } from "./engine/crateIndexer";
-import { applyHeadroom, encodeWav16 } from "./scratch-agent";
-import type { Style } from "./scratch-agent";
+import { applyHeadroom, encodeWav16 } from "@wavc/scratch-agent";
+import type { Style } from "@wavc/scratch-agent";
 import transitions from "./presets/transitions.json";
 import partyTemplates from "./presets/party-templates.json";
 import type {
@@ -2749,7 +2749,7 @@ async function addFiles(fileSource: FileList | File[] | null, isFolderUpload = f
       const analysis =
         !slots[tempDeckSlot]
           ? mixer.loadBuffer(tempDeckSlot, buf)
-          : (await import("./engine/analysis")).analyze(buf);
+          : (await import("@wavc/dj-engine/analysis")).analyze(buf);
 
       // Prefer parsed ID3 key if available and valid
       if (parsedMeta.key && /^[1-9]|1[0-2][AB]$/i.test(parsedMeta.key)) {

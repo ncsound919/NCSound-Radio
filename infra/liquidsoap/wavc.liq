@@ -17,6 +17,9 @@
 
 # ---- logging / control ------------------------------------------------
 settings.log.stdout.set(true)
+# 3 shows the "Switch to input.harbor" line that proves the engine is on air.
+# Raise to 4 when debugging harbor ingestion: that is where the codec errors
+# (Unknown_codec, "Unable to find a decoder for stream mime-type") appear.
 settings.log.level.set(3)
 
 # Loopback only. The server protocol has no authentication of its own.

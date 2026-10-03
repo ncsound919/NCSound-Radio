@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { gridFromBpm, mergeBanks, runScratchAgent, sentenceDirectorFn, sentencePlan, DEFAULT_CONFIG } from "../src/scratch-agent";
-import type { Slice, SliceBank } from "../src/scratch-agent";
+import { gridFromBpm, mergeBanks, runScratchAgent, sentenceDirectorFn, sentencePlan, DEFAULT_CONFIG } from "@wavc/scratch-agent";
+import type { Slice, SliceBank } from "@wavc/scratch-agent";
 
 const sr = 22050;
 // main source: silence. If any event wrongly reads it, the window RMS below collapses.
