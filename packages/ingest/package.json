@@ -1,0 +1,26 @@
+{
+  "name": "@ncsound/ingest",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Control plane between the apps and the headless DJ engine. Applies commands, and reports real engine and Icecast state.",
+  "exports": {
+    ".": "./src/server.ts",
+    "./icecast": "./src/icecast.ts",
+    "./commands": "./src/commands.ts"
+  },
+  "types": "./src/server.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test --timeout 30000 ./test/",
+    "start": "bun run src/main.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.0",
+    "typescript": "^5.6.0"
+  },
+  "dependencies": {
+    "@ncsound/dj-engine": "workspace:*",
+    "@ncsound/station-core": "workspace:*"
+  }
+}

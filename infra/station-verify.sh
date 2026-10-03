@@ -11,7 +11,7 @@
 # (not `timeout`), otherwise curl is SIGKILLed and never flushes %{http_code}.
 
 HOST=127.0.0.1
-PORT=8000
+PORT=8010
 SECS=6
 fail=0
 ok()  { echo "  PASS  $1"; }

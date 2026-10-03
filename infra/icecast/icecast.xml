@@ -13,7 +13,18 @@
   2. This Ubuntu build has a compiled-in prefix of /usr/local/icecast and
      was resolving <webroot>/<adminroot> against it, so status.xml 400s.
      infra/station-up.sh symlinks those defaults at /usr/share/icecast2,
-     which is what makes /admin/status-json.xsl reachable.
+     which is what makes the status pages reachable.
+
+  3. The JSON status page lives at /status-json.xsl, NOT /admin/status-json.xsl.
+     Anything under /admin/ is parsed as a source/admin command rather than
+     served from adminroot, so /admin/status-json.xsl answers
+     "400 - Unrecognised command". curl -u admin:REDACTED
+     http://127.0.0.1:8010/status-json.xsl is the one to poll.
+
+  4. Port 8010, not Icecast's default 8000: an unrelated Windows service
+     already holds 127.0.0.1:8000, and WSL2's localhost relay cannot shadow
+     a Windows listener. The DJ engine runs on Windows and needs to read these
+     stats over HTTP, so Icecast gets a port nothing else is using.
 
   Credentials are DEV DEFAULTS - change before exposing beyond localhost.
 
@@ -26,7 +37,7 @@
   <hostname>ncsound.local</hostname>
 
   <listen-socket>
-    <port>8000</port>
+    <port>8010</port>
     <bind-address>127.0.0.1</bind-address>
   </listen-socket>
 

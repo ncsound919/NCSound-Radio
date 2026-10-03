@@ -141,9 +141,9 @@ wsl -u root sh infra/station-verify.sh  # prove it streams
 wsl -u root sh infra/station-down.sh    # stop
 ```
 
-Then listen: `curl http://127.0.0.1:8000/live.mp3` (128k) or `/mobile.mp3` (64k).
+Then listen: `curl http://127.0.0.1:8010/live.mp3` (128k) or `/mobile.mp3` (64k).
 
-- **Icecast** `:8000` — public mounts, admin on `/admin/stats`
+- **Icecast** `:8010` — public mounts, JSON status at `/status-json.xsl`
 - **Liquidsoap** telnet `:1234` — Liquidsoap's control commands
 - **Engine ingest** `:8008/dj` — where the DJ engine pushes audio
   (Icecast-compatible HTTP source endpoint, `input.harbor`, 12s buffer)

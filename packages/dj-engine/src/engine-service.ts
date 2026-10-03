@@ -6,10 +6,19 @@
  * ingest; everything musical (track choice, beat matching, key locks,
  * transitions) belongs to the Mixer this wraps.
  *
- *   engine (node)  --PCM-->  liquidsoap harbor :8008  -->  Icecast :8000
+ *   engine (node)  --PCM-->  liquidsoap harbor :8008  -->  Icecast :8010
  */
 
-import type { EngineState, EngineStatus, StreamEncoder } from "@ncsound/station-core";
+import type {
+  AutopilotState,
+  DeckSnapshot,
+  EngineState,
+  EngineStatus,
+  ListenerCounts,
+  OnAirSnapshot,
+  StreamEncoder,
+  TransitionState,
+} from "@ncsound/station-core";
 
 import { MasterRinger, interleaveToInt16 } from "./audio/index";
 import { Mixer } from "./engine/mixer";
@@ -25,6 +34,8 @@ const HEADROOM_CEILING_DB = -1.5;
 const HEADROOM_HOLD_MS = 1500;
 /** Never pull the master down further than this. */
 const TRIM_MIN_DB = -12;
+/** Spectrum points reported to clients, folded from the analyser's FFT. */
+const SPECTRUM_BUCKETS = 32;
 
 export type HeadlessEngineOptions = {
   sampleRate?: number;
@@ -63,6 +74,12 @@ export class HeadlessEngine {
   private decodeFailures: Array<{ path: string; error: string }> = [];
   private trimDb = 0;
   private peakHoldUntil = 0;
+  private listenerCounts: ListenerCounts = { current: 0, peak24h: 0, source: "icecast" };
+  /** Rolling cost of the per-block work: guard plus harbor write. */
+  private cpuMsPerBlock = 0;
+  /** Wall-clock seconds of audio rendered beyond what has been published. */
+  private renderedAheadSec = 0;
+  private lastBlockAtMs = 0;
 
   constructor(opts: HeadlessEngineOptions = {}) {
     this.opts = opts;
@@ -78,10 +95,29 @@ export class HeadlessEngine {
       },
       // Every rendered block is published straight into Liquidsoap.
       onChunk: ({ channels, frames }) => {
-        if (!this.harbor) return;
-        this.harbor.write(channels, frames, interleaveToInt16);
-      },
-    });
+        const t0 = performance.now();
+        if (this.harbor) {
+          this.harbor.write(channels, frames, interleaveToInt16);
+        }
+        // Smoothed, because a single block can be dominated by a GC pause.
+        this.cpuMsPerBlock = this.cpuMsPerBlock * 0.9 + (performance.now() - t0) * 0.1;
+
+        // Render-ahead: audio the graph has produced minus what the wall clock
+        // has consumed. Nudge it from block arrival rate, and decay it when
+        // blocks stop coming so a stalled pump cannot report a healthy lead.
+        const now = performance.now();
+        if (this.lastBlockAtMs > 0) {
+          const gapSec = (now - this.lastBlockAtMs) / 1000;
+          if (gapSec > 0 && gapSec < 5) {
+            const produced = frames / this.sampleRate;
+            this.renderedAheadSec += produced - gapSec;
+            this.renderedAheadSec = Math.max(-1, Math.min(10, this.renderedAheadSec));
+          } else {
+            this.renderedAheadSec = 0;
+          }
+        }
+        this.lastBlockAtMs = now;
+      },    });
     this.mixer = new Mixer(this.ringer.context);
     this.harbor = opts.publish === false ? null : new HarborPublisher(opts.harbor);
     this.autopilot = new Autopilot(this.mixer, {
@@ -127,59 +163,181 @@ export class HeadlessEngine {
     return this.mixer.ctx;
   }
 
+  /**
+   * Listener counts, pushed in from Icecast by whichever service polls it.
+   *
+   * The engine has no way to know how many people are listening; it only knows
+   * what it is sending. Reporting zero here rather than leaving the field unset
+   * keeps the contract honest: Icecast is the authority, and until a poller
+   * runs the numbers mean "not measured".
+   */
+  setListeners(counts: ListenerCounts): void {
+    this.listenerCounts = counts;
+  }
+
+  /** Real per-deck state, read off the decks rather than assumed. */
+  private deckSnapshot(slot: 0 | 1): DeckSnapshot {
+    const deck = this.mixer.decks[slot];
+    const info = this.mixer.info();
+    const isAudible = info != null && info.deck === slot;
+    const level = deck.getLevel();
+
+    return {
+      slot,
+      trackId: deck.buffer ? this.trackIdForDeck(slot) : null,
+      playing: deck.playing,
+      bpm: isAudible ? deck.analysis?.bpm ?? null : deck.analysis?.bpm ?? null,
+      key: deck.analysis ? deck.getEffectiveKey() : null,
+      positionSec: deck.buffer ? deck.currentOffset(this.audioContext.currentTime) : 0,
+      durationSec: deck.buffer?.duration ?? 0,
+      speed: deck.rate,
+      gainDb: deck.autoGainDb + deck.manualTrimDb,
+      lowDb: deck.lowKill ? -Infinity : deck.lowDb,
+      midDb: deck.midKill ? -Infinity : deck.midDb,
+      highDb: deck.highKill ? -Infinity : deck.highDb,
+      levelDb: level > 0 ? 20 * Math.log10(level) : -Infinity,
+    };
+  }
+
+  /** Crate track id currently loaded into a deck, if we can name it. */
+  private trackIdForDeck(slot: 0 | 1): string | null {
+    const deck = this.mixer.decks[slot];
+    // DecodedTrack ids are derived from the path; the deck keeps the buffer, so
+    // match on buffer identity against the crate.
+    for (const t of this.crate) {
+      if (t.buffer === deck.buffer) return t.id;
+    }
+    return null;
+  }
+
+  /** Master spectrum straight off the analyser. */
+  private spectrum(): number[] {
+    const analyser = this.mixer.masterAnalyser;
+    const bins = new Uint8Array(analyser.fftSize);
+    analyser.getByteFrequencyData(bins);
+    // Fold into 32 log-spaced-ish buckets; the UI wants a shape, not raw FFT.
+    const out: number[] = new Array(SPECTRUM_BUCKETS).fill(0);
+    const per = bins.length / SPECTRUM_BUCKETS;
+    for (let b = 0; b < SPECTRUM_BUCKETS; b++) {
+      let sum = 0;
+      const from = Math.floor(b * per);
+      const to = Math.max(from + 1, Math.floor((b + 1) * per));
+      for (let i = from; i < to && i < bins.length; i++) sum += bins[i];
+      out[b] = Math.round(sum / (to - from));
+    }
+    return out;
+  }
+
+  /**
+   * Transition state derived from when the mixer actually started and expects
+   * to finish a fade, not a hardcoded "not transitioning".
+   */
+  private transitionState(): TransitionState {
+    const np = this.autopilot.nowPlaying;
+    const idle: TransitionState = {
+      active: false,
+      preset: null,
+      fromTrackId: null,
+      toTrackId: np?.track.id ?? null,
+      startedAt: null,
+      endsAt: null,
+      progress: 0,
+      harmonicMatch: null,
+    };
+    if (!np) return idle;
+
+    // Autopilot records the plan on the track that is now audible, so the
+    // transition is the bar-aligned window that led up to it. The plan has no
+    // duration of its own: it is `bars` bars at the tempo being mixed.
+    const plan = np.plan;
+    if (!plan) return idle;
+
+    const bpm = this.mixer.decks[this.mixer.active].analysis?.bpm ?? 120;
+    const secPerBar = (60 / bpm) * 4;
+    const total = Math.max(0.5, plan.preset.bars * secPerBar);
+
+    const elapsed = (Date.now() - np.startedAtMs) / 1000;
+    const active = elapsed < total;
+    return {
+      active,
+      preset: plan.preset,
+      fromTrackId: null,
+      toTrackId: np.track.id,
+      startedAt: new Date(np.startedAtMs - total * 1000).toISOString(),
+      endsAt: new Date(np.startedAtMs).toISOString(),
+      progress: active ? Math.min(1, elapsed / total) : 1,
+      harmonicMatch: plan.harmonicLabel,
+    };
+  }
+
+  /** Autopilot state read off the autopilot, including the real crate size. */
+  private autopilotState(): AutopilotState {
+    const np = this.autopilot.nowPlaying;
+    return {
+      enabled: this.autopilot.enabled,
+      vibeTemplateId: this.autopilot.template?.id ?? null,
+      energyTarget: this.autopilot.energyTarget,
+      queueDepth: np?.next ? 1 : 0,
+      crateSize: this.crate.length,
+    };
+  }
+
+  /**
+   * On-air snapshot built from the track actually playing.
+   *
+   * There is no ad inventory and no live show in this station, so `daypart` and
+   * `liveShow` say exactly that instead of inventing a schedule.
+   */
+  private onAirSnapshot(): OnAirSnapshot | null {
+    const np = this.autopilot.nowPlaying;
+    if (!np) return null;
+
+    const track = toTrackDTO(np.track, this.autopilot.template?.name ?? "Core Rotation");
+    const deck = this.mixer.decks[this.mixer.info()?.deck ?? this.mixer.active];
+    const elapsed = deck.buffer ? deck.currentOffset(this.audioContext.currentTime) : 0;
+    const duration = np.track.durationSec;
+
+    return {
+      current: {
+        track,
+        startedAt: new Date(np.startedAtMs).toISOString(),
+        elapsed: Math.max(0, elapsed),
+        duration,
+        remaining: Math.max(0, duration - elapsed),
+        progress: duration > 0 ? Math.min(1, Math.max(0, elapsed / duration)) : 0,
+      },
+      element: { kind: "MUSIC" },
+      daypart: { clean: true, label: "Music only, no ad slots" },
+      liveShow: null,
+      next: np.next ? [{ ...toTrackDTO(np.next, "Core Rotation"), elementKind: "MUSIC" }] : [],
+      wheel: [{ kind: "MUSIC", durSec: Math.round(duration) }],
+      cycleIndex: 0,
+      cycleSec: this.startedAt ? (Date.now() - this.startedAt) / 1000 : 0,
+      serverTime: new Date().toISOString(),
+    };
+  }
+
   get status(): HeadlessEngineStatus {
     return {
       state: this.state,
-      onAir: null,
-      transition: {
-        active: false,
-        preset: null,
-        fromTrackId: null,
-        toTrackId: null,
-        startedAt: null,
-        endsAt: null,
-        progress: 0,
-        harmonicMatch: null,
-      },
+      onAir: this.onAirSnapshot(),
+      transition: this.transitionState(),
       telemetry: {
         masterPeakDb: this.peak > 0 ? 20 * Math.log10(this.peak) : -Infinity,
         masterRmsDb: this.rms > 0 ? 20 * Math.log10(this.rms) : -Infinity,
         limiterReductionDb: this.mixer.getMasterTelemetry().limiterReductionDb,
-        spectrum: [],
+        spectrum: this.spectrum(),
         crossfader: this.mixer.crossfader,
         crossfaderCurve: this.mixer.crossfaderCurve,
-        decks: [0, 1].map((i) => {
-          const info = this.mixer.info();
-          return {
-            slot: i as 0 | 1,
-            trackId: null,
-            playing: info != null && info.deck === i,
-            bpm: info != null && info.deck === i ? info.effBpm : null,
-            key: null,
-            positionSec: info != null && info.deck === i ? info.elapsed : 0,
-            durationSec: info != null && info.deck === i ? info.duration : 0,
-            speed: info != null && info.deck === i ? info.speed : 1,
-            gainDb: 0,
-            lowDb: 0,
-            midDb: 0,
-            highDb: 0,
-            levelDb: 0,
-          };
-        }),
-        scratch: null,
+        decks: [this.deckSnapshot(0), this.deckSnapshot(1)],
+        scratch: this.mixer.idle ? null : this.mixer.scratchTelemetry(),
         master: this.mixer.getMasterTelemetry(),
-        renderedAheadSec: 0,
-        cpuMsPerBlock: 0,
+        renderedAheadSec: this.renderedAheadSec,
+        cpuMsPerBlock: this.cpuMsPerBlock,
         sampleRate: this.sampleRate,
       },
-      autopilot: {
-        enabled: this.mixer.playing,
-        vibeTemplateId: null,
-        energyTarget: 0,
-        queueDepth: 0,
-        crateSize: BUILTIN_TRACK_SPECS.length,
-      },
-      listeners: { current: 0, peak24h: 0, source: "icecast" },
+      autopilot: this.autopilotState(),
+      listeners: this.listenerCounts,
       uptimeSec: this.startedAt ? (Date.now() - this.startedAt) / 1000 : 0,
       serverTime: new Date().toISOString(),
       lastError: this.lastError,
@@ -244,8 +402,7 @@ export class HeadlessEngine {
       this.applyHeadroomGuard();
 
       this.startedAt = Date.now();
-      this.state = this.mixer.playing ? "playing" : "idle";
-    } catch (err) {
+      this.state = this.mixer.playing ? "playing" : "idle";    } catch (err) {
       this.lastError = err instanceof Error ? err.message : String(err);
       this.state = "error";
       throw err;

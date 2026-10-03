@@ -64,10 +64,12 @@ def station_title(m) =
 end
 
 # ---- outputs -----------------------------------------------------------
+# Icecast listens on 8010, not its default 8000: an unrelated Windows service
+# holds 127.0.0.1:8000 and WSL2's localhost relay loses to a Windows listener.
 output.icecast(
   %mp3(bitrate=128),
   host="127.0.0.1",
-  port=8000,
+  port=8010,
   user="source",
   password="REDACTED",
   mount="/live.mp3",
@@ -83,7 +85,7 @@ output.icecast(
 output.icecast(
   %mp3(bitrate=64),
   host="127.0.0.1",
-  port=8000,
+  port=8010,
   user="source",
   password="REDACTED",
   mount="/mobile.mp3",

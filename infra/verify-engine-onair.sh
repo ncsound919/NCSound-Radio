@@ -15,7 +15,7 @@
 # Start the engine yourself, then run this.
 
 HOST=127.0.0.1
-PORT=8000
+PORT=8010
 LOG=/tmp/ncsound-onair.log
 
 echo "== 1. is the engine connected and has Liquidsoap switched to it? =="

@@ -80,10 +80,12 @@ echo "   liquidsoap up (pid $(pgrep -u liquidsoap -x liquidsoap | head -1))"
 
 echo
 echo "== live mounts =="
-curl -s -u admin:REDACTED http://127.0.0.1:8000/admin/status.xml \
-  | tr '<' '\n' | grep -Ei 'source_name|listenurl|listener_peak' | sed 's/^/   /' || true
+# Poll the JSON status page at the webroot. /admin/... is parsed as a source
+# command and answers "400 - Unrecognised command" instead of serving XSL.
+curl -s -u admin:REDACTED http://127.0.0.1:8010/status-json.xsl \
+  | tr ',' '\n' | grep -Ei 'listenurl|listeners|listener_peak|bitrate' | sed 's/^/   /' || true
 echo
-echo "   curl http://127.0.0.1:8000/live.mp3    # 128k"
-echo "   curl http://127.0.0.1:8000/mobile.mp3  # 64k"
+echo "   curl http://127.0.0.1:8010/live.mp3    # 128k"
+echo "   curl http://127.0.0.1:8010/mobile.mp3  # 64k"
 echo "   telnet 127.0.0.1 1234                  # liquidsoap control"
 echo "   engine ingests to 127.0.0.1:8008/dj"
