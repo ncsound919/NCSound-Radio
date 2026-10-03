@@ -17,9 +17,65 @@ apps/
   dj-console/      Vite + TS DJ booth UI.
 analysis/          (planned) Python: essentia/madmom beat+key, demucs stems.
 infra/
-  liquidsoap/      (planned) .ls radio script -- encoder + ICY metadata + failover.
-  icecast/         (planned) icecast.xml. Runs in WSL2 (Linux-native).
+  icecast.xml      Icecast 2.4 config. Two mounts, source auth, admin.
+  liquidsoap/
+    wavc.liq       Encoder + ingest + ICY metadata + dead-air fallback.
+  station-up.sh    Start both daemons (WSL).
+  station-down.sh  Stop both.
+  station-verify.sh End-to-end proof the chain actually streams.
 ```
+
+## Running the stream (WSL2)
+
+Liquidsoap and Icecast are Linux-native, so they run in WSL:
+
+```sh
+wsl -u root sh infra/station-up.sh      # start icecast + liquidsoap
+wsl -u root sh infra/station-verify.sh  # prove it streams
+wsl -u root sh infra/station-down.sh    # stop
+```
+
+Then listen: `curl http://127.0.0.1:8000/live.mp3` (128k) or `/mobile.mp3` (64k).
+
+- **Icecast** `:8000` — public mounts, admin on `/admin/stats`
+- **Liquidsoap** telnet `:1234` — Liquidsoap's control commands
+- **Engine ingest** `:8008/dj` — where the DJ engine pushes audio
+  (Icecast-compatible HTTP source endpoint, `input.harbor`, 12s buffer)
+
+`/admin/stats` returns real per-mount listener counts, `listener_peak` and
+`audio_info`. That is the replacement for the station app's invented
+`computeListeners()` sine wave, and for the hardcoded
+`Icecast mount /stream - 128 kbps AAC ... OK` in the ops panel.
+
+### Icecast/Liquidsoap gotchas found the hard way
+
+- **Source auth must be global** (`<authentication><source-password>`). Per-mount
+  `<source-username>`/`<source-password>` is silently ignored by this build and
+  every source connection 401s with "No source password set, rejecting source".
+- **This Ubuntu build ignores `<webroot>`/`<adminroot>`** and resolves them
+  against a compiled-in `/usr/local/icecast` prefix. `station-up.sh` seeds those
+  directories from the packaged XSLs.
+- **`<hostname>` must not be literally `localhost`** or Icecast warns it is unset.
+- **XML comments cannot contain `--`**, so don't paste shell commands with
+  double-dash flags into the Icecast config.
+- **Liquidsoap 2.2 settings use `:=`, not `=`.** List literals use `;`
+  separators. `input.harbor`'s `on_connect` receives the request headers.
+- **Liquidsoap refuses to run as root** (`settings.init.allow_root`), so
+  `station-up.sh` drops to the `liquidsoap` user via `setpriv`.
+- **Liquidsoap takes ~6s to boot** (loads its stdlib, typechecks the script), so
+  the start script polls instead of sleeping a fixed amount.
+- The admin endpoint is `/admin/stats` and `/admin/listmounts`;
+  `/admin/status.xml` is not recognised on this build.
+
+### Liquidsoap does not sequence music
+
+Both Liquidsoap and the DJ engine want to own the program clock. The split:
+
+- **DJ engine owns the timeline** — track selection, beat matching, Camelot key
+  locks, energy curves, transitions, scratch drops.
+- **Liquidsoap owns delivery** — MP3/Opus encoding, Icecast ingest, ICY metadata,
+  dead-air failover. It ingests exactly **one** input source, fed by the engine,
+  and falls back to the library playlist when the engine is not connected.
 
 ## Architectural decisions
 
@@ -33,17 +89,7 @@ is unimplemented (issue #91), so the obvious "tap the live graph" design is out.
 Rendering discrete blocks *ahead* of the live clock is the better answer anyway:
 broadcast timing becomes immune to Node GC pauses and timer jitter.
 
-**2. Liquidsoap does not sequence music.**
-Both Liquidsoap and the DJ engine want to own the program clock. The split:
-
-- **DJ engine owns the timeline** — track selection, beat matching, Camelot key
-  locks, energy curves, transitions, scratch drops.
-- **Liquidsoap owns delivery** — MP3/Opus encoding, Icecast ingest, ICY metadata,
-  dead-air failover. It ingests exactly **one** input source, fed by the engine.
-
-This removes a whole class of duplication. It also means the station's fake
-`computeListeners()` sine wave and the hardcoded "Icecast mount OK" become real
-readings instead of invented numbers.
+**2. Liquidsoap does not sequence music.** See "Running the stream" above.
 
 **3. `station-core` is the only place domain types are declared.**
 It had been duplicated between `station-web/src/lib/station-types.ts` and

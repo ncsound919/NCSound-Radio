@@ -1,0 +1,75 @@
+<?xml version="1.0"?>
+<!--
+  WAVC 91.3 - Icecast 2.4 streaming server.
+
+  Two things that cost time to discover, both encoded here:
+
+  1. Source auth must be GLOBAL, in <authentication>. Per-mount
+     <source-username>/<source-password> was silently ignored by this
+     build and every source connection returned 401
+     ("No source password set, rejecting source"). With a global
+     <source-password> the source username defaults to "source".
+
+  2. This Ubuntu build has a compiled-in prefix of /usr/local/icecast and
+     was resolving <webroot>/<adminroot> against it, so status.xml 400s.
+     infra/station-up.sh symlinks those defaults at /usr/share/icecast2,
+     which is what makes /admin/status-json.xsl reachable.
+
+  Credentials are DEV DEFAULTS - change before exposing beyond localhost.
+
+  Note: XML comments cannot contain a double hyphen.
+-->
+<icecast>
+  <location>Localhost</location>
+  <admin>ops@wavc.local</admin>
+  <!-- Must not be literally "localhost" or Icecast warns and treats it unset. -->
+  <hostname>wavc.local</hostname>
+
+  <listen-socket>
+    <port>8000</port>
+    <bind-address>127.0.0.1</bind-address>
+  </listen-socket>
+
+  <authentication>
+    <source-password>REDACTED</source-password>
+    <admin-user>admin</admin-user>
+    <admin-password>REDACTED</admin-password>
+  </authentication>
+
+  <webroot>/usr/share/icecast2/web</webroot>
+  <adminroot>/usr/share/icecast2/admin</adminroot>
+  <fileserve>1</fileserve>
+
+  <security>
+    <chroot>0</chroot>
+    <change-owner>
+      <user>icecast2</user>
+      <group>icecast</group>
+    </change-owner>
+  </security>
+
+  <!-- Primary mount: 128 kbps from Liquidsoap. -->
+  <mount type="normal">
+    <mount>/live.mp3</mount>
+    <public>1</public>
+    <hidden>0</hidden>
+    <max-listener>500</max-listener>
+    <queue-size>1048576</queue-size>
+    <stream-name>WAVC 91.3 Carolina Waves</stream-name>
+    <stream-description>Independent hip-hop radio</stream-description>
+    <stream-genre>Various</stream-genre>
+  </mount>
+
+  <!-- Mobile mount: 64 kbps. Matches the 128/64 switch in the station player. -->
+  <mount type="normal">
+    <mount>/mobile.mp3</mount>
+    <public>1</public>
+    <hidden>0</hidden>
+    <max-listener>500</max-listener>
+    <queue-size>1048576</queue-size>
+    <stream-name>WAVC 91.3 Carolina Waves (mobile)</stream-name>
+    <stream-genre>Various</stream-genre>
+  </mount>
+
+  <fileserve-ttl>10</fileserve-ttl>
+</icecast>
