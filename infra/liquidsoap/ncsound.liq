@@ -20,7 +20,7 @@ settings.log.stdout.set(true)
 # 3 shows the "Switch to input.harbor" line that proves the engine is on air.
 # Raise to 4 when debugging harbor ingestion: that is where the codec errors
 # (Unknown_codec, "Unable to find a decoder for stream mime-type") appear.
-settings.log.level.set(3)
+settings.log.level.set(5)
 
 # Loopback only. The server protocol has no authentication of its own.
 settings.server.telnet := true
@@ -38,7 +38,16 @@ dj_source = input.harbor(
   timeout=15.,
   # The engine interleaves ICY metadata blocks into the upload, which is how a
   # track change reaches listeners on an already-open connection.
-  icy=true,
+  # ICY metadata framing is OFF. It was on, and it is why the station never
+  # actually reached air: interleaving 255-byte blocks and metadata length bytes
+  # into the upload desynchronised the WAV stream, so harbor's ffmpeg decoder
+  # produced frames at roughly 700 bytes a second instead of 192 KB/s. Harbor sat
+  # at "need more buffering" forever, the switch never selected it, and
+  # listeners got the dead-air fallback tone while every counter read healthy.
+  #
+  # Now-playing titles reach listeners through the output.icecast `icy_song`
+  # callback instead, which reads whatever the engine last published.
+  icy=false,
   on_disconnect=fun () -> log.info("DJ engine disconnected"),
 )
 
@@ -95,3 +104,5 @@ output.icecast(
   icy_song=station_title,
   radio,
 )
+
+

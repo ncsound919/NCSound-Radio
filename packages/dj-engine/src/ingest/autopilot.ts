@@ -103,6 +103,8 @@ export class Autopilot {
   private recentPresets: string[] = [];
   private startedAtMs = Date.now();
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** True while a track is being decoded for the next deck. */
+  private arming = false;
 
   constructor(mixer: Mixer, opts: AutopilotOptions = {}) {
     this.mixer = mixer;
@@ -182,8 +184,21 @@ respectRotation: opts.respectRotation ?? true,
     if (!info) return;
     const remaining = info.remaining;
 
-    if (!this.playing.next) {
+if (!this.playing.next) {
       if (remaining <= this.opts.cueAheadSec) void this.armNext();
+      /**
+       * The cue window has passed with nothing armed. On a healthy station that
+       * never lasts longer than one decode, so a track sitting at its end while
+       * the engine outputs silence means arming is failing. This used to return
+       * quietly, which is exactly how the station ended up broadcasting nothing
+       * with no indication anywhere that it had stopped sequencing.
+       */
+      if (remaining <= 0) {
+        console.warn(
+          `[autopilot] "${this.playing.track.title}" has ended with no successor armed ` +
+            `(arming=${this.arming}); the station is silent until this resolves`,
+        );
+      }
       return;
     }
 
@@ -213,49 +228,90 @@ respectRotation: opts.respectRotation ?? true,
     if (!current || current.next) return;
     if (this.crate.length === 0) return;
 
-    // Rotate the crate before repeating anything.
-    if (this.opts.respectRotation && this.history.length >= this.crate.length - 1) {
-      this.history = [];
+    /**
+     * One arm at a time. Materialising a track decodes a whole MP3, which takes
+     * longer than the tick interval, and `current.next` is only assigned after
+     * that decode. Without this guard every tick started another arm: they all
+     * passed the `current.next` check, raced to load the same idle deck, and the
+     * handover the station was trying to perform turned into a pile-up. Worse,
+     * the pile-up could load the deck that was already playing once the current
+     * track reached its end, which left the engine silent with nothing logged.
+     */
+    if (this.arming) return;
+    this.arming = true;
+
+    try {
+      // Rotate the crate before repeating anything.
+      if (this.opts.respectRotation && this.history.length >= this.crate.length - 1) {
+        this.history = [];
+      }
+      const exclude = new Set<string>([current.track.id, ...this.history]);
+
+      const chosen = pickNextMarathonTrack(
+        anchorOf(current.track.analysis),
+        this.crate.map(candidate),
+        exclude,
+        this.energyTarget,
+        Date.now(),
+      );
+      if (!chosen) {
+        // Every candidate is excluded, or the crate is too small to rotate.
+        // Say so: this used to return silently and the station played to the
+        // end of the track and stopped, with no indication why.
+        console.warn(
+          `[autopilot] no candidate for "${current.track.title}" (crate=${this.crate.length}, excluded=${exclude.size})`,
+        );
+        return;
+      }
+
+      const track = this.crate.find((t) => t.id === chosen.track.id);
+      if (!track) {
+        console.warn(`[autopilot] scorer chose ${chosen.track.id}, which is not in the crate`);
+        return;
+      }
+
+      const info = this.mixer.info();
+      // Never load onto the deck that is currently audible.
+      const audible = info?.deck ?? this.mixer.active;
+      const idleSlot = (audible === 0 ? 1 : 0) as 0 | 1;
+
+      // Cue the next track by decoding it now, so the mix-in happens on the bar
+      // line rather than after an ffmpeg round trip.
+      await materialize(track, this.mixer.ctx, this.opts.decode);
+      if (!track.buffer) {
+        console.warn(`[autopilot] could not materialise "${track.title}"`);
+        return;
+      }
+      // The track may have finished while we were decoding.
+      if (this.playing !== current) return;
+      this.mixer.loadBuffer(idleSlot, track.buffer, track.analysis ?? undefined);
+
+      const preset = pickSmartTransitionPreset(
+        anchorOf(current.track.analysis),
+        anchorOf(track.analysis),
+        this.recentPresets,
+      );
+      const scratch = pickSmartScratchProfile({
+        bpm: track.analysis?.bpm ?? 120,
+        energy: track.analysis?.energy,
+      });
+
+      current.next = track;
+      current.plan = {
+        preset: presetById(preset.presetId),
+        reason: preset.reason,
+        harmonicLabel: chosen.score.harmonicLabel,
+        scratch,
+      };
+    } catch (err) {
+      // Previously an async throw here became an unhandled rejection that left
+      // the station silently stuck at the end of a track.
+      console.error(
+        `[autopilot] arming the next track failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      this.arming = false;
     }
-    const exclude = new Set<string>([current.track.id, ...this.history]);
-
-    const chosen = pickNextMarathonTrack(
-      anchorOf(current.track.analysis),
-      this.crate.map(candidate),
-      exclude,
-      this.energyTarget,
-      Date.now(),
-    );
-    if (!chosen) return;
-
-    const track = this.crate.find((t) => t.id === chosen.track.id);
-    if (!track) return;
-
-    const info = this.mixer.info();
-    const idleSlot = (info?.deck === 0 ? 1 : 0) as 0 | 1;
-    // Cue the next track by decoding it now, so the mix-in happens on the bar
-    // line rather than after an ffmpeg round trip.
-    await materialize(track, this.mixer.ctx, this.opts.decode);
-    if (!track.buffer) return;
-    this.mixer.loadBuffer(idleSlot, track.buffer, track.analysis ?? undefined);
-
-    const preset = pickSmartTransitionPreset(
-      anchorOf(current.track.analysis),
-      anchorOf(track.analysis),
-      this.recentPresets,
-    );
-    const scratch = pickSmartScratchProfile({
-      bpm: track.analysis?.bpm ?? 120,
-      energy: track.analysis?.energy,
-    });
-
-    current.next = track;
-    current.plan = {
-      preset: presetById(preset.presetId),
-      reason: preset.reason,
-      harmonicLabel: chosen.score.harmonicLabel,
-      scratch,
-    };
   }
 
   private schedule(): void {

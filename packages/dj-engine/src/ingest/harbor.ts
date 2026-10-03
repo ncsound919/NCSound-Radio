@@ -15,12 +15,35 @@ import http from "node:http";
  */
 
 /**
+ * Declared length of the WAV data chunk, in bytes.
+ *
+ * This is finite on purpose. A streaming WAV conventionally writes 0xFFFFFFFF
+ * here, and that is exactly what stopped the station ever reaching air:
+ * Liquidsoap decodes harbor uploads through ffmpeg, whose WAV demuxer will not
+ * emit frames from a chunk claiming to be unbounded. Harbor sat at "need more
+ * buffering" gaining about 700 bytes a second against 192 KB/s being sent, so it
+ * never finished its startup buffer, the switch never selected it, and
+ * listeners got the dead-air fallback tone while every counter looked healthy.
+ *
+ * Verified by sending the same audio with finite sizes: harbor played all 20
+ * seconds of it.
+ *
+ * 0x7FFFFFFF is a little over 2 GB, roughly three hours of 48 kHz stereo s16.
+ * The publisher re-sends a fresh header before reaching it (see
+ * WAV_RECONNECT_MARGIN), so a permanent stream is unaffected.
+ */
+const WAV_DATA_LIMIT = 0x7fffffff;
+
+/** Start a fresh WAV a little before the declared length is reached. */
+const WAV_RECONNECT_MARGIN = 16 * 1024 * 1024;
+
+/**
  * Streaming WAV header.
  *
- * Liquidsoap's harbor cannot decode raw `audio/L16` — it answers
+ * Liquidsoap's harbor cannot decode raw `audio/L16` - it answers
  * `Harbor.Make(T).Unknown_codec` and silently keeps playing the fallback
- * source. It does accept `audio/wav`, which it routes through ffmpeg. Sizes
- * are written as 0xFFFFFFFF, the convention for a stream of unknown length.
+ * source. It does accept `audio/wav`, which it routes through ffmpeg. See
+ * WAV_DATA_LIMIT for why the size field must be finite.
  */
 function wavHeader(sampleRate: number, channels: number): Uint8Array {
   const bitsPerSample = 16;
@@ -32,7 +55,7 @@ function wavHeader(sampleRate: number, channels: number): Uint8Array {
     for (let i = 0; i < s.length; i++) v.setUint8(offset + i, s.charCodeAt(i));
   };
   ascii(0, "RIFF");
-  v.setUint32(4, 0xffffffff, true); // riff size: streaming
+  v.setUint32(4, 36 + WAV_DATA_LIMIT, true); // riff size: matches the data chunk
   ascii(8, "WAVE");
   ascii(12, "fmt ");
   v.setUint32(16, 16, true); // fmt chunk size
@@ -43,7 +66,7 @@ function wavHeader(sampleRate: number, channels: number): Uint8Array {
   v.setUint16(32, blockAlign, true);
   v.setUint16(34, bitsPerSample, true);
   ascii(36, "data");
-  v.setUint32(40, 0xffffffff, true); // data size: streaming
+  v.setUint32(40, WAV_DATA_LIMIT, true); // finite, see WAV_DATA_LIMIT
   return new Uint8Array(buf);
 }
 
@@ -155,6 +178,19 @@ export class HarborPublisher {
   private backlogSince: number | null = null;
   /** Epoch ms the current connection was accepted, for stability checks. */
   private connectedAtMs = 0;
+  /**
+   * Interleave ICY metadata blocks into the upload. OFF by default.
+   *
+   * With this on, Liquidsoap's harbor fed the stream to ffmpeg at about 700
+   * bytes a second rather than the 192 KB/s being sent, never filled its startup
+   * buffer, and was never selected - so the station broadcast its dead-air
+   * fallback tone while every counter looked healthy. The 255-byte framing and
+   * its metadata length bytes desynchronised the WAV stream.
+   *
+   * Now-playing titles go out through Liquidsoap's own icy_song callback
+   * instead. HARBOR_ICY=1 re-enables the old behaviour for comparison.
+   */
+  private readonly icyEnabled = process.env.HARBOR_ICY === "1";
   /** Title to use on the next connect attempt. */
   private lastTitle: string;
 
@@ -227,11 +263,19 @@ export class HarborPublisher {
           headers: {
             Authorization: `Basic ${auth}`,
             "Content-Type": "audio/wav",
-            "Icy-MetaData": "1",
-            "icy-metaint": String(ICY_METADATA_INTERVAL),
+            ...(this.icyEnabled
+              ? { "Icy-MetaData": "1", "icy-metaint": String(ICY_METADATA_INTERVAL) }
+              : {}),
             "icy-name": streamTitle,
-            // Streaming upload: no declared length.
-            "Transfer-Encoding": "chunked",
+            /**
+             * Deliberately NO Transfer-Encoding header. Setting it by hand makes
+             * Node treat the body as pre-framed, and Liquidsoap's harbor then
+             * consumed the stream at roughly 700 bytes a second - far too slowly
+             * to ever fill its startup buffer, so it sat at "need more
+             * buffering" indefinitely and the station played the fallback tone.
+             * Omitting it lets Node add chunked framing itself, which is what the
+             * server expects.
+             */
           },
         },
         // Harbor answers as soon as it has registered the source, so the
@@ -381,19 +425,41 @@ export class HarborPublisher {
         this.carry.length > 0 ? concat(this.carry, bytes) : bytes;
 
       let offset = 0;
-      while (input.length - offset >= ICY_BLOCK) {
-        const block = input.subarray(offset, offset + ICY_BLOCK);
-        offset += ICY_BLOCK;
-        this.req.write(block);
-        // Metadata rides in the first block after it changes.
-        if (this.pendingMetadata) {
-          this.req.write(this.pendingMetadata);
-          this.pendingMetadata = null;
-        } else {
-          this.req.write(ICY_NO_METADATA);
+      if (this.icyEnabled) {
+        while (input.length - offset >= ICY_BLOCK) {
+          const block = input.subarray(offset, offset + ICY_BLOCK);
+          offset += ICY_BLOCK;
+          this.req.write(block);
+          // Metadata rides in the first block after it changes.
+          if (this.pendingMetadata) {
+            this.req.write(this.pendingMetadata);
+            this.pendingMetadata = null;
+          } else {
+            this.req.write(ICY_NO_METADATA);
+          }
         }
+        this.carry = input.slice(offset);
+      } else {
+        // Raw PCM, no ICY framing: the default, and the only mode Liquidsoap's
+        // harbor actually decodes at full rate.
+        this.req.write(input);
+        this.carry = new Uint8Array(0);
       }
-      this.carry = input.slice(offset);
+
+      /**
+       * Refresh the WAV header before the declared finite data size runs out,
+       * so the limit is never actually reached. At 48 kHz stereo s16 that is
+       * about three hours from now; the reconnect is sub-second and lands on
+       * the next bar rather than mid-phrase of consequence.
+       */
+      if (this.state.bytesSent > WAV_DATA_LIMIT - WAV_RECONNECT_MARGIN) {
+        this.state.bytesSent = 0;
+        this.carry = new Uint8Array(0);
+        this.teardown();
+        this.scheduleRetry();
+        return false;
+      }
+
       return true;
     } catch (err) {
       // The upload was closed underneath us - typically Liquidsoap dropping the
