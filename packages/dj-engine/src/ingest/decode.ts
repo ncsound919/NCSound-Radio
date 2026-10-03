@@ -313,7 +313,20 @@ function safeAnalyze(buffer: AudioBuffer): TrackAnalysis | null {
 export type CrateLoadResult = {
   tracks: DecodedTrack[];
   failed: Array<{ path: string; error: string }>;
+  /** Set when the library root itself could not be read. */
+  libraryError?: string;
 };
+
+/** The library root is missing or unreadable, as opposed to a bad file. */
+export class LibraryUnreadableError extends Error {
+  constructor(
+    readonly dir: string,
+    readonly cause: string,
+  ) {
+    super(`cannot read library directory ${dir}: ${cause}`);
+    this.name = "LibraryUnreadableError";
+  }
+}
 
 const AUDIO_EXT = new Set([".mp3", ".wav", ".flac", ".ogg", ".oga", ".m4a", ".aac", ".opus", ".aiff", ".aif"]);
 
@@ -377,7 +390,11 @@ export async function scanLibrary(
     try {
       entries = await readdir(current, { withFileTypes: true });
     } catch (err) {
-      throw new Error(`cannot read library directory ${current}: ${(err as Error).message}`);
+      // A missing library is an operator error, not a crash. Throwing here
+      // took the whole service down - a typo in the path meant no broadcast at
+      // all, which is worse than broadcasting the fallback crate with the cause
+      // recorded for ops to see.
+      throw new LibraryUnreadableError(current, (err as Error).message);
     }
     // Sort within each level so the crate order is stable across runs.
     const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name));
@@ -391,7 +408,16 @@ export async function scanLibrary(
     }
   }
 
-  await walk(dir.replace(/[\\/]+$/, ""));
+  let libraryError: string | undefined;
+  try {
+    await walk(dir.replace(/[\\/]+$/, ""));
+  } catch (err) {
+    if (err instanceof LibraryUnreadableError) {
+      libraryError = err.message;
+    } else {
+      throw err;
+    }
+  }
 
   const tracks: DecodedTrack[] = [];
   const failed: Array<{ path: string; error: string }> = [];
@@ -425,7 +451,7 @@ export async function scanLibrary(
     }
   }
 
-  return { tracks, failed };
+  return { tracks, failed, libraryError };
 }
 
 /** Backwards-compatible alias: scanning is now the crate load. */

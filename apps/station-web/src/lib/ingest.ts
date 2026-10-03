@@ -48,6 +48,7 @@ export type IngestEngineStatus = {
     serverTime: string
   } | null
   autopilot: { enabled: boolean; vibeTemplateId: string | null; crateSize: number }
+  telemetry: { spectrum: number[] }
   listeners: { current: number; peak24h: number; source: string }
   uptimeSec: number
   serverTime: string

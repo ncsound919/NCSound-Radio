@@ -253,15 +253,24 @@ export class IngestService {
 
   /** Begin polling Icecast and feeding real listener counts to the engine. */
   startStreamPolling(): void {
-    this.icecast.start(
-      () => this.engine.status.state !== "offline",
-      (status) => {
-        const counts = listenerCountsFrom(status);
-        this.engine.setListeners(counts);
-        this.history.record(counts);
-        this.broadcast({ type: "stream.status", at: new Date().toISOString(), status });
-      },
-    );
+    // "Ingest healthy" means audio is actually reaching Liquidsoap, which is
+    // what the harbor's connection state reports. Deriving it from the engine
+    // state string instead meant a poll taken while the engine was starting
+    // claimed the station was off air for a whole interval after it was live.
+    const isIngestHealthy = () => {
+      const harbor = this.engine.harbor;
+      if (harbor) return harbor.status.connected;
+      // No harbor configured (tests, publish:false): fall back to engine state.
+      const s = this.engine.status.state;
+      return s !== "offline" && s !== "error";
+    };
+
+    this.icecast.start(isIngestHealthy, (status) => {
+      const counts = listenerCountsFrom(status);
+      this.engine.setListeners(counts);
+      this.history.record(counts);
+      this.broadcast({ type: "stream.status", at: new Date().toISOString(), status });
+    });
   }
 
   async shutdown(): Promise<void> {

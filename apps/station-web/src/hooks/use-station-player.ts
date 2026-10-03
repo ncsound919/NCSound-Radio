@@ -3,28 +3,26 @@
 /**
  * Shared player state for the whole station UI.
  *
- * Audio side-effects live in the store actions so every consumer (header,
- * player bar, hero CTA) behaves identically:
- *   - play  + previewSynth -> lazily dynamic-import the SynthEngine and start
- *     it (user gesture already happened via the button click)
- *   - pause / previewSynth off -> stop the engine
- *   - volume changes are forwarded to the engine
+ * Play means "play the actual stream". This used to spin up a generative Web
+ * Audio loop in the browser, which meant the Listen button produced music that
+ * was never broadcast - a convincing simulation of a radio station, on the page
+ * whose job is to be one. Audio now goes through a single shared <audio>
+ * element pointed at the Icecast mount.
  *
- * The engine chunk is loaded on demand so SSR never touches WebAudio.
+ * Because the stream is cross-origin, levels cannot be read from it with a Web
+ * Audio analyser. They come from the engine's master-bus spectrum via the API
+ * instead, which is both real and CORS-independent.
  */
 
 import { create } from 'zustand'
-import type { SynthEngine } from '@/lib/synth-engine'
-
-export type StreamQuality = 'hi' | 'mobile'
+import { getStreamSource, type StreamQuality } from '@/lib/stream-source'
 
 const QUALITY_KEY = 'ncsound-stream-quality'
 
 function initialQuality(): StreamQuality {
   if (typeof window === 'undefined') return 'hi'
   try {
-    const v = localStorage.getItem(QUALITY_KEY)
-    return v === 'mobile' ? 'mobile' : 'hi'
+    return localStorage.getItem(QUALITY_KEY) === 'mobile' ? 'mobile' : 'hi'
   } catch {
     return 'hi'
   }
@@ -33,15 +31,15 @@ function initialQuality(): StreamQuality {
 type StationPlayerStore = {
   isPlaying: boolean
   volume: number // 0..1
-  previewSynth: boolean // true = WebAudio studio preview, false = silent UI
-  quality: StreamQuality // hi = Mount 1 (128 kbps AAC), mobile = Mount 2 (64 kbps HE-AAC)
+  quality: StreamQuality // hi = /live.mp3 at 128 kbps, mobile = /mobile.mp3 at 64 kbps
+  /** Set when the stream could not be played, so the UI can say why. */
+  streamError: string | null
   /** Epoch ms when the sleep timer expires; null = no timer armed. */
   sleepEndsAt: number | null
   /** 'timer' = wall-clock countdown, 'end-of-track' = fade when this spin ends. */
   sleepMode: 'timer' | 'end-of-track'
   toggle: () => void
   setVolume: (v: number) => void
-  setPreviewSynth: (b: boolean) => void
   setQuality: (q: StreamQuality) => void
   /** minutes = null cancels the timer. Arms the wall-clock mode. */
   setSleepTimer: (minutes: number | null) => void
@@ -57,147 +55,97 @@ type StationPlayerStore = {
   checkTrackEndSleep: (remainingSec: number) => void
 }
 
-let enginePromise: Promise<SynthEngine | null> | null = null
-let engineInstance: SynthEngine | null = null
-
-function loadEngine(): Promise<SynthEngine | null> {
-  if (typeof window === 'undefined') return Promise.resolve(null)
-  if (!enginePromise) {
-    enginePromise = import('@/lib/synth-engine')
-      .then((m) => {
-        engineInstance = m.getSynthEngine()
-        return engineInstance
-      })
-      .catch(() => {
-        enginePromise = null
-        return null
-      })
-  }
-  return enginePromise
-}
-
-async function startEngine(volume: number): Promise<void> {
-  try {
-    const engine = await loadEngine()
-    if (!engine) return
-    // If a sleep-timer fade was in flight, cancel it so a manual restart
-    // isn't ramped to silence by the queued linear ramp.
-    engine.cancelFade()
-    engine.setVolume(volume)
-    if (!engine.isRunning) engine.start()
-  } catch {
-    /* never break the UI over audio */
-  }
-}
-
-function stopEngine(): void {
-  if (!engineInstance) return // never loaded -> nothing to stop
-  try {
-    engineInstance.stop()
-  } catch {
-    /* ignore */
-  }
-}
-
-function applyVolume(v: number): void {
-  if (!engineInstance) return
-  try {
-    engineInstance.setVolume(v)
-  } catch {
-    /* ignore */
-  }
-}
-
-function syncAudio(isPlaying: boolean, previewSynth: boolean, volume: number): void {
-  if (typeof window === 'undefined') return
-  if (isPlaying && previewSynth) void startEngine(volume)
-  else stopEngine()
-}
-
-/** The loaded engine (or null) — used by the reactive-hero audio-level hook. */
-export function getLoadedEngine(): SynthEngine | null {
-  return engineInstance
-}
-
 const SLEEP_FADE_SEC = 4
 let sleepFading = false
 let sleepBailed = false // set when the listener toggles playback mid-fade
+
+/** Start or stop the real stream to match the desired transport state. */
+function syncAudio(isPlaying: boolean, quality: StreamQuality, volume: number): void {
+  if (typeof window === 'undefined') return
+  const stream = getStreamSource()
+  if (!stream) return
+  if (isPlaying) {
+    void stream.play(quality, volume).catch(() => {
+      // Autoplay rejection or an unreachable mount. The UI shows streamError.
+      useStationPlayer.setState({
+        isPlaying: false,
+        streamError:
+          document.visibilityState === 'hidden'
+            ? 'browser blocked autoplay'
+            : 'could not reach the stream',
+      })
+    })
+  } else {
+    stream.pause()
+  }
+}
 
 /**
  * Shared fade-out-and-stop path for both sleep modes (wall-clock expiry and
  * end-of-track). Idempotent via sleepFading; the listener toggling playback
  * mid-fade (sleepBailed) always wins over the queued stop.
  */
-function beginSleepFade(
-  set: (partial: Partial<StationPlayerStore>) => void,
-  isPlaying: boolean,
-  engine: SynthEngine | null,
-): void {
+function beginSleepFade(set: (partial: Partial<StationPlayerStore>) => void, isPlaying: boolean): void {
   sleepFading = true
   sleepBailed = false
   set({ sleepEndsAt: null, sleepMode: 'timer' })
-  try {
-    if (isPlaying) {
-      engine?.fadeOut(SLEEP_FADE_SEC)
-      // After the fade: hard-stop + flip the UI off — unless the listener
-      // toggled playback mid-fade (then they own the transport).
-      setTimeout(() => {
-        try {
-          if (!sleepBailed) {
-            stopEngine()
-            set({ isPlaying: false })
-          }
-        } finally {
-          sleepFading = false
-        }
-      }, SLEEP_FADE_SEC * 1000 + 150)
-      return
-    }
-  } catch {
-    /* never break the UI over audio */
+
+  const stream = getStreamSource()
+  if (!isPlaying || !stream) {
+    sleepFading = false
+    set({ isPlaying: false })
+    return
   }
-  sleepFading = false
+
+  void stream.fadeOutAndPause(SLEEP_FADE_SEC).then(() => {
+    try {
+      // The listener toggling playback mid-fade means they took over the
+      // transport, so leave the state alone.
+      if (!sleepBailed) set({ isPlaying: false })
+    } finally {
+      sleepFading = false
+    }
+  })
 }
 
 export const useStationPlayer = create<StationPlayerStore>()((set, get) => ({
   isPlaying: false,
   volume: 0.8,
-  previewSynth: true,
-  quality: 'hi',
+  quality: initialQuality(),
+  streamError: null,
   sleepEndsAt: null,
   sleepMode: 'timer',
 
   toggle: () => {
     const next = !get().isPlaying
-    set({ isPlaying: next })
-    // Manual pause cancels a pending sleep timer — expiry path stops the
-    // engine directly and never routes through toggle(), so this is safe.
+    set({ isPlaying: next, streamError: null })
+    // Manual pause cancels a pending sleep timer; the expiry path stops the
+    // stream directly and never routes through toggle(), so this is safe.
     if (!next && (get().sleepEndsAt || get().sleepMode === 'end-of-track')) {
       set({ sleepEndsAt: null, sleepMode: 'timer' })
     }
     // Any manual toggle during the expiry fade means the listener took over.
     if (sleepFading) sleepBailed = true
-    syncAudio(next, get().previewSynth, get().volume)
+    if (!next) getStreamSource()?.cancelFade()
+    syncAudio(next, get().quality, get().volume)
   },
 
   setVolume: (v: number) => {
     const clamped = Math.min(1, Math.max(0, v))
     set({ volume: clamped })
-    applyVolume(clamped)
-  },
-
-  setPreviewSynth: (b: boolean) => {
-    set({ previewSynth: b })
-    syncAudio(get().isPlaying, b, get().volume)
+    getStreamSource()?.setVolume(clamped)
   },
 
   setQuality: (q: StreamQuality) => {
+    const changed = q !== get().quality
     set({ quality: q })
     try {
       localStorage.setItem(QUALITY_KEY, q)
     } catch {
       /* private mode */
     }
+    // Switch mounts without interrupting playback.
+    if (changed && get().isPlaying) syncAudio(true, q, get().volume)
   },
 
   setSleepTimer: (minutes: number | null) => {
@@ -216,7 +164,7 @@ export const useStationPlayer = create<StationPlayerStore>()((set, get) => ({
     if (sleepFading) return
     const endsAt = get().sleepEndsAt
     if (endsAt === null || Date.now() < endsAt) return
-    beginSleepFade(set, get().isPlaying, engineInstance)
+    beginSleepFade(set, get().isPlaying)
   },
 
   checkTrackEndSleep: (remainingSec: number) => {
@@ -225,7 +173,7 @@ export const useStationPlayer = create<StationPlayerStore>()((set, get) => ({
     if (!get().isPlaying) return
     // Trigger just before the spin ends so the fade lands on the gap.
     if (remainingSec > SLEEP_FADE_SEC + 0.5) return
-    beginSleepFade(set, true, engineInstance)
+    beginSleepFade(set, true)
   },
 }))
 

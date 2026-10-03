@@ -374,6 +374,13 @@ export class HeadlessEngine {
         });
         crate = loaded.tracks;
         this.decodeFailures = loaded.failed;
+        // An unreadable library must not take the station off air. Record why
+        // so ops sees it, and let the built-in crate carry the broadcast until
+        // the path is fixed.
+        if (loaded.libraryError) {
+          this.lastError = loaded.libraryError;
+          console.error(`[engine] ${loaded.libraryError}`);
+        }
       }
 
       if (crate.length === 0) {

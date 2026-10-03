@@ -29,7 +29,8 @@ import {
 import { Progress } from '@/components/ui/progress'
 import { Slider } from '@/components/ui/slider'
 import { useNowPlaying } from '@/hooks/use-nowplaying'
-import { useStationPlayer, type StreamQuality } from '@/hooks/use-station-player'
+import { useStationPlayer } from '@/hooks/use-station-player'
+import type { StreamQuality } from '@/lib/stream-source'
 import { shareNowPlaying, shareStation } from '@/lib/share'
 import { cn } from '@/lib/utils'
 
@@ -52,7 +53,7 @@ export function PlayerBar() {
   const { data, lastFetch } = useNowPlaying()
   const isPlaying = useStationPlayer((s) => s.isPlaying)
   const volume = useStationPlayer((s) => s.volume)
-  const previewSynth = useStationPlayer((s) => s.previewSynth)
+  const streamError = useStationPlayer((s) => s.streamError)
   const quality = useStationPlayer((s) => s.quality)
   const setQuality = useStationPlayer((s) => s.setQuality)
   const toggle = useStationPlayer((s) => s.toggle)
@@ -516,13 +517,17 @@ export function PlayerBar() {
           <Share2 className="h-4 w-4" aria-hidden="true" />
         </Button>
 
-        {/* Studio preview badge */}
-        {isPlaying && previewSynth && (
+{/* Playback state. The badge used to read "Studio Preview" and title itself
+            "Synth stand-in — connect AZURACAST_STREAM_URL", which was an
+            accurate description of a lie: the player was generating audio in
+            the browser rather than playing the broadcast. */}
+        {streamError && (
           <span
-            title="Synth stand-in — connect AZURACAST_STREAM_URL for the live feed"
-            className="hidden shrink-0 items-center gap-1 rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary lg:inline-flex"
+            role="status"
+            title={streamError}
+            className="hidden shrink-0 items-center gap-1 rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-destructive lg:inline-flex"
           >
-            Studio Preview
+            Stream error
           </span>
         )}
 

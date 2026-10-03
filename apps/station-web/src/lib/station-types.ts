@@ -75,6 +75,8 @@ export type NowPlayingResponse = {
     autopilot: boolean;
     uptimeSec: number;
     lastError: string | null;
+    /** Real master-bus spectrum bins, 0..255. Empty when the engine is idle. */
+    spectrum: number[];
   };
   /** Icecast mount state, or null when the engine has not polled yet. */
   stream: {
@@ -329,7 +331,9 @@ export type StatsResponse = {
 export type PlayerState = {
   isPlaying: boolean
   volume: number // 0..1
-  previewSynth: boolean // true = WebAudio studio preview, false = silent UI
+  quality: 'hi' | 'mobile' // which Icecast mount is playing
+  /** Set when playback could not start, so the UI can say why. */
+  streamError: string | null
 }
 
 // ---- Listener request line ----

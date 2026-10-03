@@ -31,7 +31,7 @@ function Show([string]$label, $obj) {
 }
 
 Write-Host "== starting ingest =="
-$env:NCSOUND_LIBRARY = Join-Path $root "library"
+$env:NCSOUND_LIBRARY = if ($env:NCSOUND_LIBRARY) { $env:NCSOUND_LIBRARY } else { "C:\Users\User\Music\music" }
 $ingestProc = Start-Process -FilePath "bun" -ArgumentList "run", "src/main.ts" `
   -WorkingDirectory (Join-Path $root "packages\ingest") `
   -RedirectStandardOutput $ingestLog -RedirectStandardError "$ingestLog.err" -PassThru -NoNewWindow

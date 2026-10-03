@@ -2,29 +2,53 @@
 
 /**
  * useAudioLevel — drives a CSS custom property (`--audio-level`, 0..1) on the
- * given element AND on `document.documentElement` (so the player bar, or any
- * other surface, can consume the same beat without a second rAF loop).
+ * given element AND on `document.documentElement` so any surface can react to
+ * the same signal without a second loop.
  *
- * Zero React re-renders: the loop writes the style property directly, rAF is
- * throttled to ~30 fps, and the level is attack-fast / release-slow smoothed
- * so the hero glow breathes with the beat instead of strobing.
+ * The source is the engine's master-bus spectrum, polled with the rest of the
+ * now-playing feed. It cannot come from the stream itself: Icecast sends no
+ * CORS headers, so routing the cross-origin audio through a Web Audio
+ * AnalyserNode produces silence. Measuring at the engine is both real and
+ * unaffected by CORS.
  *
- * No analyser (engine never started / stopped) → the variable decays to 0.
- * Honors prefers-reduced-motion by never installing the loop at all.
+ * Because the spectrum arrives every few seconds rather than every frame, the
+ * value is held and released smoothly instead of snapping, so surfaces breathe
+ * rather than step. Zero React re-renders: the loop writes the style property
+ * directly.
+ *
+ * No data yet (station offline) → the variable decays to rest, which is the
+ * honest state for a station that is not transmitting.
  */
 
-import { useEffect, type RefObject } from 'react'
-import { getLoadedEngine } from '@/hooks/use-station-player'
+import { useEffect, useRef, type RefObject } from 'react'
+import { useNowPlaying } from '@/hooks/use-nowplaying'
 
 const WRITE_EVERY_N_FRAMES = 2
 const RELEASE_SMOOTHING = 0.08
 const ATTACK_SMOOTHING = 0.35
+
+/** Mean of the engine's spectrum bins, 0..1. */
+function levelFromSpectrum(spectrum: number[] | undefined): number | null {
+  if (!spectrum || spectrum.length === 0) return null
+  let sum = 0
+  for (let i = 0; i < spectrum.length; i += 1) sum += spectrum[i]
+  // Bin values are 0..255; scale so a loud master reads near 1.
+  return Math.min(1, sum / spectrum.length / 150)
+}
 
 export function useAudioLevel(
   targetRef: RefObject<HTMLElement | null>,
   cssVar = '--audio-level',
   enabled = true,
 ): void {
+  const { data } = useNowPlaying()
+  const target = levelFromSpectrum(data?.engine?.spectrum)
+
+  // Keep the latest reading in a ref so the rAF loop never closes over a stale
+  // value without re-subscribing on every poll.
+  const targetRef2 = useRef<number | null>(null)
+  targetRef2.current = target
+
   useEffect(() => {
     if (!enabled || typeof window === 'undefined') return
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
@@ -32,46 +56,34 @@ export function useAudioLevel(
     let raf = 0
     let frame = 0
     let level = 0
-    let buffer: Uint8Array<ArrayBuffer> | null = null
-    let missFrames = 0 // frames without an analyser before we zero the var
+
+    const write = (el: HTMLElement | null, value: number) => {
+      const v = value.toFixed(3)
+      el?.style.setProperty(cssVar, v)
+      document.documentElement.style.setProperty(cssVar, v)
+    }
 
     const tick = () => {
       raf = requestAnimationFrame(tick)
       frame += 1
       if (frame % WRITE_EVERY_N_FRAMES !== 0) return
 
-      const analyser = getLoadedEngine()?.getAnalyser() ?? null
       const el = targetRef.current
       if (!el) return
 
-      if (!analyser) {
-        // Engine not running (yet). Poll patiently, decay to rest.
-        missFrames += 1
-        if (missFrames > 20 && level > 0.001) {
+      const wanted = targetRef2.current
+      if (wanted == null) {
+        // Station offline or not reporting a level: decay to rest.
+        if (level > 0.001) {
           level *= 0.85
-          el.style.setProperty(cssVar, level.toFixed(3))
-          document.documentElement.style.setProperty(cssVar, level.toFixed(3))
+          write(el, level)
         }
         return
       }
 
-      missFrames = 0
-      try {
-        if (!buffer || buffer.length !== analyser.frequencyBinCount) {
-          buffer = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount))
-        }
-        analyser.getByteFrequencyData(buffer)
-        let sum = 0
-        for (let i = 0; i < buffer.length; i += 1) sum += buffer[i]
-        const norm = Math.min(1, sum / buffer.length / 140)
-        const smoothing = norm > level ? ATTACK_SMOOTHING : RELEASE_SMOOTHING
-        level += (norm - level) * smoothing
-        const value = level.toFixed(3)
-        el.style.setProperty(cssVar, value)
-        document.documentElement.style.setProperty(cssVar, value)
-      } catch {
-        /* analyser torn down mid-frame — try again next frame */
-      }
+      const smoothing = wanted > level ? ATTACK_SMOOTHING : RELEASE_SMOOTHING
+      level += (wanted - level) * smoothing
+      write(el, level)
     }
 
     raf = requestAnimationFrame(tick)

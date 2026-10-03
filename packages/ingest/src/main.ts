@@ -39,11 +39,16 @@ const service = new IngestService({
 });
 
 service.listen();
-service.startStreamPolling();
 
 console.log(`loading library ${LIBRARY} …`);
 const startedAt = Date.now();
 await service.engine.start();
+
+// Start polling only once the engine is up. Polling earlier produced a first
+// sample taken while the engine was still "offline", which reported onAir:false
+// and made the station page show standby with no stream URL for a whole poll
+// interval after the stream was already live.
+service.startStreamPolling();
 
 console.log(`ingest listening on http://${HOST}:${PORT}`);
 console.log(`  GET  /health   /status   /stream   /crate   /listeners/history`);

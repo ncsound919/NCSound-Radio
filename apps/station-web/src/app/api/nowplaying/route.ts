@@ -137,12 +137,16 @@ export async function GET() {
       cycleSec: onAir?.cycleSec ?? 0,
       // Real, from Icecast. Never derived from a curve.
       listeners: engine.listeners,
-      engine: {
+engine: {
         state: engine.state,
         crateSize: engine.autopilot.crateSize,
         autopilot: engine.autopilot.enabled,
         uptimeSec: engine.uptimeSec,
         lastError: engine.lastError,
+        // Real master-bus spectrum off the engine's analyser. This is the
+        // broadcast signal, so the UI can visualise it instead of animating a
+        // Web Audio stand-in that was never on the air.
+        spectrum: engine.telemetry?.spectrum ?? [],
       },
       stream: stream
         ? {
