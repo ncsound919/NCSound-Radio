@@ -1698,9 +1698,28 @@ export class Mixer {
     const secPerBar = (60 / this.effBpm) * 4;
     const secPerBeat = 60 / this.effBpm;
     const isInstantCut = preset.id === "drop-cut" || preset.id === "quick";
-    const startAt = isInstantCut
-      ? nextBeatTime(this.ctx.currentTime, this.anchor, secPerBeat, 0.02)
-      : nextBarTime(this.ctx.currentTime, this.anchor, secPerBar, 0.04);
+    const now = this.ctx.currentTime;
+    const gridTime = isInstantCut
+      ? nextBeatTime(now, this.anchor, secPerBeat, 0.02)
+      : nextBarTime(now, this.anchor, secPerBar, 0.04);
+
+    /**
+     * Never schedule the incoming deck further out than one bar.
+     *
+     * The grid is anchored to the outgoing track. While that track is playing
+     * the anchor is live and this lands on the next downbeat, which is what
+     * makes transitions feel musical. Once the outgoing track has run past its
+     * end the anchor is stale, and the computed time can land seconds or minutes
+     * in the future: `to.start()` would schedule the incoming deck to begin long
+     * after the station had already gone quiet. next() still returned ok, so the
+     * transition looked successful while the output was silence.
+     *
+     * A finished track has no beat left to align to, so fall back to starting
+     * almost immediately.
+     */
+    const maxWaitSec = secPerBar;
+    const startAt =
+      gridTime > now && gridTime - now <= maxWaitSec ? gridTime : now + 0.02;
 
     for (const p of [from.out.gain, to.out.gain, from.filter.frequency, to.filter.frequency]) {
       p.cancelScheduledValues(0);
