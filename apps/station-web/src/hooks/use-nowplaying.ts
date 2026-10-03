@@ -39,11 +39,29 @@ async function fetchNowPlaying(): Promise<void> {
   inFlight = true
   try {
     const res = await fetch('/api/nowplaying', { cache: 'no-store' })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+    if (!res.ok) {
+      // The 503 body is a real payload, not an error page: it carries
+      // mode:"offline", current:null and an offlineReason. It used to be
+      // discarded here, so the reason was unreachable and every consumer fell
+      // back on stale data. Commit it, and state plainly that it is stale.
+      let reason = `HTTP ${res.status}`
+      try {
+        const body = (await res.json()) as Partial<NowPlayingResponse>
+        if (body.offlineReason) reason = body.offlineReason
+      } catch {
+        /* not a JSON body; the status code is all we have */
+      }
+      commit({ data: null, error: `Off air — ${reason}`, lastFetch: Date.now() })
+      return
+    }
+
     const data = (await res.json()) as NowPlayingResponse
     commit({ data, error: null, lastFetch: Date.now() })
   } catch {
-    commit({ error: 'Feed unavailable — retrying…' })
+    // Network-level failure. data is cleared rather than kept, because a frozen
+    // snapshot presented as current is how a dead station looks alive.
+    commit({ data: null, error: 'Feed unavailable — retrying…', lastFetch: Date.now() })
   } finally {
     inFlight = false
   }

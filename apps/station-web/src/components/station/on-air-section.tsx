@@ -128,9 +128,9 @@ function useNowTicker(intervalMs = 1000): number {
 /** Interpolated on-air progress (0..1) between nowplaying polls. */
 function useInterpolatedProgress(data: NowPlayingResponse | null, lastFetch: number): number {
   const now = useNowTicker()
-  const duration = data?.current.duration ?? 0
+  const duration = data?.current?.duration ?? 0
   if (!data || lastFetch <= 0 || duration <= 0) return 0
-  return Math.min(1, Math.max(0, data.current.progress + (now - lastFetch) / 1000 / duration))
+  return Math.min(1, Math.max(0, (data.current?.progress ?? 0) + (now - lastFetch) / 1000 / duration))
 }
 
 function FadeIn({ children, delay = 0, className }: { children: ReactNode; delay?: number; className?: string }) {
@@ -146,11 +146,35 @@ function FadeIn({ children, delay = 0, className }: { children: ReactNode; delay
   )
 }
 
-function OnAirPill() {
+/**
+ * On-air indicator driven by the reported mode.
+ *
+ * This previously rendered a pulsing red "On Air" unconditionally, including
+ * when the engine was unreachable or had nothing loaded. The API returns a
+ * mode precisely so the badge can tell the truth, and a station that says it is
+ * on air while it is not is the worst thing this component could do.
+ */
+function OnAirPill({ mode }: { mode: NowPlayingResponse['mode'] | undefined }) {
+  if (mode === 'live') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/40 bg-red-500/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-red-400">
+        <span className="animate-onair h-1.5 w-1.5 rounded-full bg-red-500" aria-hidden="true" />
+        On Air
+      </span>
+    )
+  }
+  if (mode === 'standby') {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/40 bg-amber-500/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-amber-400">
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+        Standby
+      </span>
+    )
+  }
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-red-500/40 bg-red-500/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-red-400">
-      <span className="animate-onair h-1.5 w-1.5 rounded-full bg-red-500" aria-hidden="true" />
-      On Air
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-muted px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+      <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground" aria-hidden="true" />
+      Offline
     </span>
   )
 }
@@ -394,7 +418,7 @@ export function OnAirSection({ onNavigate }: { onNavigate: (tab: string) => void
       </div>
 
       <FadeIn delay={0.15}>
-        <RecentlyPlayedCard trackKey={data?.current.track.id} onSelect={setDialogEntry} />
+        <RecentlyPlayedCard trackKey={data?.current?.track?.id} onSelect={setDialogEntry} />
       </FadeIn>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -515,67 +539,32 @@ function Hero({
             <h1 className="text-glow text-3xl font-extrabold tracking-tight sm:text-5xl">
               NCSound Radio
             </h1>
-            <OnAirPill />
+            <OnAirPill mode={data?.mode} />
           </div>
 
           <p className="mt-4 max-w-xl text-lg text-muted-foreground">
             The Carolinas&rsquo; independent hip-hop signal.
           </p>
 
-          {/* Scheduled-show takeover banner */}
-          {data?.liveShow && (
-            <div
-              className={cn(
-                'mt-4 flex max-w-2xl items-start gap-3 rounded-lg border px-4 py-3 backdrop-blur',
-                data.liveShow.kind === 'LIVE'
-                  ? 'border-red-500/40 bg-red-500/10'
-                  : 'border-primary/40 bg-primary/10',
+          {/* Say why the station is dark. Silence with a pulsing "On Air" or an
+              unexplained blank page is how an outage turns into a mystery. */}
+          {data?.mode !== 'live' && (
+            <div className="mt-4 max-w-xl rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+              {data?.mode === 'standby' ? (
+                <>
+                  The engine is up but has nothing loaded. It is not broadcasting
+                  yet.
+                </>
+              ) : data ? (
+                <>The DJ engine is not reachable, so the station is off air.</>
+              ) : (
+                <>Connecting to the station feed…</>
               )}
-              role="status"
-            >
-              <span
-                className={cn(
-                  'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md',
-                  data.liveShow.kind === 'LIVE' ? 'bg-red-500/20' : 'bg-primary/20',
-                )}
-                aria-hidden="true"
-              >
-                <Radio
-                  className={cn(
-                    'h-4 w-4',
-                    data.liveShow.kind === 'LIVE' ? 'text-red-400' : 'text-primary',
-                  )}
-                />
-              </span>
-              <div className="min-w-0">
-                <p className="flex flex-wrap items-center gap-2 text-sm font-bold">
-                  <span
-                    className={cn(
-                      'inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-widest',
-                      data.liveShow.kind === 'LIVE'
-                        ? 'bg-red-500/25 text-red-300'
-                        : 'bg-primary/20 text-primary',
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        'animate-onair h-1.5 w-1.5 rounded-full',
-                        data.liveShow.kind === 'LIVE' ? 'bg-red-400' : 'bg-primary',
-                      )}
-                      aria-hidden="true"
-                    />
-                    {data.liveShow.kind === 'LIVE' ? 'Live now' : 'On air'}
-                  </span>
-                  {data.liveShow.name}
-                  <span className="text-xs font-normal text-muted-foreground">
-                    · {data.liveShow.minutesLeft}m left
-                  </span>
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {data.liveShow.kind === 'LIVE' ? 'with' : 'hosted by'}{' '}
-                  {data.liveShow.host} — {data.liveShow.description}
-                </p>
-              </div>
+              {data?.offlineReason && (
+                <span className="ml-1 font-mono text-xs opacity-80">
+                  ({data.offlineReason})
+                </span>
+              )}
             </div>
           )}
 
@@ -649,9 +638,9 @@ function Hero({
             <span className="animate-pulse h-2 w-2 rounded-full bg-red-500" aria-hidden="true" />
             {npError
               ? 'Listener feed reconnecting…'
-              : data
-                ? `${data.listeners.current.toLocaleString()} tuned in right now`
-                : 'Scanning the dial…'}
+              : data?.listeners.current == null
+                ? 'Listeners unknown — engine unreachable'
+                : `${data.listeners.current.toLocaleString()} tuned in right now`}
           </p>
         </div>
       </section>
@@ -663,31 +652,23 @@ function Hero({
 
 function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; progress: number }) {
   const isPlaying = useStationPlayer((s) => s.isPlaying)
-  const track = data?.current.track
-  const duration = data?.current.duration ?? 0
+  const track = data?.current?.track
+  const duration = data?.current?.duration ?? 0
   const remaining = Math.max(0, duration - progress * duration)
   const hue = track ? hueForRightsId(track.rightsId) : 32
   const kind = data?.element?.kind ?? 'MUSIC'
   const isSponsorSpot = kind === 'AD_SPOT' && Boolean(data?.element?.sponsorName)
   const isHousePromo = kind === 'AD_SPOT' && !data?.element?.sponsorName
   const isTalk = kind === 'TALK'
-  const live = data?.liveShow ?? null
-  const liveIsShow = live?.kind === 'LIVE'
-  const daypartNote = data?.daypart
-    ? data.daypart.clean
-      ? 'Clean Daypart — explicit lyrics held until 7:00 PM ET'
-      : 'Open rotations — full cleared library on the wheel'
-    : 'Deterministic AutoDJ rotation — rights gate enforced'
+  // Use the label the route actually sends. This used to hardcode
+  // "explicit lyrics held until 7:00 PM ET", a daypart policy the station does
+  // not implement and cannot report.
+  const daypartNote = data?.daypart?.label ?? 'Autopilot sequencing — rights gate enforced'
 
   return (
     <Card
       className={cn(
-        'bg-card/70 transition-shadow duration-500',
-        live
-          ? liveIsShow
-            ? 'border-red-500/50 shadow-[0_0_44px_-14px_rgba(239,68,68,0.55)]'
-            : 'border-primary/50 shadow-[0_0_44px_-14px_rgba(245,158,11,0.5)]'
-          : 'border-border/60',
+        'border-border/60 bg-card/70 transition-shadow duration-500',
       )}
     >
       <CardHeader>
@@ -697,44 +678,14 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
             aria-hidden="true"
           />
           Now Playing
-          {live && (
-            <span
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-sm px-1.5 py-0.5 text-[9px] font-extrabold uppercase tracking-[0.2em]',
-                liveIsShow ? 'bg-red-500/20 text-red-300' : 'bg-primary/15 text-primary',
-              )}
-            >
-              <span
-                className={cn(
-                  'animate-onair h-1.5 w-1.5 rounded-full',
-                  liveIsShow ? 'bg-red-400' : 'bg-primary',
-                )}
-                aria-hidden="true"
-              />
-              {liveIsShow ? 'Live show' : 'Playlist hour'}
-            </span>
-          )}
         </CardTitle>
-        <CardDescription>
-          {live
-            ? `${live.name} — ${live.host} · ${live.minutesLeft}m left, then back to the wheel`
-            : daypartNote}
-        </CardDescription>
+        <CardDescription>{daypartNote}</CardDescription>
       </CardHeader>
       <CardContent>
         {!data || !track ? (
           <Skeleton className="aspect-video w-full rounded-lg" aria-label="Loading now playing" />
         ) : (
-          <div
-            className={cn(
-              'relative aspect-video overflow-hidden rounded-lg border',
-              live
-                ? liveIsShow
-                  ? 'border-red-500/50'
-                  : 'border-primary/50'
-                : 'border-border/60',
-            )}
-          >
+          <div className="relative aspect-video overflow-hidden rounded-lg border border-border/60">
             <Image
               src="/station-texture.jpg"
               alt=""
@@ -743,35 +694,6 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
               sizes="(max-width: 1024px) 100vw, 768px"
               className="object-cover"
             />
-            {/* live-show broadcast bug — top strip like a TV station lower-third */}
-            {live && (
-              <div
-                className={cn(
-                  'absolute inset-x-0 top-0 z-10 flex items-center gap-2 bg-gradient-to-b from-background/95 to-transparent px-3 pb-4 pt-2 backdrop-blur-[2px] sm:px-4',
-                  liveIsShow ? 'from-red-950/80' : 'from-amber-950/70',
-                )}
-                role="status"
-              >
-                <span
-                  className={cn(
-                    'animate-onair h-2 w-2 shrink-0 rounded-full',
-                    liveIsShow ? 'bg-red-500' : 'bg-primary',
-                  )}
-                  aria-hidden="true"
-                />
-                <span
-                  className={cn(
-                    'truncate text-[10px] font-extrabold uppercase tracking-[0.22em] sm:text-[11px]',
-                    liveIsShow ? 'text-red-300' : 'text-primary',
-                  )}
-                >
-                  {liveIsShow ? 'Live' : 'Playlist hour'} — {live.name}
-                  <span className="ml-2 hidden font-semibold normal-case tracking-normal text-muted-foreground sm:inline">
-                    {liveIsShow ? 'with' : 'hosted by'} {live.host} · {live.minutesLeft}m left
-                  </span>
-                </span>
-              </div>
-            )}
             {/* element wash: music = deterministic hue · ID = neutral · ad = amber/red */}
             <div
               className="absolute inset-0"
@@ -956,8 +878,8 @@ function UpNextCard({
   data: NowPlayingResponse | null
   onSelect: (entry: QueueEntry) => void
 }) {
-  const duration = data?.current.duration ?? 0
-  const remaining = data?.current.remaining ?? 0
+  const duration = data?.current?.duration ?? 0
+  const remaining = data?.current?.remaining ?? 0
   const toNextPct = duration > 0 ? Math.min(100, Math.max(0, ((duration - remaining) / duration) * 100)) : 0
   const cueing = remaining <= 0
   const elProgress = duration > 0 ? Math.min(1, Math.max(0, (duration - remaining) / duration)) : 0
@@ -969,10 +891,14 @@ function UpNextCard({
           <ListMusic className="h-4 w-4 text-primary" aria-hidden="true" />
           Up Next
         </CardTitle>
-        <CardDescription>AutoDJ program clock — music, IDs, ad breaks</CardDescription>
+        <CardDescription>
+          Autopilot queue. The ring is the current spin&rsquo;s progress, not a
+          music/IDs/ad-break program clock — the station schedules no IDs or ad
+          breaks.
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {/* program-clock ring + countdown — the needle is where the wheel is now */}
+        {/* ring + countdown for the spin in progress */}
         <div className="flex items-center gap-3 rounded-md border border-border/50 bg-background/40 p-3">
           {data && Array.isArray(data.wheel) && data.wheel.length > 0 ? (
             <ProgramClockRing
@@ -1000,9 +926,9 @@ function UpNextCard({
               aria-label="Time until the next element"
             />
             <p className="mt-1.5 truncate text-[10px] text-muted-foreground">
-              {data?.cycleSec
-                ? `Full wheel pass ≈ ${Math.round(data.cycleSec / 60)} min — the needle marks this spin.`
-                : 'Program clock warming up…'}
+              {data?.current
+              ? `This spin is ${Math.round(data.current.progress * 100)}% through · ${fmtTime(remaining)} left`
+              : 'Waiting on the engine…'}
             </p>
           </div>
         </div>
@@ -1221,13 +1147,21 @@ function RecentlyPlayedCard({
 
 // -------------------------------------------------------------- live stats
 
+/**
+ * Stat display that distinguishes "zero" from "not measured".
+ *
+ * The default format was Math.round(n), which silently turns null into 0 - so
+ * a station whose engine was down displayed a confident "0 listeners" instead
+ * of admitting it did not know. An em dash is the honest rendering.
+ */
 function AnimatedStat({
   value,
   format = (n: number) => Math.round(n).toLocaleString(),
 }: {
-  value: number
+  value: number | null
   format?: (n: number) => string
 }) {
+  if (value == null) return <>—</>
   const animated = useCountUp(value)
   return <>{format(animated)}</>
 }
@@ -1237,20 +1171,32 @@ function StatsStrip() {
   const { data: listenerHistory } = useJson<ListenersHistoryResponse>('/api/listeners/history')
   const trend = listenerHistory ? listenerHistory.points.map((p) => p.v) : []
 
+  // Describe the window honestly instead of assuming a full day.
+  const trendLabel = !listenerHistory
+    ? 'connecting…'
+    : listenerHistory.points.length === 0
+      ? 'no samples yet'
+      : listenerHistory.partial
+        ? `${listenerHistory.points.length} sample${listenerHistory.points.length === 1 ? '' : 's'} since ${listenerHistory.recordedSince ? new Date(listenerHistory.recordedSince).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : 'start'}`
+        : 'last 24h'
+
   const tiles = data
     ? [
         {
           icon: Users,
           label: 'Listeners Now',
           value: <AnimatedStat value={data.listeners.current} />,
-          sub: 'listener trend · last 24h',
+          // The series is real Icecast samples and only covers the life of the
+          // ingest process. Labelling a two-point series "last 24h" made a
+          // handful of samples look like a day of measurement.
+          sub: trendLabel,
           spark: true,
         },
         {
           icon: TrendingUp,
-          label: 'Peak 24h',
+          label: 'Peak Recorded',
           value: <AnimatedStat value={data.listeners.peak24h} />,
-          sub: 'evening peak · ~8 PM ET',
+          sub: 'Icecast high-water mark',
           spark: false,
         },
         {
@@ -1301,10 +1247,15 @@ function StatsStrip() {
                     width={220}
                     height={36}
                     className="h-9 w-full"
-                    ariaLabel="Listeners over the last 24 hours"
+                    ariaLabel={`Listener samples: ${trendLabel}`}
                   />
                 ) : (
-                  <Skeleton className="h-9 w-full" />
+                  // A skeleton here was a terminal state: with fewer than two
+                  // real samples the tile shimmered forever, implying data was
+                  // still arriving when in fact none had been recorded yet.
+                  <p className="py-2 text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                    {trendLabel}
+                  </p>
                 )
               ) : null}
               <p className="mt-1 text-[10px] text-muted-foreground">{tile.sub}</p>

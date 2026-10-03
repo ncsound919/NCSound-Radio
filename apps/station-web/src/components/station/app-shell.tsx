@@ -62,7 +62,7 @@ export function AppShell() {
           <div>
             <div className="flex items-center gap-2 font-semibold tracking-tight">
               <Radio className="h-4 w-4 text-primary" />
-              NCSound Radio — NCSound Radio
+              NCSound Radio
             </div>
             <p className="mt-2 text-muted-foreground leading-relaxed">
               The Carolinas&rsquo; independent hip-hop signal. Streaming 24/7 from the

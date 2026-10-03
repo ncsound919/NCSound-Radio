@@ -53,16 +53,45 @@ function useEtClock(): string | null {
   return time
 }
 
-function OnAirBadge({ className }: { className?: string }) {
+/**
+ * Header on-air badge.
+ *
+ * Driven by the reported mode. This rendered an unconditional pulsing red
+ * "On Air" regardless of whether the engine was reachable, which is the single
+ * most misleading thing the page could show during an outage.
+ */
+function OnAirBadge({
+  className,
+  mode,
+}: {
+  className?: string
+  mode: 'live' | 'standby' | 'offline' | undefined
+}) {
+  const live = mode === 'live'
+  const standby = mode === 'standby'
+  const label = live ? 'On Air' : standby ? 'Standby' : 'Offline'
+
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-md border border-red-500/40 bg-red-500/10 px-2 py-1 text-[10px] font-bold uppercase tracking-widest text-red-400',
+        'inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-bold uppercase tracking-widest',
+        live
+          ? 'border-red-500/40 bg-red-500/10 text-red-400'
+          : standby
+            ? 'border-amber-500/40 bg-amber-500/10 text-amber-400'
+            : 'border-border bg-muted text-muted-foreground',
         className
       )}
     >
-      <span className="animate-onair h-1.5 w-1.5 rounded-full bg-red-500" aria-hidden="true" />
-      On Air
+      <span
+        className={cn(
+          'h-1.5 w-1.5 rounded-full',
+          live && 'animate-onair',
+          live ? 'bg-red-500' : standby ? 'bg-amber-500' : 'bg-muted-foreground'
+        )}
+        aria-hidden="true"
+      />
+      {label}
     </span>
   )
 }
@@ -148,7 +177,7 @@ export function StationHeader({
 
         {/* Right cluster */}
         <div className="ml-auto flex items-center gap-2.5">
-          <OnAirBadge />
+          <OnAirBadge mode={data?.mode} />
           <ListenerChip count={listeners} />
           <EtClock className="hidden md:inline" />
 
@@ -232,7 +261,7 @@ export function StationHeader({
                   </ul>
                 </div>
                 <div className="flex items-center justify-between border-t border-border/60 px-3 pb-2">
-                  <OnAirBadge />
+                  <OnAirBadge mode={data?.mode} />
                   <EtClock />
                 </div>
               </div>

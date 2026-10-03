@@ -65,6 +65,61 @@ function ExplicitE() {
   )
 }
 
+/**
+ * Format a measurement that may not have been taken.
+ *
+ * String(null) renders the literal word "null" in a stat tile, and Math.round
+ * (null) renders a confident 0. Both read as data. A dash reads as absence,
+ * which is what it is when the engine is unreachable.
+ */
+function fmtCount(n: number | null | undefined): string {
+  return n == null ? '—' : n.toLocaleString('en-US')
+}
+
+function fmtDuration(sec: number | null | undefined): string {
+  if (sec == null || sec <= 0) return '—'
+  const s = Math.floor(sec)
+  const d = Math.floor(s / 86400)
+  const h = Math.floor((s % 86400) / 3600)
+  const m = Math.floor((s % 3600) / 60)
+  if (d > 0) return `${d}d ${h}h`
+  if (h > 0) return `${h}h ${m}m`
+  return `${m}m ${s % 60}s`
+}
+
+/**
+ * One health row. Green means measured-healthy, red means measured-unhealthy,
+ * and neither is shown for a value nobody has measured.
+ */
+function StatusRow({
+  label,
+  ok,
+  okText,
+  badText,
+}: {
+  label: string
+  ok: boolean
+  okText: string
+  badText: string
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-muted-foreground">{label}</span>
+      <span
+        className={`inline-flex items-center gap-1.5 font-semibold ${
+          ok ? 'text-emerald-400' : 'text-amber-400'
+        }`}
+      >
+        <span
+          className={`h-1.5 w-1.5 rounded-full ${ok ? 'bg-emerald-400' : 'bg-amber-400'}`}
+          aria-hidden
+        />
+        {ok ? okText : badText}
+      </span>
+    </div>
+  )
+}
+
 export function OpsSection() {
   const [stats, setStats] = useState<StatsResponse | null>(null)
   const [submissions, setSubmissions] = useState<SubmissionDTO[]>([])
@@ -313,8 +368,8 @@ export function OpsSection() {
           {/* ---- Stat tiles ---- */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
             {[
-              { label: 'Listeners Now', value: String(stats.listeners.current) },
-              { label: 'Peak 24h', value: String(stats.listeners.peak24h) },
+              { label: 'Listeners Now', value: fmtCount(stats.listeners.current) },
+              { label: 'Peak 24h', value: fmtCount(stats.listeners.peak24h) },
               {
                 label: 'Monthly MRR',
                 value: `$${stats.sponsors.monthlyMRR.toLocaleString('en-US')}`,
@@ -517,7 +572,7 @@ export function OpsSection() {
                 <CardContent className="space-y-2">
                   <p className="text-sm text-muted-foreground">
                     <span className="font-semibold text-foreground">
-                      {stats.listeners.current}
+                      {fmtCount(stats.listeners.current)}
                     </span>{' '}
                     listeners right now
                   </p>
@@ -525,11 +580,12 @@ export function OpsSection() {
                     listeners × 0.058 GB/hr × 24h × 0.15 duty
                   </p>
                   <p className="text-3xl font-extrabold text-primary">
-                    {stats.bandwidth.projectedGBDay}{' '}
+                    {stats.bandwidth.projectedGBDay ?? '—'}{' '}
                     <span className="text-base font-bold text-muted-foreground">GB/day</span>
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    128 kbps AAC · ~58 MB per listener-hour
+                    {stats.stream?.mounts?.[0]?.bitrateKbps ?? stats.bandwidth.kbps} kbps · ~
+                    58 MB per listener-hour
                   </p>
                 </CardContent>
               </Card>
@@ -544,43 +600,56 @@ export function OpsSection() {
                     System status
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-2.5 text-xs">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">
-                      Icecast mount /stream — 128 kbps AAC
-                    </span>
-                    <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-400">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden /> OK
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">AutoDJ rotation</span>
-                    <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-400">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden /> OK
-                    </span>
-                  </div>
+<CardContent className="space-y-2.5 text-xs">
+                  {/* Every row below is read from the engine or Icecast. These
+                      used to be literal emerald "OK" badges plus a fabricated
+                      "99.9% 30d" SLA, which reported health the station had not
+                      measured. A row whose value is unknown says so. */}
+                  <StatusRow
+                    label={
+                      stats.stream?.mounts?.[0]?.mount
+                        ? `Icecast mount ${stats.stream.mounts[0].mount} - ${stats.stream.mounts[0].bitrateKbps} kbps`
+                        : 'Icecast stream'
+                    }
+                    ok={stats.stream?.reachable === true}
+                    okText="ON AIR"
+                    badText={stats.stream?.reachable ? 'OFF AIR' : 'unreachable'}
+                  />
+                  <StatusRow
+                    label="AutoDJ rotation"
+                    ok={stats.engine.reachable && stats.engine.state === 'playing'}
+                    okText={stats.engine.state}
+                    badText={stats.engine.reachable ? stats.engine.state : 'engine unreachable'}
+                  />
+                  <StatusRow
+                    label="Crate loaded"
+                    ok={stats.engine.crateSize > 0}
+                    okText={`${stats.engine.crateSize} tracks`}
+                    badText="empty"
+                  />
                   <div className="flex items-center justify-between gap-2">
                     <span className="inline-flex items-center gap-1 text-muted-foreground">
                       <Lock className="h-3 w-3" aria-hidden /> Rights gate
                     </span>
                     <span className="inline-flex items-center gap-1.5 font-semibold text-amber-400">
                       <span className="h-1.5 w-1.5 rounded-full bg-amber-400" aria-hidden />{' '}
-                      ENFORCED
+                      {stats.library.pendingRights > 0
+                        ? `${stats.library.pendingRights} PENDING`
+                        : 'CLEAR'}
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">Nightly backup → B2</span>
-                    <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-400">
-                      <Clock3 className="h-3 w-3" aria-hidden /> 3:00 AM ET
+                    <span className="text-muted-foreground">Engine uptime</span>
+                    <span className="inline-flex items-center gap-1.5 font-semibold">
+                      <Clock3 className="h-3 w-3" aria-hidden />{' '}
+                      {fmtDuration(stats.engine.uptimeSec)}
                     </span>
                   </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">Uptime monitor</span>
-                    <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-400">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" aria-hidden /> OK ·
-                      99.9% 30d
-                    </span>
-                  </div>
+                  {stats.engine.lastError && (
+                    <div className="rounded-md bg-destructive/10 px-2 py-1.5 font-mono text-[10px] text-destructive">
+                      {stats.engine.lastError}
+                    </div>
+                  )}
                   <Button
                     onClick={() => void runAdSync()}
                     disabled={syncing}

@@ -557,10 +557,23 @@ export function PlayerBar() {
           ))}
         </div>
 
-        {/* LIVE */}
-        <span className="flex shrink-0 items-center gap-1.5" aria-label="Live broadcast">
-          <span className="animate-onair h-2 w-2 rounded-full bg-red-500" aria-hidden="true" />
-          <span className="text-xs font-bold text-red-500">LIVE</span>
+        {/* Broadcast state. This said LIVE unconditionally; it now reflects the
+            reported mode so the transport bar cannot claim a live feed while
+            the engine is down. */}
+        <span className="flex shrink-0 items-center gap-1.5" aria-label="Broadcast state">
+          {data?.mode === 'live' ? (
+            <>
+              <span className="animate-onair h-2 w-2 rounded-full bg-red-500" aria-hidden="true" />
+              <span className="text-xs font-bold text-red-500">LIVE</span>
+            </>
+          ) : (
+            <>
+              <span className="h-2 w-2 rounded-full bg-muted-foreground" aria-hidden="true" />
+              <span className="text-xs font-bold text-muted-foreground">
+                {data?.mode === 'standby' ? 'STANDBY' : 'OFF AIR'}
+              </span>
+            </>
+          )}
         </span>
 
         {/* Up next */}

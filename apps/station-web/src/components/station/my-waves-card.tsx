@@ -24,7 +24,7 @@ export function MyWavesCard() {
   const { data } = useNowPlaying()
   const isPlaying = useStationPlayer((s) => s.isPlaying)
 
-  const currentTrack = data?.current.track
+  const currentTrack = data?.current?.track
   const currentId = currentTrack?.id
   const currentElementKind = data?.element?.kind ?? 'MUSIC'
   const currentRequestedBy = currentId ? (data?.requestedBy?.[currentId] ?? []) : []

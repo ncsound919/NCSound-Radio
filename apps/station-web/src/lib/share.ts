@@ -2,7 +2,7 @@
 
 import type { ShareResult } from '@/lib/station-types'
 
-export const STATION_NAME = 'NCSound Radio — NCSound Radio'
+export const STATION_NAME = 'NCSound Radio'
 export const STATION_URL = 'https://ncsound.fm'
 
 /**

@@ -35,6 +35,17 @@ export type {
   WheelSlice,
 } from "@ncsound/station-core";
 
+/**
+ * Live broadcast view of the station.
+ *
+ * `current` is nullable because the engine can be reachable and still have
+ * nothing loaded (standby), and can be entirely absent (offline). Every
+ * consumer must handle null: an earlier version of this file declared it
+ * non-null, so `data?.current.track` typechecked and then threw at runtime.
+ *
+ * `listeners.current` is nullable too. When the engine is unreachable the count
+ * is unknown, and unknown must render as a dash rather than 0.
+ */
 export type NowPlayingResponse = {
   station: StationIdentity & { bitrateKbps: number }
   current: {
@@ -44,30 +55,86 @@ export type NowPlayingResponse = {
     duration: number;
     remaining: number;
     progress: number;
-  };
+  } | null;
   element: import("@ncsound/station-core").NowPlayingElement;
   daypart: Daypart;
+  /** Always null until a scheduled show is actually taken into account. */
   liveShow: LiveShowInfo | null;
   next: QueueEntry[];
   heat: Record<string, number>;
   requestedBy: Record<string, string[]>;
+  /** Program-clock slices. A single MUSIC slice while autopilot is running. */
   wheel: WheelSlice[];
   cycleIndex: number;
   cycleSec: number;
-  listeners: ListenerCounts;
-  /** Always "live" once the engine is feeding Icecast; "simulated" only in offline demo mode. */
-  mode: "simulated" | "live";
+  listeners: { current: number | null; peak24h: number | null; source: string };
+  /** Headless engine state, as reported by the ingest service. */
+  engine: {
+    state: string;
+    crateSize: number;
+    autopilot: boolean;
+    uptimeSec: number;
+    lastError: string | null;
+  };
+  /** Icecast mount state, or null when the engine has not polled yet. */
+  stream: {
+    onAir: boolean;
+    encoder: string;
+    icecast: string | null;
+    mounts: Array<{
+      mount: string;
+      bitrateKbps: number;
+      listeners: number;
+      peakListeners24h: number;
+      lastMetadata: string | null;
+    }>;
+  } | null;
+  /**
+   * live      - engine playing and Icecast has the stream
+   * standby   - engine reachable, nothing loaded yet
+   * offline   - engine not reachable; arrives with HTTP 503
+   */
+  mode: "live" | "standby" | "offline";
   /** Real public mount URL, or null when nothing is encoded. */
   streamUrl: string | null;
+  /** Present on the 503 response so the UI can say why. */
+  offlineReason?: string;
+  serverTime: string;
+};
+
+/** The 503 body, returned when the DJ engine cannot be reached. */
+export type NowPlayingOfflineResponse = {
+  station: StationIdentity & { bitrateKbps: number };
+  current: null;
+  next: [];
+  heat: Record<string, number>;
+  requestedBy: Record<string, string[]>;
+  wheel: [];
+  cycleIndex: 0;
+  cycleSec: 0;
+  listeners: { current: null; peak24h: null };
+  mode: "offline";
+  offlineReason: string;
+  streamUrl: null;
   serverTime: string;
 };
 
 export type ListenerPoint = { t: string; v: number }
 
+/**
+ * Real Icecast samples. The series only covers the life of the ingest process,
+ * so `partial` is true unless a full 24 hours has been recorded. Render a short
+ * series as short; do not stretch two points across a "last 24h" axis.
+ */
 export type ListenersHistoryResponse = {
   points: ListenerPoint[]
-  current: number
-  peak24h: number
+  current: number | null
+  peak24h: number | null
+  partial: boolean
+  /** When recording began. Null when nothing has been sampled yet. */
+  recordedSince: string | null
+  /** Set on the 503 response. */
+  reason?: string
   timezone: string
   serverTime: string
 }
@@ -225,9 +292,36 @@ export type StatsResponse = {
   submissions: { total: number; pending: number; inReview: number; approved: number; declined: number }
   sponsors: { active: number; monthlyMRR: number }
   adplays: { last7Days: number; today: number }
-  listeners: { current: number; peak24h: number }
-  bandwidth: { kbps: number; gbPerListenerHour: number; projectedGBDay: number }
-  uptime: { streamOk: boolean; daysSinceLaunch: number }
+  /**
+   * Real Icecast counts. current/peak24h are null when the engine is
+   * unreachable, and source is "unavailable" in that case. Do not substitute a
+   * number: an ops dashboard that always shows a figure cannot be trusted to
+   * report a real one.
+   */
+  listeners: { current: number | null; peak24h: number | null; source: "icecast" | "unavailable" }
+  engine: {
+    reachable: boolean
+    state: string
+    crateSize: number
+    autopilot: boolean
+    uptimeSec: number
+    lastError: string | null
+  }
+  stream: {
+    reachable: boolean
+    onAir: boolean
+    encoder: string
+    icecast: string | null
+    mounts: Array<{
+      mount: string
+      bitrateKbps: number
+      listeners: number
+      peakListeners24h: number
+      lastMetadata: string | null
+    }>
+  }
+  bandwidth: { kbps: number; gbPerListenerHour: number; projectedGBDay: number | null }
+  uptime: { streamOk: boolean; icecastReachable: boolean; daysSinceLaunch: number }
   checklist: string[]
 }
 
