@@ -70,7 +70,6 @@ const AD_SPOT_SEC = 30
 /** Rotation wheel cache TTL (nowplaying is polled every ~10s). */
 const ROTATION_CACHE_TTL_MS = 60_000
 /** Listener-simulation bucket: fresh deterministic noise every 15s. */
-const LISTENER_BUCKET_MS = 15_000
 /** Station launch date for uptime math: 2025-10-01. */
 export const LAUNCH_UTC_MS = Date.UTC(2025, 9, 1)
 
@@ -489,25 +488,6 @@ export function stringHash(input: string): number {
     h = (Math.imul(h, 33) ^ input.charCodeAt(i)) >>> 0
   }
   return h >>> 0
-}
-
-/**
- * Simulated listeners: circadian curve over the ET day (evening peak)
- * plus deterministic noise that changes every 15 seconds. Never < 3.
- */
-export function computeListeners(nowMs: number = Date.now()): {
-  current: number
-  peak24h: number
-} {
-  const wc = etWallClock(new Date(nowMs))
-  const hoursIntoDay = wc.minuteOfDay / 60
-  // Peak around 20:00 ET (sin argument = pi/2 when hoursIntoDay - 14 = 6).
-  const circadian = 26 * Math.sin((2 * Math.PI * (hoursIntoDay - 14)) / 24)
-  const bucket = Math.floor(nowMs / LISTENER_BUCKET_MS)
-  const noise = ((hash32(bucket) % 1000) / 1000 - 0.5) * 12
-  const current = Math.max(3, Math.round(38 + circadian + noise))
-  const peak24h = Math.round(current * 2) + 44
-  return { current, peak24h }
 }
 
 // ---------------------------------------------------------------------------

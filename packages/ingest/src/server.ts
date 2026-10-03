@@ -16,7 +16,7 @@ import { djCommandSchema } from "@ncsound/station-core/schema";
 import { HeadlessEngine, type HeadlessEngineOptions } from "@ncsound/dj-engine";
 
 import { CommandDispatcher, type DispatcherDeps } from "./commands";
-import { IcecastPoller, listenerCountsFrom, type IcecastOptions } from "./icecast";
+import { IcecastPoller, ListenerHistory, listenerCountsFrom, type IcecastOptions } from "./icecast";
 
 export type IngestOptions = {
   port?: number;
@@ -34,6 +34,7 @@ export class IngestService {
   readonly engine: HeadlessEngine;
   readonly dispatcher: CommandDispatcher;
   readonly icecast: IcecastPoller;
+  readonly history = new ListenerHistory();
 
   private readonly opts: IngestOptions;
   private readonly sockets = new Set<Bun.ServerWebSocket<undefined>>();
@@ -120,6 +121,8 @@ export class IngestService {
           });
         case "/stream":
           return this.json(this.icecast.status);
+        case "/listeners/history":
+          return this.json(this.history.all());
         case "/crate":
           return this.json(
             this.engine.library.map((t) => ({
@@ -245,7 +248,9 @@ export class IngestService {
     this.icecast.start(
       () => this.engine.status.state !== "offline",
       (status) => {
-        this.engine.setListeners(listenerCountsFrom(status));
+        const counts = listenerCountsFrom(status);
+        this.engine.setListeners(counts);
+        this.history.record(counts);
         this.broadcast({ type: "stream.status", at: new Date().toISOString(), status });
       },
     );

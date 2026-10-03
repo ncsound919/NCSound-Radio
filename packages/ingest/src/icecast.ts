@@ -130,6 +130,38 @@ export function listenerCountsFrom(status: StreamStatus): ListenerCounts {
   return { current, peak24h: peak, source: "icecast" };
 }
 
+export type ListenerSample = {
+  at: string;
+  current: number;
+};
+
+/**
+ * Rolling listener history.
+ *
+ * Samples come from Icecast polls, so they are real. The buffer lives in this
+ * process, which means it resets on restart: the history is "since the service
+ * started", not "since whenever". Persisting it needs a table, and until that
+ * exists an endpoint should say so rather than imply a day of data.
+ */
+export class ListenerHistory {
+  private readonly buf: ListenerSample[] = [];
+
+  constructor(private readonly capacity = 2880) {}
+
+  record(counts: ListenerCounts): void {
+    this.buf.push({ at: new Date().toISOString(), current: counts.current });
+    if (this.buf.length > this.capacity) this.buf.splice(0, this.buf.length - this.capacity);
+  }
+
+  /** Oldest-first samples. `startedAt` is when this process began recording. */
+  all(): { startedAt: string | null; samples: ListenerSample[] } {
+    return {
+      startedAt: this.buf[0]?.at ?? null,
+      samples: [...this.buf],
+    };
+  }
+}
+
 export class IcecastPoller {
   private readonly opts: Required<Omit<IcecastOptions, never>>;
   private timer: ReturnType<typeof setInterval> | null = null;

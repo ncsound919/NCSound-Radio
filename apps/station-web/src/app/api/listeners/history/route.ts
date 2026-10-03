@@ -1,35 +1,58 @@
 import { NextResponse } from 'next/server'
-import { computeListeners, STATION_TIMEZONE } from '@/lib/broadcast'
+import { ingestListenerHistory, ingestStatus } from '@/lib/ingest'
+import { STATION_TIMEZONE } from '@/lib/broadcast'
 
 export const dynamic = 'force-dynamic'
 
 /**
  * GET /api/listeners/history
- * Listener-count trend for the past 24 hours, sampled every 15 minutes from
- * the same deterministic circadian simulation that drives /api/nowplaying
- * (no DB writes needed — the simulation is a pure function of the clock).
- * 97 points including "now". Cheap to poll.
+ *
+ * Real Icecast samples, buffered by the ingest service as it polls.
+ *
+ * The buffer lives in the service process, so it only covers the current run.
+ * `startedAt` is reported honestly and `partial` is true whenever the series is
+ * shorter than the 24 hours the UI would like. A chart drawn from the old
+ * circadian simulation looked complete and was entirely invented; a short real
+ * series that says it is short is more useful than a long fake one.
  */
 export async function GET() {
   try {
     const nowMs = Date.now()
-    const STEP_MS = 15 * 60 * 1000
     const WINDOW_MS = 24 * 60 * 60 * 1000
 
-    const points: Array<{ t: string; v: number }> = []
-    for (let t = nowMs - WINDOW_MS; t <= nowMs; t += STEP_MS) {
-      points.push({
-        t: new Date(t).toISOString(),
-        v: computeListeners(t).current,
-      })
+    const [history, status] = await Promise.all([ingestListenerHistory(), ingestStatus()])
+
+    if (!history) {
+      return NextResponse.json(
+        {
+          points: [],
+          current: null,
+          peak24h: null,
+          partial: true,
+          reason: 'DJ engine is not reachable',
+          timezone: STATION_TIMEZONE,
+          serverTime: new Date(nowMs).toISOString(),
+        },
+        { status: 503 },
+      )
     }
 
-    const listeners = computeListeners(nowMs)
+    const cutoff = nowMs - WINDOW_MS
+    const points = history.samples
+      .filter((s) => Date.parse(s.at) >= cutoff)
+      .map((s) => ({ t: s.at, v: s.current }))
+
+    const listeners = status?.engine.listeners ?? null
+    const spanMs =
+      points.length > 1 ? Date.parse(points[points.length - 1].t) - Date.parse(points[0].t) : 0
 
     return NextResponse.json({
       points,
-      current: listeners.current,
-      peak24h: listeners.peak24h,
+      current: listeners?.current ?? null,
+      peak24h: listeners?.peak24h ?? null,
+      // The service has been up for less than a day, or restarted.
+      partial: spanMs < WINDOW_MS,
+      recordedSince: history.startedAt,
       timezone: STATION_TIMEZONE,
       serverTime: new Date(nowMs).toISOString(),
     })

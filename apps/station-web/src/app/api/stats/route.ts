@@ -1,10 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import {
-  computeListeners,
-  etDayStartUTC,
-  LAUNCH_UTC_MS,
-} from '@/lib/broadcast'
+import { ingestStatus } from '@/lib/ingest'
+import { etDayStartUTC, LAUNCH_UTC_MS } from '@/lib/broadcast'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,7 +10,7 @@ const DAY_MS = 86_400_000
 /** The 8-item pre-launch checklist from the station operations plan. */
 const CHECKLIST = [
   'Supported OS confirmed and a KVM VPS chosen',
-  'AzuraCast installed, HTTPS working on desktop and mobile',
+  'Liquidsoap + Icecast installed, HTTPS working on desktop and mobile',
   'Rights gate enforced: no track uploaded without a CLEARED record',
   'Fallback playlist tested by stopping the main one',
   'Backups restored once as a test',
@@ -42,6 +39,7 @@ export async function GET() {
       mrrAgg,
       adLast7Days,
       adToday,
+      live,
     ] = await Promise.all([
       db.track.count({ where: { playlist: { not: 'Imaging' } } }),
       // Cleared library = music tracks whose rights record is CLEARED. Counting
@@ -65,6 +63,7 @@ export async function GET() {
         where: { playedAt: { gte: new Date(nowMs - 7 * DAY_MS) } },
       }),
       db.adPlay.count({ where: { playedAt: { gte: etDayStartUTC(new Date(nowMs)) } } }),
+      ingestStatus(),
     ])
 
     const clearedIdSet = new Set(clearedRightsIds.map((r) => r.id))
@@ -84,11 +83,21 @@ export async function GET() {
 
     const totalHours =
       Math.round(((durationAgg._sum.durationSec ?? 0) / 3600) * 10) / 10
-    const listeners = computeListeners(nowMs)
 
-    // 128kbps ≈ 0.058 GB per listener-hour; 0.15 = avg daily listening factor.
+    // Listeners come from Icecast via the engine. When ingest is unreachable
+    // they are reported as null rather than filled in from a curve: a stats
+    // tile that always shows a number is worse than one that shows a dash.
+    const engine = live?.engine ?? null
+    const stream = live?.stream ?? null
+    const listeners =
+      engine?.listeners ?? { current: null, peak24h: null, source: 'unavailable' as const }
+    const streamOk = stream?.onAir === true
+
+    // 128kbps ~= 0.058 GB per listener-hour; 0.15 = avg daily listening factor.
     const projectedGBDay =
-      Math.round(0.058 * listeners.current * 24 * 0.15 * 10) / 10
+      listeners.current == null
+        ? null
+        : Math.round(0.058 * listeners.current * 24 * 0.15 * 10) / 10
 
     return NextResponse.json({
       library: {
@@ -114,13 +123,34 @@ export async function GET() {
         today: adToday,
       },
       listeners,
+      engine: engine
+        ? {
+            reachable: true,
+            state: engine.state,
+            crateSize: engine.autopilot.crateSize,
+            autopilot: engine.autopilot.enabled,
+            uptimeSec: engine.uptimeSec,
+            lastError: engine.lastError,
+          }
+        : { reachable: false, state: 'unreachable', crateSize: 0, autopilot: false, uptimeSec: 0, lastError: 'DJ engine is not reachable' },
+      stream: stream
+        ? {
+            reachable: stream.icecast.reachable,
+            onAir: stream.onAir,
+            encoder: stream.encoder,
+            icecast: stream.icecast.version,
+            mounts: stream.mounts,
+          }
+        : { reachable: false, onAir: false, encoder: 'none', icecast: null, mounts: [] },
       bandwidth: {
         kbps: 128,
         gbPerListenerHour: 0.058,
         projectedGBDay,
       },
       uptime: {
-        streamOk: true,
+        // Real, from Icecast's own view of whether a source is connected.
+        streamOk,
+        icecastReachable: stream?.icecast.reachable ?? false,
         daysSinceLaunch: Math.max(0, Math.floor((nowMs - LAUNCH_UTC_MS) / DAY_MS)),
       },
       checklist: [...CHECKLIST],
