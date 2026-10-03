@@ -33,9 +33,10 @@ Icecast run in WSL, and WSL2 forwards localhost, so the engine ingests over
 `127.0.0.1:8008`.
 
 ```sh
-wsl -u root sh infra/station-up.sh     # liquidsoap + icecast (WSL)
-bun packages/dj-engine/src/run.ts      # the engine (this shell)
-wsl -u root sh infra/station-verify.sh # prove the chain streams
+wsl -u root sh infra/station-up.sh            # liquidsoap + icecast (WSL)
+sh infra/make-test-library.sh                 # optional: a real library to play
+LIBRARY_DIR=./library bun packages/dj-engine/src/run.ts
+wsl -u root sh infra/station-verify.sh        # prove the chain streams
 ```
 
 Liquidsoap logs the moment the engine takes over:
@@ -44,6 +45,48 @@ Liquidsoap logs the moment the engine takes over:
 [input.harbor:3] Decoding...
 [switch:3] Switch to input.harbor with transition.
 ```
+
+Without `LIBRARY_DIR` the engine falls back to the built-in synthesised studio
+crate, so a fresh checkout still broadcasts.
+
+### The engine plays a set, not one loop
+
+`Autopilot` supplies the runtime around the existing, unit-tested musical
+logic in `engine/marathon.ts`: it decodes a library, follows a party-template
+energy curve, arms the next track onto the idle deck before the current one
+ends, and runs the transition `marathon.ts` picked.
+
+`ingest/decode.ts` shells out to ffmpeg for raw s16le and builds the
+`AudioBuffer` itself, because `node-web-audio-api` has no file loading and
+uneven `decodeAudioData` container coverage. Every decoded track goes through
+the real analyser, so BPM and key are measured rather than read from the
+filename.
+
+### Three bugs worth knowing about
+
+**A transition could leave the station silent.** `next()` started the incoming
+deck at `cuePoints.intro ?? firstBeat`. On short files the beat detector places
+`firstBeat` late, so the deck began seconds from its end and the station went
+to digital silence right after the change. The offset is now clamped to leave at
+least 15 seconds and at least half the track.
+
+**The crossfader was not the culprit.** It sits at -1 (hard left) after
+`play()`, which looks like it should mute the incoming deck, but `runTransition`
+writes absolute deck gains, so the fader never gates the output. Measured
+directly: 0 of 15 one-second windows silent across a transition. Worth knowing
+before someone "fixes" the wrong thing.
+
+**Peaks were clipping at 1.0 and above.** Summing two decks through the
+limiter still exceeded full scale. A headroom guard now trims the master when
+sustained peaks appear and releases slowly. Verified: peaks bounded at -1.8 dBFS
+or below, with trim moving between 0 and -3 dB.
+
+### Per-track ICY titles
+
+The ICY title is a request header, so it cannot change on an already-open
+upload. `input.harbor` is therefore configured with `icy=true` and the publisher
+interleaves 255-byte audio blocks with metadata blocks, which is how a track
+change reaches a connected listener.
 
 ### How the engine runs without an audio device
 

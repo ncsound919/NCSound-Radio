@@ -36,6 +36,9 @@ dj_source = input.harbor(
   password="REDACTED",
   buffer=12.,
   timeout=15.,
+  # The engine interleaves ICY metadata blocks into the upload, which is how a
+  # track change reaches listeners on an already-open connection.
+  icy=true,
   on_disconnect=fun () -> log.info("DJ engine disconnected"),
 )
 

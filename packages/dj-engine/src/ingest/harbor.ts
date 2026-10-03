@@ -45,6 +45,34 @@ function wavHeader(sampleRate: number, channels: number): Uint8Array {
   return new Uint8Array(buf);
 }
 
+function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+
+/**
+ * ICY interleaving.
+ *
+ * With `icy=true` the harbor expects the client to break the audio into
+ * 255-byte blocks and follow each one with a length byte plus an optional
+ * metadata block. That is how a track change reaches listeners on a connection
+ * that is already open, which a request header cannot do.
+ */
+const ICY_BLOCK = 255;
+
+function icyMetadata(title: string): Uint8Array {
+  const payload = new TextEncoder().encode(`StreamTitle='${title.replace(/'/g, "")}';`);
+  // One length byte holds multiples of 16.
+  const blocks = Math.ceil(payload.length / 16);
+  const len = Math.min(255, blocks * 16);
+  const out = new Uint8Array(1 + len);
+  out[0] = len;
+  out.set(payload.subarray(0, len), 1);
+  return out;
+}
+
 export type HarborOptions = {
   host?: string;
   port?: number;
@@ -69,8 +97,12 @@ export type HarborState = {
 
 export class HarborPublisher {
   private readonly opts: Required<Omit<HarborOptions, "streamTitle">>;
-  private readonly streamTitle: string;
+  private streamTitle: string;
   private controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+  /** Carries sub-block-boundary bytes between writes; ICY blocks are 255 bytes. */
+  private carry: Uint8Array = new Uint8Array(0);
+  /** Title to re-send at the next ICY block boundary. */
+  private pendingMetadata: Uint8Array | null = null;
   private state: HarborState = {
     connected: false,
     bytesSent: 0,
@@ -99,6 +131,19 @@ export class HarborPublisher {
 
   get title(): string {
     return this.streamTitle;
+  }
+
+  /**
+   * Update the local title only.
+   *
+   * The ICY title travels as a request header, so it cannot change on an
+   * already-open upload. Mid-track updates go out over the Liquidsoap control
+   * channel instead (see LiquidsoapControl).
+   */
+  setTitle(title: string): void {
+    this.streamTitle = title;
+    // Queue for the next block boundary so listeners pick it up live.
+    this.pendingMetadata = icyMetadata(title);
   }
 
   /**
@@ -159,7 +204,7 @@ export class HarborPublisher {
     }
   }
 
-  /** Enqueue one PCM chunk. Interleaves and converts to s16le first. */
+  /** Enqueue one PCM chunk, framed as WAV then split into ICY blocks. */
   write(
     channels: Float32Array[],
     frames: number,
@@ -168,9 +213,28 @@ export class HarborPublisher {
     if (!this.controller || !this.state.connected) return false;
     try {
       const pcm = interleave(channels, frames);
-      this.controller.enqueue(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength));
-      this.state.bytesSent += pcm.byteLength;
+      const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
+      this.state.bytesSent += bytes.length;
       this.state.framesSent += frames;
+
+      // Prepend anything left over from the previous call.
+      const input =
+        this.carry.length > 0 ? concat(this.carry, bytes) : bytes;
+
+      let offset = 0;
+      while (input.length - offset >= ICY_BLOCK) {
+        const block = input.subarray(offset, offset + ICY_BLOCK);
+        offset += ICY_BLOCK;
+        this.controller.enqueue(block);
+        // Metadata rides in the first block after it changes.
+        if (this.pendingMetadata) {
+          this.controller.enqueue(this.pendingMetadata);
+          this.pendingMetadata = null;
+        } else {
+          this.controller.enqueue(new Uint8Array([0]));
+        }
+      }
+      this.carry = input.slice(offset);
       return true;
     } catch (err) {
       this.state.lastError = err instanceof Error ? err.message : String(err);

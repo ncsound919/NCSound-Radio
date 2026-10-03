@@ -1698,7 +1698,17 @@ export class Mixer {
     to.filter.frequency.setValueAtTime(10, this.ctx.currentTime);
     from.out.gain.setValueAtTime(from.channelVolume, this.ctx.currentTime);
 
-    const startOffset = to.analysis.cuePoints?.intro ?? to.analysis.firstBeat;
+    // Start on the intro cue, but never so late that the incoming track has
+    // almost nothing left to play. The beat detector can place firstBeat late on
+    // short files, which previously left the deck silent right after a
+    // transition.
+    const MIN_REMAINING_SEC = 15;
+    const MIN_REMAINING_FRACTION = 0.5;
+    const dur = to.buffer?.duration ?? 0;
+    const rawOffset = to.analysis.cuePoints?.intro ?? to.analysis.firstBeat;
+    const maxOffset = Math.max(0, Math.min(dur - MIN_REMAINING_SEC, dur * (1 - MIN_REMAINING_FRACTION)));
+    const startOffset = Number.isFinite(rawOffset) ? Math.min(Math.max(0, rawOffset), Math.max(0, maxOffset)) : 0;
+
     to.start(startAt, startOffset, rate);
     const end = runTransition(from, to, preset, startAt, secPerBar);
     from.stop(end + 0.1);

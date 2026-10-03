@@ -23,6 +23,7 @@ Thumbs.db
 # runtime / generated
 apps/station-web/dev.pid
 apps/station-web/.zscripts/dev.pid
+library/
 analysis/.venv/
 analysis/.cache/
 analysis/out/
