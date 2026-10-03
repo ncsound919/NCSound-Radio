@@ -13,8 +13,9 @@ import { defineConfig } from "vite";
  */
 const INGEST_TARGET = process.env.INGEST_URL ?? "http://127.0.0.1:8099";
 
-// 3000 is Grafana's port on this machine, and strictPort would abort the boot.
-const CONSOLE_PORT = Number(process.env.DJ_CONSOLE_PORT ?? 3101);
+// Not 3000 (Grafana) and not 3101 (an unrelated project on this machine holds
+// it, and strictPort would abort the boot). Override with DJ_CONSOLE_PORT.
+const CONSOLE_PORT = Number(process.env.DJ_CONSOLE_PORT ?? 3102);
 
 const proxyToIngest = {
   "/ingest": {

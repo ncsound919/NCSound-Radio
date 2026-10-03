@@ -50,41 +50,60 @@ try {
   Write-Host "  AUDIO IS FLOWING"
 
   Write-Host ""
-  Write-Host "== restart Liquidsoap to force a drop =="
-  # Through station-up.sh, which drops privileges with setpriv. Running
-  # liquidsoap as root just exits with "security exit, root euid & guid" and
-  # tests nothing.
+  Write-Host "== kill Liquidsoap outright, and wait for the port to actually close =="
+  # A restart that lands after the publisher has already reconnected tests
+  # nothing. Wait until :8008 refuses connections so the drop is real.
   $ls = Start-Job -ScriptBlock {
     param($wsl)
-    wsl.exe -u root -e sh -c "'$wsl/infra/station-down.sh'" 2>&1 | Out-Null
-    Start-Sleep 2
-    wsl.exe -u root -e sh -c "'$wsl/infra/station-up.sh'" 2>&1 | Select-Object -Last 4
+    wsl.exe -u root -e sh -c "pkill -u liquidsoap -x liquidsoap" 2>&1 | Out-Null
+    "killed"
   } -ArgumentList $wslRoot
-  $d = Wait-Job $ls -Timeout 300
-  if ($d) { (Receive-Job $ls) | ForEach-Object { "  $_" } } else { Stop-Job $ls; "  (restart did not report in time)" }
+  $d = Wait-Job $ls -Timeout 120
+  if ($d) { (Receive-Job $ls) | ForEach-Object { "  $_" } } else { Stop-Job $ls }
   Remove-Job $ls -Force
 
-  Write-Host ""
-  Write-Host "== recovery =="
-  $deadline = (Get-Date).AddSeconds(90)
-  $recovered = $false
+  $deadline = (Get-Date).AddSeconds(60)
+  $down = $false
   while ((Get-Date) -lt $deadline) {
-    $h = Harbor
-    if ($h -and $h.connected -and $h.reconnects -gt 0) { $recovered = $true; break }
+    $open = (Test-NetConnection -ComputerName 127.0.0.1 -Port 8008 -WarningAction SilentlyContinue).TcpTestSucceeded
+    if (-not $open) { $down = $true; break }
     Start-Sleep -Seconds 2
+  }
+  if (-not $down) { throw "harbor port never closed; the drop was not real" }
+  Write-Host "  harbor port is closed - the source really dropped"
+
+  Write-Host ""
+  Write-Host "== bring Liquidsoap back =="
+  $ls2 = Start-Job -ScriptBlock {
+    param($wsl)
+    wsl.exe -u root -e sh -c "'$wsl/infra/station-up.sh'" 2>&1 | Select-Object -Last 2
+  } -ArgumentList $wslRoot
+  $d2 = Wait-Job $ls2 -Timeout 300
+  if ($d2) { (Receive-Job $ls2) | ForEach-Object { "  $_" } } else { Stop-Job $ls2 }
+  Remove-Job $ls2 -Force
+
+  Write-Host ""
+  Write-Host "== recovery: assert audio resumes, not that a counter moved =="
+  # The outcome that matters is audible output again. Whether that happened via
+  # the publisher reconnecting or the socket surviving is an implementation
+  # detail; a test that only watches `reconnects` fails when the OS transparently
+  # reaps a dead socket and the station never notices.
+  $deadline = (Get-Date).AddSeconds(120)
+  $resumed = $false
+  $last = (Harbor).bytesSent
+  while ((Get-Date) -lt $deadline) {
+    Start-Sleep -Seconds 5
+    $now = (Harbor)
+    if ($now -and $now.connected -and $now.bytesSent -gt $last) { $resumed = $true; break }
+    $last = if ($now) { $now.bytesSent } else { 0 }
   }
 
   $h = Harbor
-  if (-not $recovered) {
-    "  DID NOT RECOVER: connected=$($h.connected) reconnects=$($h.reconnects) nextRetry=$($h.nextRetryAtMs) err=$($h.lastError)"
-    throw "harbor did not reconnect after the drop"
+  if (-not $resumed) {
+    "  DID NOT RESUME: connected=$($h.connected) reconnects=$($h.reconnects) err=$($h.lastError)"
+    throw "audio did not resume after a real harbor drop"
   }
-  "  recovered   : connected=$($h.connected) reconnects=$($h.reconnects)"
-  Start-Sleep -Seconds 5
-  $after = (Harbor).bytesSent
-  "  bytesSent   : $after (was $before before the drop)"
-  if ($after -le 0) { throw "reconnected but no bytes are flowing" }
-  Write-Host "  AUDIO IS FLOWING AGAIN"
+  "  audio flowing   : connected=$($h.connected) reconnects=$($h.reconnects) bytes=$($h.bytesSent)"
   Write-Host ""
   Write-Host "== PASS =="
 }

@@ -1,3 +1,5 @@
+import http from "node:http";
+
 /**
  * Publishes rendered PCM into Liquidsoap's input.harbor endpoint.
  *
@@ -61,6 +63,10 @@ function concat(a: Uint8Array, b: Uint8Array): Uint8Array {
  * that is already open, which a request header cannot do.
  */
 const ICY_BLOCK = 255;
+/** Metadata block cadence advertised to the harbor, in bytes. */
+const ICY_METADATA_INTERVAL = 16000;
+/** Length byte meaning "no metadata follows" in the ICY framing. */
+const ICY_NO_METADATA = new Uint8Array([0]);
 
 function icyMetadata(title: string): Uint8Array {
   const payload = new TextEncoder().encode(`StreamTitle='${title.replace(/'/g, "")}';`);
@@ -104,22 +110,27 @@ const RETRY_BASE_MS = 500;
 const RETRY_MAX_MS = 15_000;
 
 /**
- * Backlog thresholds for deciding the peer has stopped reading.
+ * Backlog threshold for deciding the peer has stopped reading.
  *
- * Enqueueing into a ReadableStream never fails when the socket is gone - it
- * just buffers. So a dropped Liquidsoap source was invisible: connected stayed
- * true, bytesSent kept climbing, and the station was silent with nothing in the
- * status to say so. A backlog that will not drain is the only in-process signal
- * that the consumer is gone.
+ * Writing to a socket never fails when the peer is gone - Node buffers it. So a
+ * dropped Liquidsoap source was invisible: connected stayed true, bytesSent kept
+ * climbing, and the station was silent with nothing in the status to say so. An
+ * outbound backlog that keeps growing is the only in-process signal that
+ * nothing is reading.
+ *
+ * Two megabytes is about eleven seconds of 48 kHz stereo s16, which is far more
+ * than a healthy link should ever queue.
  */
-const LINGER_BYTES = 512 * 1024;
-const BACKLOG_DEAD_BYTES = -192 * 1024;
+const BACKLOG_DEAD_BYTES = 2 * 1024 * 1024;
 const BACKLOG_DEAD_MS = 3000;
+/** A connection must last this long before it counts as a stable recovery. */
+const STABLE_CONNECTION_MS = 10_000;
 
 export class HarborPublisher {
   private readonly opts: Required<Omit<HarborOptions, "streamTitle">>;
   private streamTitle: string;
-  private controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+  /** The live upload request. A raw socket, so no HTTP body timeout applies. */
+  private req: http.ClientRequest | null = null;
   /** Carries sub-block-boundary bytes between writes; ICY blocks are 255 bytes. */
   private carry: Uint8Array = new Uint8Array(0);
   /** Title to re-send at the next ICY block boundary. */
@@ -142,6 +153,8 @@ export class HarborPublisher {
   private hasConnectedOnce = false;
   /** When the outbound backlog first exceeded the dead threshold. */
   private backlogSince: number | null = null;
+  /** Epoch ms the current connection was accepted, for stability checks. */
+  private connectedAtMs = 0;
   /** Title to use on the next connect attempt. */
   private lastTitle: string;
 
@@ -185,94 +198,125 @@ export class HarborPublisher {
    * has accepted the connection, which for harbor means it has registered a
    * source. Blocks until it starts buffering.
    */
-  async connect(signal?: AbortSignal, title?: string): Promise<void> {
+  /**
+   * Open the streaming upload over a raw socket.
+   *
+   * This deliberately does not use fetch(). A streaming request body under
+   * undici carries a 300-second body timeout, and the upload was being torn
+   * down at almost exactly that mark every time - Liquidsoap logging
+   * `Failure("hd")` about five minutes after each connect, then falling back to
+   * silence. A broadcast is expected to run for hours, so the transport needs
+   * no timeout at all, which means owning the socket.
+   */
+  async connect(_signal?: AbortSignal, title?: string): Promise<void> {
     const { host, port, mount, user, password, channels, sampleRate } = this.opts;
     const auth = Buffer.from(`${user}:${password}`).toString("base64");
-    const url = `http://${host}:${port}/${mount.replace(/^\//, "")}`;
     if (title) this.lastTitle = title;
     const streamTitle = title ?? this.streamTitle;
 
     this.state.lastError = null;
     this.state.endedByServer = false;
 
-    const body = new ReadableStream<Uint8Array>(
-      {
-        start: (controller) => {
-          this.controller = controller;
+    await new Promise<void>((resolve, reject) => {
+      const req = http.request(
+        {
+          host,
+          port,
+          path: `/${mount.replace(/^\//, "")}`,
+          method: "POST",
+          headers: {
+            Authorization: `Basic ${auth}`,
+            "Content-Type": "audio/wav",
+            "Icy-MetaData": "1",
+            "icy-metaint": String(ICY_METADATA_INTERVAL),
+            "icy-name": streamTitle,
+            // Streaming upload: no declared length.
+            "Transfer-Encoding": "chunked",
+          },
         },
-        cancel: () => {
-          // The consumer went away. Undetected, this left the publisher
-          // enqueueing into a stream nobody was reading.
-          this.state.endedByServer = true;
-          this.teardown();
-          this.scheduleRetry();
+        // Harbor answers as soon as it has registered the source, so the
+        // response is not the end of the conversation.
+        (res) => {
+          const status = res.statusCode ?? 0;
+          res.resume();
+          if (status < 200 || status >= 300) {
+            this.state.connected = false;
+            this.state.lastError = `harbor responded ${status}`;
+            req.destroy();
+            reject(new Error(`harbor responded ${status}`));
+            return;
+          }
+          this.onConnectAccepted(streamTitle, sampleRate, channels);
+          resolve();
         },
-      },
-      {
-        /**
-         * Byte-accounted queuing so desiredSize is a real backlog measurement.
-         * At 48 kHz stereo s16 this is roughly a second of audio, which is the
-         * most lag a live stream should ever accumulate.
-         */
-        highWaterMark: LINGER_BYTES,
-        size: (chunk) => chunk.byteLength,
-      },
-    );
+      );
 
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        body,
-        // @ts-expect-error duplex is required by undici for streaming bodies
-        duplex: "half",
-        headers: {
-          Authorization: `Basic ${auth}`,
-          "Content-Type": "audio/wav",
-          "Icy-MetaData": "1",
-          "icy-metaint": "16000",
-          "icy-name": streamTitle,
-        },
-        signal,
+      // No idle timeout: this connection is supposed to stay open for days.
+      req.setTimeout(0);
+      req.setNoDelay(true);
+
+      req.on("error", (err) => {
+        const message = err instanceof Error ? err.message : String(err);
+        // A destroy we initiated is not a failure to report.
+        if (!this.state.connected) return;
+        this.state.connected = false;
+        this.state.lastError = message;
+        this.scheduleRetry();
       });
 
-      if (!res.ok) {
-        throw new Error(`harbor responded ${res.status} ${res.statusText}`);
-      }
+      // The server closing the socket is the drop this whole class of bug is
+      // about, so it must trigger recovery rather than pass unnoticed.
+      req.on("close", () => {
+        if (!this.state.connected || this.closedByUs) return;
+        this.state.connected = false;
+        this.state.lastError ??= "harbor closed the connection";
+        this.teardown();
+        this.scheduleRetry();
+      });
 
-      // Streaming WAV: one header, then bare frames.
-      this.controller?.enqueue(wavHeader(sampleRate, channels));
-
-      this.state.connected = true;
-      this.state.connectedAt = new Date().toISOString();
-      this.state.bytesSent = 0;
-      this.state.framesSent = 0;
-      // Count this as a reconnect only if a previous connection existed, so the
-      // number means "times we recovered" rather than "times we started".
-      if (this.hasConnectedOnce) this.state.reconnects += 1;
-      this.hasConnectedOnce = true;
-      // A successful connect resets the backoff, so a transient blip costs one
-      // retry rather than locking the station into 15-second attempts.
-      this.retryDelayMs = RETRY_BASE_MS;
-      this.state.nextRetryAtMs = null;
-      this.closedByUs = false;
-      this.backlogSince = null;
-    } catch (err) {
-      this.state.connected = false;
-      this.state.lastError = err instanceof Error ? err.message : String(err);
-      this.controller = null;
-      this.scheduleRetry();
-      throw err;
-    }
+      this.req = req;
+      // Send the request head and keep the body open. req.end() here would
+      // finish the upload immediately, so the WAV header written after the
+      // response arrived went nowhere and Liquidsoap saw an empty body.
+      req.flushHeaders();
+    });
   }
 
-  /**
-   * Re-open the upload after a drop, with exponential backoff.
-   *
-   * Without this, one closed socket ended the broadcast permanently: the engine
-   * kept reporting "playing", Icecast kept its last buffered audio, and the
-   * station went silent with nothing in the status to say so. A radio station
-   * that cannot recover from a dropped ingest connection is not really on air.
-   */
+  /** The server accepted the upload: mark live and prime the stream. */
+  private onConnectAccepted(title: string, sampleRate: number, channels: number): void {
+    this.state.connected = true;
+    this.state.connectedAt = new Date().toISOString();
+    this.state.bytesSent = 0;
+    this.state.framesSent = 0;
+    /**
+     * A new connection is a new WAV stream, so the partial ICY block from the
+     * previous one must be dropped. Carrying it over prepended stale bytes to
+     * the fresh header, which Liquidsoap rejected as "Packet corrupt" /
+     * Failure("hd") and then stopped feeding.
+     */
+    this.carry = new Uint8Array(0);
+    this.pendingMetadata = icyMetadata(title);
+    // Count this as a reconnect only if a previous connection existed, so the
+    // number means "times we recovered" rather than "times we started".
+    if (this.hasConnectedOnce) this.state.reconnects += 1;
+    this.hasConnectedOnce = true;
+    // A successful connect resets the backoff, so a transient blip costs one
+    // retry rather than locking the station into 15-second attempts. Only a
+    // connection that actually held counts: resetting on every accept turned a
+    // connect-then-immediately-drop loop into a 2-per-second reconnect storm
+    // that hammered Liquidsoap instead of recovering.
+    if (Date.now() - this.connectedAtMs > STABLE_CONNECTION_MS) {
+      this.retryDelayMs = RETRY_BASE_MS;
+    }
+    this.connectedAtMs = Date.now();
+    this.state.nextRetryAtMs = null;
+    this.closedByUs = false;
+    this.backlogSince = null;
+
+    // Streaming WAV: one header, then bare frames.
+    this.req?.write(Buffer.from(wavHeader(sampleRate, channels)));
+  }
+
   private scheduleRetry(): void {
     if (this.closedByUs) return;
     if (this.retryTimer) return;
@@ -301,7 +345,7 @@ export class HarborPublisher {
     frames: number,
     interleave: (c: Float32Array[], f: number) => Int16Array,
   ): boolean {
-    if (!this.controller || !this.state.connected) return false;
+    if (!this.req || !this.state.connected) return false;
     try {
       /**
        * Liveness check before writing.
@@ -311,14 +355,14 @@ export class HarborPublisher {
        * backoff re-open it, rather than buffering audio into the void while
        * reporting a healthy connection.
        */
-      const desired = this.controller.desiredSize;
-      if (desired !== null && desired < BACKLOG_DEAD_BYTES) {
+      const desired = this.req.writableLength;
+      if (desired > BACKLOG_DEAD_BYTES) {
         const now = Date.now();
         this.backlogSince ??= now;
         if (now - this.backlogSince >= BACKLOG_DEAD_MS) {
           this.state.lastError =
             `no reader for ${Math.round((now - this.backlogSince) / 1000)}s ` +
-            `(backlog ${Math.round(-desired / 1024)} KiB): treating the upload as dropped`;
+            `(backlog ${Math.round(desired / 1024)} KiB): treating the upload as dropped`;
           this.teardown();
           this.scheduleRetry();
           return false;
@@ -340,13 +384,13 @@ export class HarborPublisher {
       while (input.length - offset >= ICY_BLOCK) {
         const block = input.subarray(offset, offset + ICY_BLOCK);
         offset += ICY_BLOCK;
-        this.controller.enqueue(block);
+        this.req.write(block);
         // Metadata rides in the first block after it changes.
         if (this.pendingMetadata) {
-          this.controller.enqueue(this.pendingMetadata);
+          this.req.write(this.pendingMetadata);
           this.pendingMetadata = null;
         } else {
-          this.controller.enqueue(new Uint8Array([0]));
+          this.req.write(ICY_NO_METADATA);
         }
       }
       this.carry = input.slice(offset);
@@ -365,11 +409,11 @@ export class HarborPublisher {
   /** Close the current upload without arming a reconnect. */
   private teardown(): void {
     try {
-      this.controller?.close();
+      this.req?.destroy();
     } catch {
-      /* already closed or errored */
+      /* already destroyed */
     }
-    this.controller = null;
+    this.req = null;
     this.state.connected = false;
   }
 
