@@ -105,6 +105,10 @@ export class Autopilot {
   private timer: ReturnType<typeof setInterval> | null = null;
   /** True while a track is being decoded for the next deck. */
   private arming = false;
+  /** Last handover refusal, so it is logged once rather than every tick. */
+  private lastRefusal: string | null = null;
+  /** Guards the stop-recovery path against re-entering itself. */
+  private recovering = false;
 
   constructor(mixer: Mixer, opts: AutopilotOptions = {}) {
     this.mixer = mixer;
@@ -178,10 +182,25 @@ respectRotation: opts.respectRotation ?? true,
   }
 
   /** Periodic check, exposed so tests can drive it without a timer. */
-  tick(): void {
+tick(): void {
     if (!this.enabled || !this.playing) return;
+
     const info = this.mixer.info();
-    if (!info) return;
+    if (!info) {
+      /**
+       * The mixer has no audible deck. info() returns null whenever
+       * mixer.playing is false, and this used to be a bare `return`, so the
+       * moment playback stopped - normally the outgoing track reaching its end -
+       * autopilot stopped doing anything at all. Nothing was armed, no
+       * transition was attempted, and no warning was printed: the station simply
+       * broadcast silence while reporting itself as playing.
+       *
+       * Recover instead. If a deck still holds a track, restart it; otherwise
+       * treat this as the end of the current track and arm a successor.
+       */
+      this.recoverFromStoppedMixer();
+      return;
+    }
     const remaining = info.remaining;
 
 if (!this.playing.next) {
@@ -202,12 +221,13 @@ if (!this.playing.next) {
       return;
     }
 
-    if (remaining <= this.opts.cueAheadSec) {
+if (remaining <= this.opts.cueAheadSec) {
       const plan = this.playing.plan;
       const incoming = this.playing.next;
       if (plan && incoming) {
         const res = this.mixer.next(plan.preset);
         if (res.ok) {
+          this.lastRefusal = null;
           this.recentPresets.push(plan.preset.id);
           this.recentPresets = this.recentPresets.slice(-6);
           this.history.push(this.playing.track.id);
@@ -218,8 +238,70 @@ if (!this.playing.next) {
             plan: null,
           };
           this.onTrackChange?.(incoming, plan);
+        } else {
+          /**
+           * The handover was refused. Previously ignored, so tick() called next()
+           * every second, got the same refusal, and said nothing - the outgoing
+           * track ran to its end and the station went quiet with a full log.
+           * Report it once, not every tick, or it floods.
+           */
+          if (this.lastRefusal !== res.reason) {
+            this.lastRefusal = res.reason;
+            console.warn(
+              `[autopilot] transition into "${incoming.title}" refused: ${res.reason} ` +
+                `(preset=${plan.preset.id}, remaining=${remaining.toFixed(1)}s)`,
+            );
+          }
         }
       }
+    }
+  }
+
+  /**
+   * Get the station audible again after the mixer stopped.
+   *
+   * Restarting the loaded track is deliberately the first move: it needs no
+   * decode, it makes info() meaningful again so the normal arm-and-transition
+   * path resumes on the next tick, and a track repeating once is a far smaller
+   * problem than a station that has gone quiet with no way back.
+   */
+  private recoverFromStoppedMixer(): void {
+    if (this.recovering) return;
+    this.recovering = true;
+    try {
+      for (let i = 0; i < 2; i += 1) {
+        const deck = this.mixer.decks[i];
+        if (!deck.buffer) continue;
+
+        const finished = deck.rawOffset() >= deck.buffer.duration - 0.25;
+        deck.seek(0);
+        if (!this.mixer.playing) this.mixer.play();
+
+        console.warn(
+          `[autopilot] the mixer had stopped; ` +
+            (finished
+              ? `"${deck.analysis ? "a finished track" : "a track"}" had run to its end on deck ${i}, restarted it`
+              : `restarted deck ${i}`) +
+            ` so sequencing can resume`,
+        );
+
+        // If it had run out, clear any stale cue so the next tick arms afresh.
+        if (finished && this.playing) {
+          this.playing.next = null;
+          this.playing.plan = null;
+        }
+        return;
+      }
+
+      // Nothing is loaded on either deck: begin again from the top of the crate.
+      const first = this.crate[0];
+      if (!first || !first.buffer) return;
+      console.warn("[autopilot] the mixer stopped with nothing loaded; restarting the crate");
+      this.mixer.loadBuffer(0, first.buffer, first.analysis ?? undefined);
+      this.mixer.play();
+      this.playing = { track: first, startedAtMs: Date.now(), next: null, plan: null };
+    } finally {
+      this.recovering = false;
     }
   }
 
