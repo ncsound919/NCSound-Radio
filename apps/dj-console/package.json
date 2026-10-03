@@ -1,5 +1,5 @@
 {
-  "name": "@wavc/dj-console",
+  "name": "@ncsound/dj-console",
   "private": true,
   "version": "0.0.1",
   "type": "module",
@@ -11,9 +11,9 @@
     "test": "tsx test/analysis.test.ts && tsx test/sync.test.ts && tsx test/sentence.test.ts && tsx test/radio.test.ts && tsx test/radio_advanced.test.ts && tsx test/timePitch.test.ts && tsx test/dj_mixer.test.ts && tsx test/marathon_crate.test.ts && tsx test/midi.test.ts"
   },
   "dependencies": {
-    "@wavc/dj-engine": "workspace:*",
-    "@wavc/scratch-agent": "workspace:*",
-    "@wavc/station-core": "workspace:*"
+    "@ncsound/dj-engine": "workspace:*",
+    "@ncsound/scratch-agent": "workspace:*",
+    "@ncsound/station-core": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.23.15",

@@ -102,7 +102,7 @@ async function shareSpin(kind: string, title: string, artist: string): Promise<v
   } else {
     const result = await shareStation()
     if (result === 'copied') toast.success('Stream link copied — pass it on.')
-    else if (result === 'failed') toast.error('Could not share — copy wavc.fm from the address bar.')
+    else if (result === 'failed') toast.error('Could not share — copy ncsound.fm from the address bar.')
   }
 }
 
@@ -491,7 +491,7 @@ function Hero({
         />
         <Image
           src="/station-hero.jpg"
-          alt="Inside the WAVC 91.3 broadcast studio"
+          alt="Inside the NCSound Radio broadcast studio"
           fill
           priority
           sizes="(max-width: 1280px) 100vw, 1280px"
@@ -513,7 +513,7 @@ function Hero({
               className="animate-float-slow h-10 w-10 rounded-md"
             />
             <h1 className="text-glow text-3xl font-extrabold tracking-tight sm:text-5xl">
-              WAVC 91.3 FM
+              NCSound Radio
             </h1>
             <OnAirPill />
           </div>
@@ -636,7 +636,7 @@ function Hero({
                 if (result === 'copied') {
                   toast.success('Stream link copied — pass it on.')
                 } else if (result === 'failed') {
-                  toast.error('Could not share — copy wavc.fm from the address bar.')
+                  toast.error('Could not share — copy ncsound.fm from the address bar.')
                 }
               }}
             >

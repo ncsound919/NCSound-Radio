@@ -18,7 +18,7 @@ import type { SynthEngine } from '@/lib/synth-engine'
 
 export type StreamQuality = 'hi' | 'mobile'
 
-const QUALITY_KEY = 'wavc-stream-quality'
+const QUALITY_KEY = 'ncsound-stream-quality'
 
 function initialQuality(): StreamQuality {
   if (typeof window === 'undefined') return 'hi'
@@ -232,6 +232,6 @@ export const useStationPlayer = create<StationPlayerStore>()((set, get) => ({
 // Dev/QA handle: lets browser tooling drive the transport directly
 // (e.g. fast-forwarding the sleep timer in E2E checks). Stripped in prod builds.
 if (process.env.NODE_ENV !== 'production' && typeof window !== 'undefined') {
-  ;(window as unknown as { __wavcPlayer?: typeof useStationPlayer }).__wavcPlayer =
+  ;(window as unknown as { __ncsoundPlayer?: typeof useStationPlayer }).__ncsoundPlayer =
     useStationPlayer
 }

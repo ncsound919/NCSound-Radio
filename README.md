@@ -1,4 +1,4 @@
-# WAVC 91.3 — Station Monorepo
+# NCSound Radio — Station Monorepo
 
 An online radio station where **Party DJ Studio is the broadcast controller**: its
 Web Audio engine does the actual mixing, sequencing and transitions, and it runs
@@ -19,7 +19,7 @@ analysis/          (planned) Python: essentia/madmom beat+key, demucs stems.
 infra/
   icecast.xml      Icecast 2.4 config. Two mounts, source auth, admin.
   liquidsoap/
-    wavc.liq       Encoder + ingest + ICY metadata + dead-air fallback.
+    ncsound.liq       Encoder + ingest + ICY metadata + dead-air fallback.
   station-up.sh    Start both daemons (WSL).
   station-down.sh  Stop both.
   station-verify.sh End-to-end proof the chain actually streams.
@@ -77,7 +77,7 @@ the harbor mountpoint, and returned HTTP 200 — while Liquidsoap logged:
 
 Liquidsoap cannot decode raw L16 over HTTP. It needs an encoded container, so
 the publisher now streams WAV (44-byte header with `0xFFFFFFFF` sizes, then
-bare frames) as `audio/wav`. Raise `settings.log.level` to 4 in `wavc.liq` to
+bare frames) as `audio/wav`. Raise `settings.log.level` to 4 in `ncsound.liq` to
 see harbor-level errors; the "Switch to input.harbor" line is at level 3.
 
 ### Getting the audio request actually on the wire
@@ -163,7 +163,7 @@ import it. It has **zero runtime dependencies**; zod is an *optional* peer so
 **4. Control commands are a discriminated union, validated.**
 The DJ app previously accepted five untyped strings (`skip`, `play`, `pause`,
 `jingle`, `vibe`) with no schema, no auth, no idempotency key and no result
-channel. `@wavc/station-core/schema` replaces that with 42 validated commands,
+channel. `@ncsound/station-core/schema` replaces that with 42 validated commands,
 each carrying an envelope id for correlation and replay protection.
 
 ## Known environment gotchas

@@ -538,7 +538,7 @@ export function SubmitSection() {
           <DialogHeader>
             <DialogTitle>Submission &amp; Licensing Agreement — v1.1</DialogTitle>
             <DialogDescription>
-              Read before signing. This governs every track submitted to WAVC 91.3 FM.
+              Read before signing. This governs every track submitted to NCSound Radio.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 text-sm leading-relaxed text-muted-foreground">
@@ -568,14 +568,14 @@ export function SubmitSection() {
             <section>
               <h4 className="font-semibold text-foreground">4. License granted</h4>
               <p>
-                You grant WAVC 91.3 a non-exclusive, royalty-free license to broadcast the track on
-                WAVC 91.3 FM and its directories. You keep full ownership of your work.
+                You grant NCSound Radio a non-exclusive, royalty-free license to broadcast the track on
+                NCSound Radio and its directories. You keep full ownership of your work.
               </p>
             </section>
             <section>
               <h4 className="font-semibold text-foreground">5. Revocation</h4>
               <p>
-                Email <span className="font-mono text-foreground">studio@wavc.fm</span> to pull a
+                Email <span className="font-mono text-foreground">studio@ncsound.fm</span> to pull a
                 track within 7 days of notice; we will remove it from rotation and the library.
               </p>
             </section>

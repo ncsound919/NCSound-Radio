@@ -24,9 +24,9 @@ import type {
 } from '@/lib/station-types'
 import { cn } from '@/lib/utils'
 
-const NAME_KEY = 'wavc-onair-name'
+const NAME_KEY = 'ncsound-onair-name'
 /** Cross-component event: pre-select a track in the picker (from the track dialog). */
-export const REQUEST_PREFILL_EVENT = 'wavc:prefill-request'
+export const REQUEST_PREFILL_EVENT = 'ncsound:prefill-request'
 
 function timeAgo(iso: string, now: number): string {
   const mins = Math.max(0, Math.round((now - new Date(iso).getTime()) / 60000))

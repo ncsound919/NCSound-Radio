@@ -1,5 +1,5 @@
 /**
- * Re-exported from @wavc/station-core.
+ * Re-exported from @ncsound/station-core.
  *
  * These were originally declared here and duplicated again in station-web's
  * station-types.ts. station-core is now the single source of truth so the
@@ -31,6 +31,6 @@ export type {
   TransitionPreset,
   TransitionStyle,
   WaveformBands,
-} from "@wavc/station-core";
+} from "@ncsound/station-core";
 
-export { CROSSFADER_CURVES, PITCH_FADER_RANGES } from "@wavc/station-core";
+export { CROSSFADER_CURVES, PITCH_FADER_RANGES } from "@ncsound/station-core";

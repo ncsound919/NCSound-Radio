@@ -193,7 +193,7 @@ export function SponsorsSection() {
                     ))}
                   </ul>
                   <a
-                    href={`mailto:studio@wavc.fm?subject=${encodeURIComponent(`Sponsorship: ${pkg.name}`)}`}
+                    href={`mailto:studio@ncsound.fm?subject=${encodeURIComponent(`Sponsorship: ${pkg.name}`)}`}
                     className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     aria-label={`Book the ${pkg.name} package`}
                   >

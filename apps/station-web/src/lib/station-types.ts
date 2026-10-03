@@ -1,8 +1,8 @@
 /**
- * WAVC 91.3 "Carolina Waves" — station-web HTTP view models.
+ * NCSound Radio "NCSound Radio" — station-web HTTP view models.
  * ---------------------------------------------------------
  * The cross-process domain contract (tracks, elements, on-air snapshots,
- * engine status, stream status, control commands) lives in @wavc/station-core
+ * engine status, stream status, control commands) lives in @ncsound/station-core
  * and is re-exported here so existing `@/lib/station-types` imports keep
  * working. This file owns only the shapes that are specific to this site's
  * API surface and its database.
@@ -18,7 +18,7 @@ import type {
   StreamEncoder,
   TrackDTO,
   WheelSlice,
-} from "@wavc/station-core";
+} from "@ncsound/station-core";
 
 export type {
   Daypart,
@@ -33,7 +33,7 @@ export type {
   StreamStatus,
   TrackDTO,
   WheelSlice,
-} from "@wavc/station-core";
+} from "@ncsound/station-core";
 
 export type NowPlayingResponse = {
   station: StationIdentity & { bitrateKbps: number }
@@ -45,7 +45,7 @@ export type NowPlayingResponse = {
     remaining: number;
     progress: number;
   };
-  element: import("@wavc/station-core").NowPlayingElement;
+  element: import("@ncsound/station-core").NowPlayingElement;
   daypart: Daypart;
   liveShow: LiveShowInfo | null;
   next: QueueEntry[];

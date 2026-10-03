@@ -15,14 +15,14 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "WAVC 91.3 FM — Carolina Waves | Independent Hip-Hop Radio",
+  title: "NCSound Radio — NCSound Radio | Independent Hip-Hop Radio",
   description:
     "The Carolinas' independent hip-hop signal. Live stream, artist submissions through a rights-cleared gate, weekly show schedule, and sponsor proof-of-play reporting.",
   keywords: [
     "radio station",
     "hip-hop radio",
-    "Carolina Waves",
-    "WAVC",
+    "NCSound Radio",
+    "NCSound Radio",
     "internet radio",
     "artist submissions",
   ],
@@ -31,16 +31,16 @@ export const metadata: Metadata = {
     apple: "/station-logo.png",
   },
   manifest: "/manifest.webmanifest",
-  applicationName: "WAVC 91.3",
+  applicationName: "NCSound Radio",
   appleWebApp: {
     capable: true,
-    title: "WAVC 91.3",
+    title: "NCSound Radio",
     statusBarStyle: "black-translucent",
   },
   openGraph: {
-    title: "WAVC 91.3 FM — Carolina Waves",
+    title: "NCSound Radio — NCSound Radio",
     description: "The Carolinas' independent hip-hop signal. Streaming 24/7.",
-    siteName: "WAVC 91.3 FM",
+    siteName: "NCSound Radio",
     type: "website",
   },
 };

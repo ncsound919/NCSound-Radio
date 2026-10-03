@@ -1,4 +1,4 @@
-// WAVC 91.3 "Carolina Waves" — station data model
+// NCSound Radio "NCSound Radio" — station data model
 
 generator client {
   provider = "prisma-client-js"

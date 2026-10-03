@@ -1,5 +1,5 @@
 {
-  "name": "wavc-station",
+  "name": "ncsound-station",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -12,10 +12,10 @@
     "@types/react-dom": "^19.0.0"
   },
   "scripts": {
-    "typecheck": "bun run --filter='@wavc/*' typecheck",
-    "test": "bun run --filter='@wavc/*' test",
+    "typecheck": "bun run --filter='@ncsound/*' typecheck",
+    "test": "bun run --filter='@ncsound/*' test",
     "test:core": "bun test ./packages/station-core/test/contract.test.ts",
-    "build:web": "bun run --filter='@wavc/station-web' build",
-    "db:generate": "bun run --filter='@wavc/station-web' db:generate"
+    "build:web": "bun run --filter='@ncsound/station-web' build",
+    "db:generate": "bun run --filter='@ncsound/station-web' db:generate"
   }
 }

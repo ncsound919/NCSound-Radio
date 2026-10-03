@@ -1,11 +1,11 @@
 #!/bin/sh
-# WAVC 91.3 - start Icecast + Liquidsoap in WSL2.
+# NCSound Radio - start Icecast + Liquidsoap in WSL2.
 #
 #   sh infra/station-up.sh          # start both
 #   sh infra/station-down.sh        # stop both
 #
 # Liquidsoap encodes and ingests; Icecast serves the public mounts. The DJ
-# engine pushes audio into Liquidsoap on :8008 (see infra/liquidsoap/wavc.liq).
+# engine pushes audio into Liquidsoap on :8008 (see infra/liquidsoap/ncsound.liq).
 #
 # Both daemons are detached with setsid so they survive this script, and
 # Liquidsoap gets ~6s to boot its stdlib before we judge it up.
@@ -13,7 +13,7 @@
 set -e
 
 REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
-LIB=/srv/wavc/library
+LIB=/srv/ncsound/library
 ICECAST_CFG=/etc/icecast2/icecast.xml
 
 echo "== preparing paths =="
@@ -46,8 +46,8 @@ pgrep -u icecast2 -x icecast2 > /dev/null \
 echo "   icecast up (pid $(pgrep -u icecast2 -x icecast2 | head -1))"
 
 echo "== validating liquidsoap config =="
-if liquidsoap --check "$REPO_DIR/infra/liquidsoap/wavc.liq" > /tmp/ls-check.log 2>&1; then
-  echo "   wavc.liq ok"
+if liquidsoap --check "$REPO_DIR/infra/liquidsoap/ncsound.liq" > /tmp/ls-check.log 2>&1; then
+  echo "   ncsound.liq ok"
 else
   echo "   liquidsoap config INVALID:"; cat /tmp/ls-check.log; exit 1
 fi
@@ -56,7 +56,7 @@ echo "== starting liquidsoap =="
 pkill -u liquidsoap -x liquidsoap 2>/dev/null || true
 sleep 1
 setsid setpriv --reuid=liquidsoap --regid=liquidsoap --clear-groups \
-  liquidsoap "$REPO_DIR/infra/liquidsoap/wavc.liq" > /tmp/liquidsoap.log 2>&1 < /dev/null &
+  liquidsoap "$REPO_DIR/infra/liquidsoap/ncsound.liq" > /tmp/liquidsoap.log 2>&1 < /dev/null &
 
 # Liquidsoap loads its stdlib and typechecks the script: ~6s.
 i=0

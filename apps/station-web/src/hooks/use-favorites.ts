@@ -20,7 +20,7 @@ export type FavoriteTrack = {
   savedAt: number
 }
 
-const KEY = 'wavc-favorites-v1'
+const KEY = 'ncsound-favorites-v1'
 const MAX = 30
 
 function read(): FavoriteTrack[] {

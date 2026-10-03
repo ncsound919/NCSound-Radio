@@ -256,7 +256,7 @@ export async function GET() {
 
     return NextResponse.json({
       station: {
-        name: settingsMap.get('station_name') ?? 'WAVC 91.3 FM',
+        name: settingsMap.get('station_name') ?? 'NCSound Radio',
         tagline:
           settingsMap.get('tagline') ??
           'The Carolinas\u2019 independent hip-hop signal',

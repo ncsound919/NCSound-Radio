@@ -150,7 +150,7 @@ export function PlayerBar() {
           : 'Stream link copied — pass it on.',
       )
     } else if (result === 'failed') {
-      toast.error('Could not share — copy wavc.fm from the address bar.')
+      toast.error('Could not share — copy ncsound.fm from the address bar.')
     }
   }
 
@@ -162,7 +162,7 @@ export function PlayerBar() {
       navigator.mediaSession.metadata = new MediaMetadata({
         title: track.title,
         artist: track.artist,
-        album: 'WAVC 91.3 FM — Carolina Waves',
+        album: 'NCSound Radio — NCSound Radio',
         artwork: [{ src: '/station-logo.png', sizes: '1024x1024', type: 'image/png' }],
       })
     } catch {
@@ -316,7 +316,7 @@ export function PlayerBar() {
                 Tuning the signal…
               </p>
               <p className="truncate text-xs leading-tight text-muted-foreground">
-                WAVC 91.3 — Carolina Waves
+                NCSound Radio — NCSound Radio
               </p>
             </>
           )}

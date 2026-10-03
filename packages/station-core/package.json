@@ -1,9 +1,9 @@
 {
-  "name": "@wavc/station-core",
+  "name": "@ncsound/station-core",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Single source of truth for the WAVC station broadcast, control and analysis contract. Zero runtime dependencies.",
+  "description": "Single source of truth for the NCSound Radio broadcast, control and analysis contract. Zero runtime dependencies.",
   "exports": {
     ".": "./src/index.ts",
     "./contract": "./src/contract/index.ts",

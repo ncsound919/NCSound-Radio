@@ -42,7 +42,7 @@ export function ShortcutsDialog({
             Station console shortcuts
           </DialogTitle>
           <DialogDescription>
-            Drive WAVC like a board op — no mouse required.
+            Drive NCSound Radio like a board op — no mouse required.
           </DialogDescription>
         </DialogHeader>
         <ul className="space-y-2 text-sm">

@@ -9,7 +9,7 @@
  *   engine (node)  --PCM-->  liquidsoap harbor :8008  -->  Icecast :8000
  */
 
-import type { EngineState, EngineStatus, StreamEncoder } from "@wavc/station-core";
+import type { EngineState, EngineStatus, StreamEncoder } from "@ncsound/station-core";
 
 import { MasterRinger, interleaveToInt16 } from "./audio/index";
 import { Mixer } from "./engine/mixer";
@@ -62,7 +62,7 @@ export class HeadlessEngine {
     });
     this.mixer = new Mixer(this.ringer.context);
     this.harbor = opts.publish === false ? null : new HarborPublisher(opts.harbor);
-    this.title = "WAVC 91.3 Carolina Waves";
+    this.title = "NCSound Radio";
   }
 
   get audioContext(): AudioContext {
@@ -140,7 +140,7 @@ export class HeadlessEngine {
       const spec = BUILTIN_TRACK_SPECS[0];
       const buffer = synthesizeStudioTrack(ctx, spec as never);
       this.mixer.loadBuffer(0, buffer);
-      this.setTitle(`${spec.artist ?? "WAVC"} - ${spec.title ?? "Studio Feed"}`);
+      this.setTitle(`${spec.artist ?? "NCSound Radio"} - ${spec.title ?? "Studio Feed"}`);
       this.mixer.play();
 
       if (this.harbor) {

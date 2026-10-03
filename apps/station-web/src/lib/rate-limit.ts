@@ -7,11 +7,11 @@
 type Bucket = { timestamps: number[] }
 
 const globalForLimiter = globalThis as unknown as {
-  wavcRateBuckets: Map<string, Bucket> | undefined
+  ncsoundRateBuckets: Map<string, Bucket> | undefined
 }
 
 const buckets: Map<string, Bucket> =
-  globalForLimiter.wavcRateBuckets ?? (globalForLimiter.wavcRateBuckets = new Map())
+  globalForLimiter.ncsoundRateBuckets ?? (globalForLimiter.ncsoundRateBuckets = new Map())
 
 /** Best-effort client IP from proxy headers (x-forwarded-for first hop). */
 export function clientIp(req: Request): string {

@@ -1,5 +1,5 @@
 {
-  "name": "@wavc/dj-engine",
+  "name": "@ncsound/dj-engine",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -29,8 +29,8 @@
     "typescript": "^5.6.0"
   },
   "dependencies": {
-    "@wavc/scratch-agent": "workspace:*",
-    "@wavc/station-core": "workspace:*",
+    "@ncsound/scratch-agent": "workspace:*",
+    "@ncsound/station-core": "workspace:*",
     "node-web-audio-api": "^2.1.0"
   }
 }

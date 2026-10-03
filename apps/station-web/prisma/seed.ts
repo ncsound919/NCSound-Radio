@@ -1,4 +1,4 @@
-/* Seed the WAVC 91.3 "Carolina Waves" station database */
+/* Seed the NCSound Radio "NCSound Radio" station database */
 import { PrismaClient } from '@prisma/client'
 
 const db = new PrismaClient()
@@ -39,19 +39,19 @@ const rightsForCore: Array<{
 ]
 
 const imaging: Array<{ id: string; title: string; artist: string; dur: number; playlist: string }> = [
-  { id: 'IMG01', title: 'WAVC Station ID — Wake Up the Carolinas', artist: 'Station Imaging', dur: 12, playlist: 'Imaging' },
-  { id: 'IMG02', title: 'WAVC Station ID — Real Ones Only', artist: 'Station Imaging', dur: 10, playlist: 'Imaging' },
-  { id: 'IMG03', title: 'Legal ID — WAVC 91.3 FM', artist: 'Station Imaging', dur: 8, playlist: 'Imaging' },
+  { id: 'IMG01', title: 'NCSound Station ID — Wake Up the Carolinas', artist: 'Station Imaging', dur: 12, playlist: 'Imaging' },
+  { id: 'IMG02', title: 'NCSound Station ID — Real Ones Only', artist: 'Station Imaging', dur: 10, playlist: 'Imaging' },
+  { id: 'IMG03', title: 'Legal ID — NCSound Radio', artist: 'Station Imaging', dur: 8, playlist: 'Imaging' },
 ]
 
 const talk: Array<{ id: string; title: string; artist: string; dur: number; blurb: string }> = [
-  { id: 'TALK01', title: 'Carolina Waves Spotlight — Fresh Finds', artist: 'WAVC 91.3 Programming', dur: 195, blurb: 'Three-minute spotlight on the newest cleared submissions.' },
-  { id: 'TALK02', title: 'Studio Line Shout-Outs', artist: 'WAVC 91.3 Programming', dur: 150, blurb: 'Reading listener shouts from the studio line and request ledger.' },
-  { id: 'TALK03', title: 'The Week in Carolina Hip-Hop', artist: 'WAVC 91.3 Programming', dur: 225, blurb: 'Shows, releases and open mics across NC/SC — produced segment.' },
+  { id: 'TALK01', title: 'NCSound Radio Spotlight — Fresh Finds', artist: 'NCSound Radio Programming', dur: 195, blurb: 'Three-minute spotlight on the newest cleared submissions.' },
+  { id: 'TALK02', title: 'Studio Line Shout-Outs', artist: 'NCSound Radio Programming', dur: 150, blurb: 'Reading listener shouts from the studio line and request ledger.' },
+  { id: 'TALK03', title: 'The Week in Carolina Hip-Hop', artist: 'NCSound Radio Programming', dur: 225, blurb: 'Shows, releases and open mics across NC/SC — produced segment.' },
 ]
 
 async function main() {
-  console.log('Seeding WAVC 91.3 ...')
+  console.log('Seeding NCSound Radio ...')
 
   // wipe in FK-safe order
   await db.adPlay.deleteMany()
@@ -85,7 +85,7 @@ async function main() {
       id: r.id,
       trackTitle: r.title,
       artistName: r.artist,
-      owner: 'WAVC 91.3 (in-house)',
+      owner: 'NCSound Radio (in-house)',
       sampleStatus: 'CLEARED',
       explicitFlag: false,
       status: 'CLEARED',
@@ -100,7 +100,7 @@ async function main() {
       id: r.id,
       trackTitle: r.title,
       artistName: r.artist,
-      owner: 'WAVC 91.3 (in-house)',
+      owner: 'NCSound Radio (in-house)',
       sampleStatus: 'CLEARED',
       explicitFlag: false,
       status: 'CLEARED',
@@ -277,7 +277,7 @@ async function main() {
   // ---------- Settings ----------
   await db.stationSetting.createMany({
     data: [
-      { key: 'station_name', value: 'WAVC 91.3 FM' },
+      { key: 'station_name', value: 'NCSound Radio' },
       { key: 'tagline', value: 'The Carolinas\u2019 independent hip-hop signal' },
       { key: 'rights_gate', value: 'ENFORCED' },
       { key: 'bitrate_kbps', value: '128' },

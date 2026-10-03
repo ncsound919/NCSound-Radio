@@ -1,5 +1,5 @@
 /**
- * WAVC 91.3 "Carolina Waves" — backend broadcast-engine helpers.
+ * NCSound Radio "NCSound Radio" — backend broadcast-engine helpers.
  * ---------------------------------------------------------------
  * Simulated AutoDJ implementing the station's PROGRAM CLOCK: the "what's on
  * air right now" decision is a pure, deterministic function of the wall clock
@@ -108,8 +108,8 @@ type WheelCache = {
 type ShowCache = { shows: Show[]; fetchedAt: number }
 
 const globalForRotation = globalThis as unknown as {
-  wavcRotationCache: WheelCache | undefined
-  wavcShowCache: ShowCache | undefined
+  ncsoundRotationCache: WheelCache | undefined
+  ncsoundShowCache: ShowCache | undefined
 }
 
 /**
@@ -117,9 +117,9 @@ const globalForRotation = globalThis as unknown as {
  * instead of airing a single canned spot (deterministic pick per slot).
  */
 export const HOUSE_PROMOS: Array<{ title: string; line: string }> = [
-  { title: 'House promo — submit your track', line: 'Artists: send your music through the rights gate at wavc.fm/submit.' },
+  { title: 'House promo — submit your track', line: 'Artists: send your music through the rights gate at ncsound.fm/submit.' },
   { title: 'House promo — the studio line is open', line: 'Text the studio at (910) 555-0191 or join the studio line on the site.' },
-  { title: 'House promo — sponsor this daypart', line: 'Your brand here: daypart sponsorship from $180/mo — sales@wavc.fm.' },
+  { title: 'House promo — sponsor this daypart', line: 'Your brand here: daypart sponsorship from $180/mo — sales@ncsound.fm.' },
 ]
 
 /** Deterministic house-promo variant for a slot instant. */
@@ -249,7 +249,7 @@ export async function getRotationWheel(nowMs: number = Date.now()): Promise<{
   elements: RotationElement[]
   cycleSec: number
 }> {
-  const cached = globalForRotation.wavcRotationCache
+  const cached = globalForRotation.ncsoundRotationCache
   if (
     cached &&
     Array.isArray(cached.elements) &&
@@ -351,7 +351,7 @@ export async function getRotationWheel(nowMs: number = Date.now()): Promise<{
 
   const cycleSec = elements.reduce((acc, e) => acc + e.durSec + TRACK_GAP_SEC, 0)
 
-  globalForRotation.wavcRotationCache = { elements, cycleSec, fetchedAt: Date.now() }
+  globalForRotation.ncsoundRotationCache = { elements, cycleSec, fetchedAt: Date.now() }
   return { elements, cycleSec }
 }
 
@@ -445,7 +445,7 @@ export function getUpNextElements(
 
 /** Cached 30s: one Show-table read per ~3 nowplaying polls. */
 export async function getActiveShow(nowMs: number = Date.now()): Promise<Show | null> {
-  const cached = globalForRotation.wavcShowCache
+  const cached = globalForRotation.ncsoundShowCache
   let shows: Show[]
   if (cached && Array.isArray(cached.shows) && Date.now() - cached.fetchedAt < 30_000) {
     shows = cached.shows
@@ -457,7 +457,7 @@ export async function getActiveShow(nowMs: number = Date.now()): Promise<Show | 
         { startMinute: 'asc' },
       ],
     })
-    globalForRotation.wavcShowCache = { shows, fetchedAt: Date.now() }
+    globalForRotation.ncsoundShowCache = { shows, fetchedAt: Date.now() }
   }
 
   const wc = etWallClock(new Date(nowMs))

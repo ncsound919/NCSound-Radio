@@ -139,7 +139,7 @@ export function ArtistDetailDialog({
               <ListMusic className="mx-auto h-6 w-6 text-muted-foreground/60" aria-hidden="true" />
               <p className="mt-2 text-sm font-medium">Nothing on the ledger yet</p>
               <p className="mx-auto mt-1 max-w-xs text-xs leading-relaxed text-muted-foreground">
-                No cleared tracks by “{data.artist}” have spun on WAVC. Cleared artists appear here
+                No cleared tracks by “{data.artist}” have spun on NCSound Radio. Cleared artists appear here
                 automatically after their first on-air play.
               </p>
             </div>

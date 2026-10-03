@@ -7,7 +7,7 @@ const repoRoot = path.resolve(here, "..", "..");
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  transpilePackages: ["@wavc/station-core"],
+  transpilePackages: ["@ncsound/station-core"],
   turbopack: {
     root: repoRoot,
   },

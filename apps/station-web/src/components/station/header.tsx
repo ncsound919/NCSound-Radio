@@ -106,12 +106,12 @@ export function StationHeader({
         <button
           type="button"
           onClick={() => onTabChange('on-air')}
-          aria-label="WAVC 91.3 — go to On Air"
+          aria-label="NCSound Radio — go to On Air"
           className="flex min-w-0 items-center gap-2.5 rounded-md text-left transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
         >
           <Image
             src="/station-logo.png"
-            alt="WAVC 91.3 station logo"
+            alt="NCSound Radio station logo"
             width={36}
             height={36}
             priority
@@ -119,9 +119,9 @@ export function StationHeader({
           />
           <span className="min-w-0">
             <span className="block truncate text-sm font-bold tracking-tight sm:text-base">
-              WAVC 91.3
+              NCSound Radio
             </span>
-            <span className="block truncate text-xs text-muted-foreground">Carolina Waves</span>
+            <span className="block truncate text-xs text-muted-foreground">NCSound Radio</span>
           </span>
         </button>
 
@@ -172,7 +172,7 @@ export function StationHeader({
               <SheetHeader>
                 <SheetTitle className="flex items-center gap-2">
                   <Radio className="h-4 w-4 text-primary" aria-hidden="true" />
-                  WAVC 91.3
+                  NCSound Radio
                 </SheetTitle>
                 <SheetDescription>Station navigation</SheetDescription>
               </SheetHeader>

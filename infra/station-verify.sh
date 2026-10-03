@@ -1,5 +1,5 @@
 #!/bin/sh
-# WAVC 91.3 - prove the delivery chain actually works.
+# NCSound Radio - prove the delivery chain actually works.
 #
 #   sh infra/station-verify.sh
 #

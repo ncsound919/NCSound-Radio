@@ -2,8 +2,8 @@
 
 import type { ShareResult } from '@/lib/station-types'
 
-export const STATION_NAME = 'WAVC 91.3 FM — Carolina Waves'
-export const STATION_URL = 'https://wavc.fm'
+export const STATION_NAME = 'NCSound Radio — NCSound Radio'
+export const STATION_URL = 'https://ncsound.fm'
 
 /**
  * Share the station via the Web Share API when available (mobile), falling
@@ -39,10 +39,10 @@ export async function shareStation(
  */
 export async function shareNowPlaying(trackTitle: string, artist: string): Promise<ShareResult> {
   if (typeof window === 'undefined') return 'failed'
-  const text = `Now playing on WAVC 91.3 FM: “${trackTitle}” by ${artist}. Tune in:`
+  const text = `Now playing on NCSound Radio: “${trackTitle}” by ${artist}. Tune in:`
   try {
     if (typeof navigator.share === 'function') {
-      await navigator.share({ title: `${trackTitle} — ${artist} · WAVC 91.3 FM`, text, url: STATION_URL })
+      await navigator.share({ title: `${trackTitle} — ${artist} · NCSound Radio`, text, url: STATION_URL })
       return 'shared'
     }
   } catch (err) {

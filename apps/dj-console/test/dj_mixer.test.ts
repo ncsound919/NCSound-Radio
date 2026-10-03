@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { Mixer } from "@wavc/dj-engine/mixer";
-import { BUILTIN_TRACK_SPECS, synthesizeStudioTrack } from "@wavc/dj-engine/synthTracks";
+import { Mixer } from "@ncsound/dj-engine/mixer";
+import { BUILTIN_TRACK_SPECS, synthesizeStudioTrack } from "@ncsound/dj-engine/synthTracks";
 
 // Mock AudioContext for Node.js test environment
 class MockGainNode {

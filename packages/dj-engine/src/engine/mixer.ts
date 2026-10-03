@@ -40,7 +40,7 @@ import {
   runScratchAgent,
   sentenceDirectorFn,
   sourceStart,
-} from "@wavc/scratch-agent";
+} from "@ncsound/scratch-agent";
 import type {
   DirectorFn,
   Placed,
@@ -49,7 +49,7 @@ import type {
   ScratchConfig,
   SliceBank,
   Style,
-} from "@wavc/scratch-agent";
+} from "@ncsound/scratch-agent";
 import type {
   BattleSampleId,
   CrossfaderCurve,

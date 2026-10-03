@@ -1,5 +1,5 @@
 {
-  "name": "@wavc/scratch-agent",
+  "name": "@ncsound/scratch-agent",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -27,7 +27,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@wavc/station-core": "workspace:*"
+    "@ncsound/station-core": "workspace:*"
   },
   "peerDependencies": {
     "react": ">=18"

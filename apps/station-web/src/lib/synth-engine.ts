@@ -1,5 +1,5 @@
 /**
- * SynthEngine — generative "studio preview" loop for the WAVC 91.3 web player.
+ * SynthEngine — generative "studio preview" loop for the NCSound Radio web player.
  *
  * A chill instrumental hip-hop beat at ~88 BPM with swing:
  *   - kick   : sine osc with 150 -> 48 Hz pitch drop, 0.28 s envelope

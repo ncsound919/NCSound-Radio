@@ -1,5 +1,5 @@
 #!/bin/sh
-# WAVC 91.3 - stop the Icecast + Liquidsoap pair.
+# NCSound Radio - stop the Icecast + Liquidsoap pair.
 set -e
 pkill -u liquidsoap -x liquidsoap 2>/dev/null || true
 pkill -u icecast2   -x icecast2   2>/dev/null || true

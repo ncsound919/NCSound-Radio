@@ -7,7 +7,7 @@ import {
   interpolateTransitionBpm,
   nextBarTime,
   pickRate,
-} from "@wavc/dj-engine/sync";
+} from "@ncsound/dj-engine/sync";
 import {
   categorizeTrackAcoustics,
   parseFilenameMetadata,
@@ -22,9 +22,9 @@ import {
   resolveBattleCutAnchor,
   sampleKaiserSinc,
   SCRATCH_PATTERNS,
-} from "@wavc/dj-engine/scratch";
-import { strokeRate } from "@wavc/scratch-agent/scratch/primitives";
-import { CTRL_HZ } from "@wavc/scratch-agent/scratch/curves";
+} from "@ncsound/dj-engine/scratch";
+import { strokeRate } from "@ncsound/scratch-agent/scratch/primitives";
+import { CTRL_HZ } from "@ncsound/scratch-agent/scratch/curves";
 import assert from "node:assert/strict";
 const close = (a: number, b: number, e = 1e-6) => assert.ok(Math.abs(a - b) < e, `${a} !~ ${b}`);
 
@@ -66,7 +66,7 @@ import {
   gridFromBpm,
   runScratchAgent,
   validateDirectorPlan,
-} from "@wavc/scratch-agent";
+} from "@ncsound/scratch-agent";
 
 const sr = 22050;
 const testMono = new Float32Array(sr * 4);
@@ -121,7 +121,7 @@ import {
   pickSmartTransitionPreset,
   scoreNextTrackCandidate,
   sequenceCrateForParty,
-} from "@wavc/dj-engine/marathon";
+} from "@ncsound/dj-engine/marathon";
 
 const curve = [0.4, 0.6, 0.8, 1.0, 0.7];
 close(interpolateEnergyCurve(curve, 0), 0.4);
@@ -215,8 +215,8 @@ assert.ok(
 );
 
 // Verify synthesizeStudioTrack + analyze() detects real BPM and Camelot key directly from PCM without hardcoded overrides
-import { BUILTIN_TRACK_SPECS, synthesizeStudioTrack } from "@wavc/dj-engine/synthTracks";
-import { analyze } from "@wavc/dj-engine/analysis";
+import { BUILTIN_TRACK_SPECS, synthesizeStudioTrack } from "@ncsound/dj-engine/synthTracks";
+import { analyze } from "@ncsound/dj-engine/analysis";
 
 const mockCtx = {
   sampleRate: 22050,

@@ -12,8 +12,8 @@
 
 import { useCallback, useSyncExternalStore } from 'react'
 
-const STORAGE_KEY = 'wavc-ops-pin'
-const CHANGE_EVENT = 'wavc-ops-pin-change'
+const STORAGE_KEY = 'ncsound-ops-pin'
+const CHANGE_EVENT = 'ncsound-ops-pin-change'
 
 function readPin(): string | null {
   try {

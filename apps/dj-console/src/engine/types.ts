@@ -1,6 +1,6 @@
 /**
- * The engine now lives in @wavc/dj-engine; these types come from
- * @wavc/station-core via that package. This file stays so existing
+ * The engine now lives in @ncsound/dj-engine; these types come from
+ * @ncsound/station-core via that package. This file stays so existing
  * `./engine/types` imports in the console keep working.
  */
 
@@ -28,6 +28,6 @@ export type {
   TransitionPreset,
   TransitionStyle,
   WaveformBands,
-} from "@wavc/dj-engine/engine/types";
+} from "@ncsound/dj-engine/engine/types";
 
-export { CROSSFADER_CURVES, PITCH_FADER_RANGES } from "@wavc/dj-engine/engine/types";
+export { CROSSFADER_CURVES, PITCH_FADER_RANGES } from "@ncsound/dj-engine/engine/types";

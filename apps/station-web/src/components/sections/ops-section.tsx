@@ -119,7 +119,7 @@ export function OpsSection() {
   // ---- Pre-launch checklist: read localStorage on mount ----
   useEffect(() => {
     try {
-      const raw = localStorage.getItem('wavc-prelaunch')
+      const raw = localStorage.getItem('ncsound-prelaunch')
       if (raw) {
         const parsed: unknown = JSON.parse(raw)
         if (Array.isArray(parsed)) {
@@ -142,7 +142,7 @@ export function OpsSection() {
       const next = [...prev]
       next[idx] = !next[idx]
       try {
-        localStorage.setItem('wavc-prelaunch', JSON.stringify(next))
+        localStorage.setItem('ncsound-prelaunch', JSON.stringify(next))
       } catch {
         /* storage unavailable — keep in-memory only */
       }

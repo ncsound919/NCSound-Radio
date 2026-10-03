@@ -1,5 +1,5 @@
 #!/bin/sh
-# WAVC 91.3 - run the headless DJ engine.
+# NCSound Radio - run the headless DJ engine.
 #
 #   sh infra/engine-up.sh      # foreground
 #   sh infra/engine-up.sh -d   # detached, logs to /tmp/dj-engine.log

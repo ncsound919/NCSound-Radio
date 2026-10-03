@@ -1,4 +1,4 @@
-# WAVC 91.3 - Liquidsoap 2.2 radio delivery.
+# NCSound Radio - Liquidsoap 2.2 radio delivery.
 #
 # Division of responsibility (see ../README.md):
 #   dj-engine  owns the timeline  - track choice, beat matching, key locks,
@@ -40,7 +40,7 @@ dj_source = input.harbor(
 )
 
 # ---- dead-air insurance -----------------------------------------------
-library = playlist(mode="randomize", "/srv/wavc/library")
+library = playlist(mode="randomize", "/srv/ncsound/library")
 
 radio = fallback(track_sensitive=false, [dj_source, library])
 radio = mksafe(radio)
@@ -56,7 +56,7 @@ def station_title(m) =
   elsif title != "" then
     title
   else
-    "WAVC 91.3 Carolina Waves"
+    "NCSound Radio"
   end
 end
 
@@ -68,10 +68,10 @@ output.icecast(
   user="source",
   password="REDACTED",
   mount="/live.mp3",
-  name="WAVC 91.3 Carolina Waves",
+  name="NCSound Radio",
   description="Independent hip-hop radio",
   genre="Various",
-  url="https://wavc.example",
+  url="https://ncsound.example",
   public=true,
   icy_song=station_title,
   radio,
@@ -84,7 +84,7 @@ output.icecast(
   user="source",
   password="REDACTED",
   mount="/mobile.mp3",
-  name="WAVC 91.3 Carolina Waves (mobile)",
+  name="NCSound Radio (mobile)",
   genre="Various",
   public=true,
   icy_song=station_title,

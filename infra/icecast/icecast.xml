@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <!--
-  WAVC 91.3 - Icecast 2.4 streaming server.
+  NCSound Radio - Icecast 2.4 streaming server.
 
   Two things that cost time to discover, both encoded here:
 
@@ -21,9 +21,9 @@
 -->
 <icecast>
   <location>Localhost</location>
-  <admin>ops@wavc.local</admin>
+  <admin>ops@ncsound.local</admin>
   <!-- Must not be literally "localhost" or Icecast warns and treats it unset. -->
-  <hostname>wavc.local</hostname>
+  <hostname>ncsound.local</hostname>
 
   <listen-socket>
     <port>8000</port>
@@ -55,7 +55,7 @@
     <hidden>0</hidden>
     <max-listener>500</max-listener>
     <queue-size>1048576</queue-size>
-    <stream-name>WAVC 91.3 Carolina Waves</stream-name>
+    <stream-name>NCSound Radio</stream-name>
     <stream-description>Independent hip-hop radio</stream-description>
     <stream-genre>Various</stream-genre>
   </mount>
@@ -67,7 +67,7 @@
     <hidden>0</hidden>
     <max-listener>500</max-listener>
     <queue-size>1048576</queue-size>
-    <stream-name>WAVC 91.3 Carolina Waves (mobile)</stream-name>
+    <stream-name>NCSound Radio (mobile)</stream-name>
     <stream-genre>Various</stream-genre>
   </mount>
 

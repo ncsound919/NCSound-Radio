@@ -62,7 +62,7 @@ export function AppShell() {
           <div>
             <div className="flex items-center gap-2 font-semibold tracking-tight">
               <Radio className="h-4 w-4 text-primary" />
-              WAVC 91.3 FM — Carolina Waves
+              NCSound Radio — NCSound Radio
             </div>
             <p className="mt-2 text-muted-foreground leading-relaxed">
               The Carolinas&rsquo; independent hip-hop signal. Streaming 24/7 from the
@@ -87,7 +87,7 @@ export function AppShell() {
             <ul className="mt-2 space-y-1 text-muted-foreground">
               <li>Directory listing: TuneIn &middot; Radio Browser</li>
               <li>Studio line: (910) 555-0191</li>
-              <li>&copy; {new Date().getFullYear()} WAVC 91.3 FM. All bars reserved.</li>
+              <li>&copy; {new Date().getFullYear()} NCSound Radio. All bars reserved.</li>
             </ul>
           </div>
         </div>

@@ -2,7 +2,7 @@
  * Publishes rendered PCM into Liquidsoap's input.harbor endpoint.
  *
  * Liquidsoap exposes harbor as an Icecast-compatible HTTP source listener
- * (infra/liquidsoap/wavc.liq). We authenticate as source "engine" and hold a
+ * (infra/liquidsoap/ncsound.liq). We authenticate as source "engine" and hold a
  * streaming request open, enqueueing interleaved s16le PCM as it is produced.
  *
  * The upload body must be a ReadableStream passed as `body` with
@@ -90,7 +90,7 @@ export class HarborPublisher {
       channels: opts.channels ?? 2,
       sampleRate: opts.sampleRate ?? 48000,
     };
-    this.streamTitle = opts.streamTitle ?? "WAVC 91.3 Carolina Waves";
+    this.streamTitle = opts.streamTitle ?? "NCSound Radio";
   }
 
   get status(): HarborState {

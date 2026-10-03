@@ -1,5 +1,5 @@
 /**
- * WAVC 91.3 — Ops control-room PIN gate (sandbox-scale auth).
+ * NCSound Radio — Ops control-room PIN gate (sandbox-scale auth).
  * ------------------------------------------------------------
  * Mutating ops routes (submission review, rights gate decisions, ad sync)
  * require the station PIN in the `x-ops-pin` header. The PIN lives in the
