@@ -7,10 +7,15 @@
  * - Station Voice Sweepers & Jingle Injection with smooth -8dB sidechain music ducking
  * - Autonomous Rotation & Sweeper Scheduler (Every N songs, Top-of-Hour Station ID, or On-Demand)
  * - 24/7 Silence Detection & Autonomous Failover Audio Recovery (Prevents dead air)
- * - Outbound Now-Playing Webhook Dispatcher (AzuraCast, Icecast, Centova Cast, Discord, Custom JSON)
- * - Listener Inbound Song Request Queue & Management (/api/radio/request)
- * - Remote Control Command API (/api/radio/control)
+ * - Outbound Now-Playing Webhook Dispatcher (standard JSON, or a Discord embed)
+ * - Listener Inbound Song Request Queue & Management
+ * - Remote Control Command API
  * - Embeddable HTML/JS Web Player Widget Code Generator
+ *
+ * None of these are HTTP routes on this app. Requests arrive from the station
+ * site's `/api/requests`, and commands travel over the control link to the
+ * engine; the `/api/radio/*` paths this header used to advertise have been
+ * deleted and a button was still handing them out.
  */
 
 export interface RadioStationConfig {
@@ -25,7 +30,16 @@ export interface RadioStationConfig {
   broadcastDspEnabled: boolean;
   duckingAmountDb: number;
   webhookUrl: string;
-  webhookFormat: "azuracast" | "icecast" | "discord" | "custom";
+  /**
+   * Outbound now-playing webhook payload shape.
+   *
+   * This used to offer `azuracast | icecast | custom` alongside `discord`, but
+   * only `discord` was ever branched on — the other three all produced the exact
+   * same body, so the selector was a set of identical choices one of which named
+   * software this station does not run. Two shapes exist, so there are two
+   * options, named for what they are.
+   */
+  webhookFormat: "standard" | "discord";
   autoWebhookOnTrackChange: boolean;
   autoFailoverEnabled: boolean;
   autoApproveRequests: boolean;
@@ -106,19 +120,33 @@ export interface RadioNowPlayingPayload {
 
 export class RadioBroadcastEngine {
   ctx: AudioContext;
+  /**
+   * Defaults only.
+   *
+   * These used to be an invented station: "Club Horizon Radio", a domain
+   * (`radio.horizon.fm`) that resolves to nothing, and 320 kbps when the real
+   * mount is 128. Every one of them leaked into outbound webhooks and into the
+   * copy-paste embed widget, so a third party reading the station's own
+   * metadata learned a fiction.
+   *
+   * The real identity lives in the station site's `StationSetting` and in what
+   * Icecast is actually publishing. The console now reads both (see
+   * `applyBroadcastStatus`) and overwrites these; the values here are the
+   * pre-poll starting point, not the answer.
+   */
   config: RadioStationConfig = {
-    stationName: "Club Horizon Radio",
-    slogan: "24/7 Autonomous Underground Electronic & Club Beats",
-    genre: "Electronic / House / Techno",
-    websiteUrl: "https://radio.horizon.fm",
+    stationName: "NCSound Radio",
+    slogan: "The Carolinas' independent hip-hop signal",
+    genre: "Hip-Hop",
+    websiteUrl: "",
     mountPoint: "/live.mp3",
-    bitrateKbps: 320,
+    bitrateKbps: 128,
     sampleRate: 44100,
     autoJingleInterval: 3,
     broadcastDspEnabled: true,
     duckingAmountDb: -7.5,
     webhookUrl: "",
-    webhookFormat: "azuracast",
+    webhookFormat: "standard",
     autoWebhookOnTrackChange: true,
     autoFailoverEnabled: true,
     autoApproveRequests: false,
@@ -449,7 +477,7 @@ export class RadioBroadcastEngine {
     return false;
   }
 
-  /** Formats standard Now-Playing payload compatible with AzuraCast / Icecast / Discord / Custom webhooks. */
+  /** Formats a standard now-playing JSON body, or a Discord embed. */
   buildNowPlayingPayload(
     activeTrack: { id: string; name: string; artist: string; genre: string; analysis: any; duration: number },
     elapsedSec: number,

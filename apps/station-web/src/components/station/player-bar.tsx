@@ -30,7 +30,7 @@ import { Progress } from '@/components/ui/progress'
 import { Slider } from '@/components/ui/slider'
 import { useNowPlaying } from '@/hooks/use-nowplaying'
 import { useStationPlayer } from '@/hooks/use-station-player'
-import type { StreamQuality } from '@/lib/stream-source'
+import { getStreamSource, MOUNTS, type StreamQuality } from '@/lib/stream-source'
 import { shareNowPlaying, shareStation } from '@/lib/share'
 import { cn } from '@/lib/utils'
 
@@ -537,29 +537,28 @@ export function PlayerBar() {
           aria-label="Stream quality"
           className="hidden shrink-0 items-center rounded-md border border-border/80 p-0.5 xl:flex"
         >
-          {(
-            [
-              { id: 'hi' as StreamQuality, label: '128k', icon: SignalHigh, title: 'Mount 1 — 128 kbps AAC (full quality)' },
-              { id: 'mobile' as StreamQuality, label: '64k', icon: SignalLow, title: 'Mount 2 — 64 kbps HE-AAC (data saver)' },
-            ]
-          ).map(({ id, label, icon: Icon, title }) => (
-            <button
-              key={id}
-              type="button"
-              title={title}
-              aria-pressed={quality === id}
-              onClick={() => setQuality(id)}
-              className={cn(
-                'flex h-6 items-center gap-1 rounded px-1.5 text-[10px] font-semibold transition-colors',
-                quality === id
-                  ? 'bg-primary/20 text-primary'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              <Icon className="h-3 w-3" aria-hidden="true" />
-              {label}
-            </button>
-          ))}
+{(['hi', 'mobile'] as StreamQuality[]).map((id) => {
+            const mount = MOUNTS[id]
+            const Icon = id === 'hi' ? SignalHigh : SignalLow
+            return (
+              <button
+                key={id}
+                type="button"
+                title={`${mount.path.replace(/^\//, '')} — ${mount.codec} ${mount.bitrateKbps} kbps (${mount.label})`}
+                aria-pressed={quality === id}
+                onClick={() => setQuality(id)}
+                className={cn(
+                  'flex h-6 items-center gap-1 rounded px-1.5 text-[10px] font-semibold transition-colors',
+                  quality === id
+                    ? 'bg-primary/20 text-primary'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                <Icon className="h-3 w-3" aria-hidden="true" />
+                {mount.bitrateKbps}k
+              </button>
+            )
+          })}
         </div>
 
         {/* Broadcast state. This said LIVE unconditionally; it now reflects the

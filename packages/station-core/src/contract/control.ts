@@ -19,10 +19,33 @@ export type TransportCommand =
   | { type: "transport.play" }
   | { type: "transport.pause" }
   | { type: "transport.toggle" }
-  | { type: "transport.stop" };
+  | { type: "transport.stop" }
+  /**
+   * Flip the station's on-air switch without touching the engine.
+   *
+   * Distinct from `transport.stop`, which is an engine operation that also
+   * drops the switch. These exist so an operator can go off air and come back
+   * without restarting playback, and so "we are live but the operator muted
+   * the output" is expressible rather than being indistinguishable from a dead
+   * engine.
+   */
+  | { type: "transport.onAir"; enabled: boolean }
+  | { type: "transport.offAir" };
 
 export type MixingCommand =
-  | { type: "mix.mixNext"; presetId?: string }
+  | {
+      type: "mix.mixNext";
+      presetId?: string;
+      /**
+       * Transition length in bars.
+       *
+       * Was absent from the contract entirely, which is why the dispatcher had
+       * to guess: `runTransition` reads `p.bars || 2`, so every engine-side
+       * transition ran at 2 bars regardless of what the operator chose.
+       */
+      bars?: number;
+      curve?: "equal-power" | "linear" | "cut";
+    }
   | { type: "mix.skip" }
   | { type: "mix.panic" }
   | { type: "mix.setCrossfader"; position: number }
@@ -125,6 +148,8 @@ export const COMMAND_TYPES = [
   "transport.pause",
   "transport.toggle",
   "transport.stop",
+  "transport.onAir",
+  "transport.offAir",
   "mix.mixNext",
   "mix.skip",
   "mix.panic",

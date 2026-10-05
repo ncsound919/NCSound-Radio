@@ -23,6 +23,12 @@ describe("headless mixer", () => {
     void ctx;
   });
 
+  /**
+   * These render real audio in real time, so the wall-clock cost is the
+   * synthesis plus the sleep. Left on bun's 5s default they pass alone and fail
+   * whenever anything else in the suite is competing for the CPU, which is not a
+   * useful failure.
+   */
   test("renders real audio off the master bus with no sink present", async () => {
     const { mixer, buffer } = buildGraph();
 
@@ -55,7 +61,7 @@ describe("headless mixer", () => {
     expect(peak).toBeGreaterThan(0.001);
     // ~1.2s of audio should have come out.
     expect(frames).toBeGreaterThan(SR * 0.5);
-  });
+  }, 30000);
 
   test("master clock advances at wall-clock rate", async () => {
     const { mixer } = buildGraph();
@@ -65,12 +71,97 @@ describe("headless mixer", () => {
     const ratio = (mixer.ctx.currentTime - t0) / ((Date.now() - w0) / 1000);
     expect(ratio).toBeGreaterThan(0.8);
     expect(ratio).toBeLessThan(1.25);
-  });
+  }, 30000);
 
   test("getMasterOutputNode exposes the broadcast tap", () => {
     const { mixer } = buildGraph();
     const node = mixer.getMasterOutputNode();
     expect(node).toBeDefined();
+  });
+
+  /**
+   * Imaging ducks the music and has to give the level back.
+   *
+   * The bug this pins, twice over:
+   *  1. `playJingle` used to read `masterGain.gain.value` as its restore
+   *     target AFTER stopping the previous jingle. That reads the level
+   *     mid-ramp — still ducked — so every re-fire restored to a lower value
+   *     and the music ratcheted toward silence.
+   *  2. It then wrote the duck to `masterGain`, which the headless engine's
+   *     headroom guard rewrites toward its own target on every ~21ms audio
+   *     block. Measured: the duck was back to full volume within 65ms. The
+   *     imaging played over full-level music and was not a sweeper at all.
+   *
+   * The duck now lives on `imagingDuck`, a node only imaging writes.
+   */
+  test("imaging ducks the music and the duck survives the headroom guard", async () => {
+    const { mixer, ctx, buffer: jingle } = buildGraph();
+    await ctx.resume().catch(() => {});
+
+    expect(mixer.imagingDuck.gain.value).toBeCloseTo(1, 3);
+    expect(mixer.masterTrim.gain.value).toBeCloseTo(1, 3);
+
+    const res = mixer.playJingle(jingle);
+    expect(res.ok).toBe(true);
+
+    // Wait past several audio blocks — the guard runs on 2048-frame callbacks,
+    // ~21ms at 48kHz — and confirm the duck is still in force.
+    await new Promise((r) => setTimeout(r, 300));
+    expect(mixer.imagingDuck.gain.value).toBeLessThan(0.6);
+
+    // And the guard's own node must not have been touched by imaging.
+    // The guard drives this toward 1.0; what matters is that imaging left it
+    // alone rather than writing it and being overwritten.
+    expect(mixer.masterGain.gain.value).toBeGreaterThan(0);
+
+    mixer.stopJingle();
+    await new Promise((r) => setTimeout(r, 400));
+    expect(mixer.imagingDuck.gain.value).toBeGreaterThan(0.85);
+  }, 30000);
+
+  test("repeated imaging fires do not ratchet the music level down", async () => {
+    const { mixer, ctx, buffer: jingle } = buildGraph();
+    await ctx.resume().catch(() => {});
+
+    // Fire repeatedly without waiting for each to finish, the way an operator
+    // hitting the sweeper button twice would.
+    for (let i = 0; i < 5; i++) {
+      expect(mixer.playJingle(jingle).ok).toBe(true);
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    await new Promise((r) => setTimeout(r, 200));
+
+    // Every fire targets the same depth from the same rest value, so the duck
+    // cannot walk further down with each press.
+    expect(mixer.imagingDuck.gain.value).toBeGreaterThan(0);
+    expect(mixer.imagingDuck.gain.value).toBeLessThanOrEqual(1.0001);
+
+    mixer.stopJingle();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(mixer.imagingDuck.gain.value).toBeGreaterThan(0.85);
+  }, 30000);
+
+  test("setMasterGainDb lands on the trim node the guard does not own", async () => {
+    const { mixer, ctx } = buildGraph();
+    await ctx.resume().catch(() => {});
+
+    const { applied } = mixer.setMasterGainDb(-20);
+    expect(applied).toBe(-20);
+
+    // Give the ramp time, then confirm it is still where it was put. Written
+    // to masterGain this returned to ~1.0 within 50ms.
+    await new Promise((r) => setTimeout(r, 250));
+    expect(mixer.masterTrim.gain.value).toBeLessThan(0.2);
+    expect(mixer.masterTrim.gain.value).toBeGreaterThan(0.05);
+
+    // Out-of-range input is clamped, not rejected.
+    expect(mixer.setMasterGainDb(-900).applied).toBe(-60);
+    expect(mixer.setMasterGainDb(900).applied).toBe(6);
+  }, 30000);
+
+  test("stopJingle reports whether anything was playing", () => {
+    const { mixer } = buildGraph();
+    expect(mixer.stopJingle()).toBe(false);
   });
 });
 

@@ -29,6 +29,28 @@ export const actorSchema = z.object({
   label: z.string().min(1).max(128),
 });
 
+/**
+ * A transition preset, shared by `library.setPreset` and `mix.mixNext`.
+ *
+ * Declared once because the two commands used to disagree: `setPreset` allowed
+ * 1..64 bars while `mixNext` could carry no preset at all, so the dispatcher
+ * built a bare `{ id }` and every engine-side transition ran at the default
+ * length. Declaring `bars` twice is how that drift started.
+ *
+ * `bars` is not an integer and tops out at 32 because `runTransition` floors at
+ * 0.5 bar and `Mixer.setTransitionDurationBars` clamps at 32 — a 64-bar
+ * transition is a promise the mixer does not keep.
+ */
+export const transitionPresetSchema = z.object({
+  id: z.string().min(1).max(64),
+  name: z.string().min(1).max(128),
+  bars: z.number().min(0.5).max(32),
+  curve: z.enum(["equal-power", "linear", "cut"]),
+  filterSweep: z.boolean().optional(),
+  bassSwap: z.boolean().optional(),
+  style: z.string().optional(),
+});
+
 const unit = z.number().min(0).max(1);
 const biUnit = z.number().min(-1).max(1);
 const slot = z.union([z.literal(0), z.literal(1)]);
@@ -38,8 +60,23 @@ export const djCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("transport.pause") }),
   z.object({ type: z.literal("transport.toggle") }),
   z.object({ type: z.literal("transport.stop") }),
+  z.object({ type: z.literal("transport.onAir"), enabled: z.boolean() }),
+  z.object({ type: z.literal("transport.offAir") }),
 
-  z.object({ type: z.literal("mix.mixNext"), presetId: z.string().max(64).optional() }),
+  z.object({
+    type: z.literal("mix.mixNext"),
+    /** Which preset. Style is inferred from it when `bars` is absent. */
+    presetId: z.string().min(1).max(64).optional(),
+    /**
+     * Transition length, when the caller knows it.
+     *
+     * Without this the dispatcher has to guess, and it guessed wrong for
+     * everything: `runTransition` falls back to `p.bars || 2`, so the
+     * console's 8-bar "long" blend played as a 2-bar one on the engine.
+     */
+    bars: z.number().min(0.5).max(32).optional(),
+    curve: z.enum(["equal-power", "linear", "cut"]).optional(),
+  }),
   z.object({ type: z.literal("mix.skip") }),
   z.object({ type: z.literal("mix.panic") }),
   z.object({ type: z.literal("mix.setCrossfader"), position: biUnit }),
@@ -49,12 +86,26 @@ export const djCommandSchema = z.discriminatedUnion("type", [
     type: z.literal("mix.setEq"),
     slot,
     band: z.enum(["low", "mid", "high"]),
-    db: z.number().min(-60).max(6),
+    // Matches Deck.setEq's own clamp (-24..+6). The schema previously allowed
+    // -60, which the deck silently narrowed — a command could validate, report
+    // ok, and never take effect at the requested depth.
+    db: z.number().min(-24).max(6),
   }),
   z.object({ type: z.literal("mix.setFilter"), slot, bipolar: biUnit }),
-  z.object({ type: z.literal("mix.setMasterGain"), gain: unit }),
+  // dB, not a 0..1 unit: the dispatcher feeds this to
+  // `masterGain.gain.value = 10 ** (gain / 20)`. Declaring a unit interval
+  // here made a client's 0.5 mean "0.5 dB" to the engine and "half volume"
+  // to the caller.
+  z.object({ type: z.literal("mix.setMasterGain"), gain: z.number().min(-60).max(6) }),
   z.object({ type: z.literal("mix.setAutoGain"), enabled: z.boolean() }),
-  z.object({ type: z.literal("mix.setTransitionBars"), bars: z.number().int().min(1).max(64) }),
+  // Mixer.setTransitionDurationBars clamps to 0.25..32 and the console offers
+  // 1/2B through 32B. The old 1..64 schema promised 64 while the dispatcher
+  // accepted only 1/2/4/8, so the UI's own 32B and half-bar buttons both
+  // failed validation.
+  z.object({
+    type: z.literal("mix.setTransitionBars"),
+    bars: z.number().min(0.25).max(32),
+  }),
 
   z.object({ type: z.literal("cue.track"), trackId: z.string().min(1).max(128), slot: slot.optional() }),
   z.object({ type: z.literal("cue.request"), requestId: z.string().min(1).max(128) }),
@@ -72,7 +123,10 @@ export const djCommandSchema = z.discriminatedUnion("type", [
     multiplier: z.union([z.literal(1), z.literal(2), z.literal(0.5)]).optional(),
   }),
   z.object({ type: z.literal("sync.both"), targetBpm: z.number().min(40).max(300).optional() }),
-  z.object({ type: z.literal("sync.masterBpm"), bpm: z.number().min(40).max(300) }),
+  // Mixer.setMasterBpm clamps to 70..175. The schema used to allow 40..300
+  // while the dispatcher allowed 60..200 and the mixer narrowed that again —
+  // three different answers to "how fast is legal".
+  z.object({ type: z.literal("sync.masterBpm"), bpm: z.number().min(70).max(175) }),
   z.object({ type: z.literal("sync.phaseAlign"), slot: slot.optional() }),
 
   z.object({ type: z.literal("scratch.pattern"), patternId: scratchPatternIdSchema, deck: slot.optional() }),
@@ -104,15 +158,7 @@ export const djCommandSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("library.setPitchRange"), range: pitchFaderRangeSchema }),
   z.object({
     type: z.literal("library.setPreset"),
-    preset: z.object({
-      id: z.string().min(1).max(64),
-      name: z.string().min(1).max(128),
-      bars: z.number().int().min(1).max(64),
-      curve: z.enum(["equal-power", "linear", "cut"]),
-      filterSweep: z.boolean().optional(),
-      bassSwap: z.boolean().optional(),
-      style: z.string().optional(),
-    }),
+    preset: transitionPresetSchema,
   }),
 
   z.object({ type: z.literal("query.status") }),

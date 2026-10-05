@@ -6,7 +6,15 @@ export type TrackDTO = {
   artist: string;
   album: string | null;
   durationSec: number;
-  rightsId: string;
+  /**
+   * Rights record for this track, or null when none exists yet.
+   *
+   * Nullable because the on-air feed used to synthesise one from the track id
+   * (`t.id.toUpperCase()`), which invented a clearance identifier for a record
+   * that was never created. Callers must render "—" for null rather than
+   * guessing.
+   */
+  rightsId: string | null;
   explicit: boolean;
   playlist: string;
   bpm: number | null;

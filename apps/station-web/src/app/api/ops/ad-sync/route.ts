@@ -6,7 +6,7 @@ import {
   getRotationWheel,
   DAY_MS,
 } from '@/lib/broadcast'
-import { requireOpsPin } from '@/lib/ops-auth'
+import { requireAdmin } from '@/lib/admin-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,16 +14,25 @@ const DEDUPE_TOLERANCE_MS = 90_000
 
 /**
  * POST /api/ops/ad-sync
- * Simulates the nightly "AzuraCast song history -> ad_plays" pull. It walks
- * the SAME day-anchored ad schedule the on-air clock uses to pick creatives
- * and stamps every SOLD spot from the last 24 hours into the ledger with its
- * broadcast timestamp — so proof-of-play always matches what actually aired.
+ *
+ * Computes proof-of-play from the station's own schedule. It walks the SAME
+ * day-anchored ad schedule the on-air clock uses to pick creatives and stamps
+ * every SOLD spot from the last 24 hours into the ledger with its broadcast
+ * timestamp — so proof-of-play always matches what actually aired.
+ *
+ * Provenance, stated plainly because this used to be the problem: there is no
+ * AzuraCast in this stack and no external history API is read. These rows are
+ * derived here, and they are labelled `program-clock` to say so. They were
+ * previously written as `azuracast-history`, which made a locally computed
+ * figure look like an externally attested one — the kind of difference that
+ * matters enormously when a number ends up in a sponsorship invoice.
+ *
  * House promos (unsold inventory) never appear in the ledger. Slots within
  * 90s of an existing row are skipped and P2002 is swallowed — idempotent.
  */
 export async function POST(request: Request) {
   try {
-    const denied = await requireOpsPin(request)
+    const denied = await requireAdmin(request)
     if (denied) return denied
 
     const now = new Date()
@@ -81,7 +90,7 @@ export async function POST(request: Request) {
           data: {
             campaignId: slot.campaign.id,
             playedAt: new Date(slot.atMs),
-            source: 'azuracast-history',
+            source: 'program-clock',
           },
         })
         inserted++
@@ -96,7 +105,7 @@ export async function POST(request: Request) {
       inserted,
       byCampaign,
       ranAt: now.toISOString(),
-      note: 'Nightly sync from AzuraCast song history (program-clock schedule, simulated in sandbox)',
+      note: 'Computed from the station program clock. No external history API is read.',
     })
   } catch (error) {
     console.error('[api/ops/ad-sync]', error)

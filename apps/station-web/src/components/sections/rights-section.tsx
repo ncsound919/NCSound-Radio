@@ -40,7 +40,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { RightsDTO, StatsResponse } from '@/lib/station-types'
-import { useOpsPin } from '@/hooks/use-ops-pin'
+import { useAdminSession } from '@/hooks/use-admin-session'
 
 type RightsStatus = RightsDTO['status']
 
@@ -93,7 +93,7 @@ export function RightsSection() {
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState<string>('ALL')
   const [updatingId, setUpdatingId] = useState<string | null>(null)
-  const { unlocked, authHeaders } = useOpsPin()
+  const { authenticated: unlocked } = useAdminSession()
 
   const refresh = useCallback(async () => {
     try {
@@ -121,14 +121,14 @@ export function RightsSection() {
 
   async function updateStatus(id: string, status: RightsStatus) {
     if (!unlocked) {
-      toast.info('The ledger is read-only until you unlock the control room in Ops (demo PIN 0913).')
+      toast.info('The ledger is read-only until you unlock the control room in Ops.')
       return
     }
     setUpdatingId(id)
     try {
       const res = await fetch(`/api/rights/${encodeURIComponent(id)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       })
       if (!res.ok) {

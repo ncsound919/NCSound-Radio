@@ -74,7 +74,7 @@
         <div class="oled-top-bar">
           <div class="oled-deck-readout">
             <span class="oled-badge">DECK A</span>
-            <span id="waveLabelA" class="mono oled-track-name">Midnight Warehouse</span>
+            <span id="waveLabelA" class="mono oled-track-name">—</span>
           </div>
 
           <div class="oled-center-telemetry">
@@ -117,7 +117,7 @@
           </div>
 
           <div class="oled-deck-readout oled-deck-right">
-            <span id="waveLabelB" class="mono oled-track-name">Neon Ignition</span>
+            <span id="waveLabelB" class="mono oled-track-name">—</span>
             <span class="oled-badge oled-badge-subtle">DECK B</span>
           </div>
         </div>
@@ -150,7 +150,7 @@
               <span id="deckAStatusText">MASTER</span>
               <button type="button" id="cueListenA" class="btn-pfl mono" title="Pre-Fader Headphone Cue (Routes to Right Channel in Split-Cue Mode)">CUE</button>
             </div>
-            <h2 class="lcd-title" id="deckATitle">Midnight Warehouse</h2>
+            <h2 class="lcd-title" id="deckATitle">No track loaded</h2>
             <p class="lcd-meta mono" id="deckAMeta">124.0 BPM / Key 8A</p>
           </div>
           <div class="lcd-right mono">
@@ -305,11 +305,11 @@
                   <span>ACTIVE MASTER</span>
                   <span id="phraseCountdown">BAR SYNC READY</span>
                 </div>
-                <p class="title" id="title">Midnight Warehouse</p>
+                <p class="title" id="title">Nothing loaded</p>
                 <p class="meta mono" id="meta">124.0 BPM / Key 8A</p>
                 <div class="times mono">
                   <span id="elapsed">0:00</span>
-                  <span id="upnext" class="upnext-inline">Next: Neon Ignition</span>
+                  <span id="upnext" class="upnext-inline">Next: —</span>
                   <span id="left">-0:00</span>
                 </div>
               </div>
@@ -701,7 +701,7 @@
               <span id="deckBStatusText">CUED</span>
               <button type="button" id="cueListenB" class="btn-pfl mono" title="Pre-Fader Headphone Cue (Routes to Right Channel in Split-Cue Mode)">CUE</button>
             </div>
-            <h2 class="lcd-title" id="deckBTitle">Neon Ignition</h2>
+            <h2 class="lcd-title" id="deckBTitle">No track loaded</h2>
             <p class="lcd-meta mono" id="deckBMeta">126.0 BPM / Key 9A</p>
           </div>
           <div class="lcd-right mono">
@@ -1064,9 +1064,17 @@
                measured", never a number: this element used to ship a literal 42. -->
           <span class="mono radio-tagline-badge" id="radioListenersBadge">LISTENERS: --</span>
           <span class="mono radio-tagline-badge" id="radioStreamBadge">STREAM: --</span>
-          <span class="mono radio-tagline-badge" id="radioUptimeBadge">LOCAL UPTIME: 00:00:00</span>
+          <!-- Engine truth from the ingest service. "local" used to be written
+               here unconditionally, which made a booth-only graph look like a
+               broadcast state. -->
+          <span class="mono radio-tagline-badge" id="radioEngineBadge">ENGINE: --</span>
+          <span class="mono radio-tagline-badge" id="radioCrateBadge">CRATE: --</span>
+          <span class="mono radio-tagline-badge" id="radioUptimeBadge">UPTIME: --</span>
         </div>
         <div class="radio-top-actions mono">
+          <button type="button" id="radioOffAirBtn" class="hw-btn-red radio-onair-btn" title="Switch Liquidsoap's output to silence without stopping the engine. Listeners stay connected and hear nothing.">
+            <span>🔇 GO OFF AIR</span>
+          </button>
           <button type="button" id="radioMasterOnAirBtn" class="hw-btn-red radio-onair-btn" title="Toggle Master Radio Station Broadcast Stream (ON AIR)">
             <span>📻 GO ON AIR (TRANSMIT)</span>
           </button>
@@ -1080,11 +1088,11 @@
       <div class="radio-identity-bar mono">
         <div class="radio-input-group">
           <label for="radioStationNameInput">STATION NAME</label>
-          <input type="text" id="radioStationNameInput" value="Club Horizon Radio" placeholder="e.g. Club Horizon Radio">
+          <input type="text" id="radioStationNameInput" value="NCSound Radio" placeholder="station name (from the station site)">
         </div>
         <div class="radio-input-group flex-2">
           <label for="radioSloganInput">STATION SLOGAN / GENRE</label>
-          <input type="text" id="radioSloganInput" value="24/7 Autonomous Underground Electronic & Club Beats" placeholder="Tagline or format description">
+          <input type="text" id="radioSloganInput" value="The Carolinas’ independent hip-hop signal" placeholder="Tagline or format description">
         </div>
         <div class="radio-input-group">
           <label for="radioMountInput">MOUNT POINT</label>
@@ -1157,9 +1165,8 @@
             <div class="radio-ctrl-row">
               <label for="webhookFormatSelect">PAYLOAD FORMAT:</label>
               <select id="webhookFormatSelect" class="crate-select">
-                <option value="azuracast" selected>AzuraCast / Icecast v2 Standard JSON</option>
-                <option value="discord">Discord Rich Embed Webhook</option>
-                <option value="custom">Standard Radio REST JSON</option>
+                <option value="standard" selected>Standard now-playing JSON</option>
+                <option value="discord">Discord rich embed</option>
               </select>
             </div>
 
@@ -1184,6 +1191,7 @@
                 <div class="api-endpoint-item"><code>GET /ingest/status</code><span>Real engine state and Icecast listener counts</span></div>
                 <div class="api-endpoint-item"><code>GET /ingest/stream</code><span>Per-mount stream telemetry</span></div>
                 <div class="api-endpoint-item"><code>GET /ingest/crate</code><span>The broadcast crate actually on the engine</span></div>
+                <div class="api-endpoint-item"><code>GET /ingest/requests</code><span>Listener request queue, read from the station database</span></div>
                 <div class="api-endpoint-item"><code>POST /ingest/command</code><span>Send a station-core command (transport, mix, cue, sync, autopilot)</span></div>
                 <div class="api-endpoint-item"><code>WS /ingest/ws</code><span>Live stream.status and command.result frames</span></div>
               </div>
@@ -1194,7 +1202,7 @@
         <!-- BAY 3: Inbound Listener Song Requests -->
         <article class="radio-card" aria-label="Listener Song Requests">
           <div class="radio-card-header">
-            <strong>📥 INBOUND LISTENER REQUESTS (<span id="requestCountBadge">2</span>)</strong>
+            <strong>📥 INBOUND LISTENER REQUESTS (<span id="requestCountBadge">--</span>)</strong>
             <button type="button" id="simulateRequestBtn" class="btn-micro" title="Simulate an inbound listener song request from web player">+ SIMULATE REQUEST</button>
           </div>
           <div class="radio-card-body">
@@ -1203,7 +1211,7 @@
                 <input type="checkbox" id="autoApproveRequestsCheck">
                 <span>Auto-Approve &amp; Queue Inbound Requests</span>
               </label>
-              <button type="button" id="clearRequestsBtn" class="btn-micro" title="Clear request list">Clear All</button>
+              <button type="button" id="clearRequestsBtn" class="btn-micro" title="Requests are stored by the station site; clearing them there is the only way to clear them" disabled>Clear (station site)</button>
             </div>
 
             <div class="requests-table-wrap">
@@ -1240,8 +1248,8 @@
                 <span class="embed-stream-meta" id="embedStreamMeta">192 KBPS HD</span>
               </div>
               <div class="embed-track-info">
-                <strong id="embedTrackTitle">Midnight Warehouse</strong>
-                <span id="embedTrackArtist">Studio Syndicate (124 BPM)</span>
+                <strong id="embedTrackTitle">—</strong>
+                <span id="embedTrackArtist">—</span>
               </div>
               <div class="embed-btn-row">
                 <button type="button" class="btn-micro mono" id="copyEmbedBtn">📋 COPY HTML EMBED SNIPPET</button>
@@ -1277,8 +1285,8 @@
               <div class="obs-preview-content">
                 <div class="obs-preview-art" id="obsPreviewArt">🎧</div>
                 <div class="obs-preview-text">
-                  <div class="obs-title-row" id="obsPreviewTitle">Midnight Warehouse</div>
-                  <div class="obs-artist-row" id="obsPreviewArtist">Studio Syndicate · Up Next: Neon Ignition</div>
+                  <div class="obs-title-row" id="obsPreviewTitle">—</div>
+                  <div class="obs-artist-row" id="obsPreviewArtist">—</div>
                 </div>
               </div>
             </div>
@@ -1303,8 +1311,217 @@
           </div>
         </article>
       </div>
+
+      <!-- ================= STATION LIBRARY (shared with the site) =================
+           The engine scans NCSOUND_LIBRARY and the station site mirrors this
+           same crate via POST /api/library/sync, so all three agree on what the
+           station can play. The booth crate further down is a separate thing:
+           synthesised placeholders for rehearsal, which no listener will hear. -->
+      <section class="radio-bay" id="library-bay" aria-label="Station library">
+        <div class="radio-header-row">
+          <div class="radio-title-cluster">
+            <h2 class="radio-heading">Station Library</h2>
+            <span class="mono radio-tagline-badge" id="libCountBadge">--</span>
+            <span class="mono radio-tagline-badge" id="libSourceBadge">source: --</span>
+            <button type="button" id="libRefreshBtn" class="hw-key" title="Re-read the engine crate">REFRESH</button>
+          </div>
+        </div>
+        <p class="mono" id="libNote" style="font-size:11px;opacity:0.7;margin:6px 0;"></p>
+        <div class="cb-grid" id="libList" style="max-height:340px;overflow:auto;">
+          <p class="cb-empty mono" style="opacity:0.5;font-style:italic;">not read yet</p>
+        </div>
+      </section>
+
+      <!-- ================= CONTROL BOARD =================
+           Engine-facing controls. These issue real commands through the control
+           link; they do not touch the booth graph. The panic and stop actions
+           are two-step: this file previously had zero confirmations anywhere in
+           1300 lines of operating UI, and a stray touch on a control that
+           silences a live station is worse than no control at all. -->
+      <section class="radio-bay" id="control-board-bay" aria-label="Control Board">
+        <div class="radio-header-row">
+          <div class="radio-title-cluster">
+            <h2 class="radio-heading">Control Board</h2>
+            <span class="mono radio-tagline-badge" id="cbEngineBadge">ENGINE: --</span>
+            <span class="mono radio-tagline-badge" id="cbUptimeBadge">UPTIME: --</span>
+            <span class="mono radio-tagline-badge" id="cbCrateBadge">CRATE: --</span>
+            <span class="mono radio-tagline-badge" id="cbBroadcast">--</span>
+            <span class="mono radio-tagline-badge" id="cbMountsBadge">MOUNTS: --</span>
+          </div>
+        <p class="mono" id="cbBroadcastReason" style="font-size:11px;opacity:0.75;margin:6px 0 0;"></p>
+        </div>
+
+        <!-- Transport -->
+        <div class="radio-identity-bar mono" role="group" aria-label="On-air transport">
+          <button type="button" id="cbPlayBtn" class="hw-btn" title="Start engine playback (transport.play)">▶ PLAY</button>
+          <button type="button" id="cbPauseBtn" class="hw-btn" title="Pause engine playback (transport.pause)">❚❚ PAUSE</button>
+          <button type="button" id="cbNextBtn" class="hw-btn" title="Mix to the next track (mix.mixNext)">⏭ NEXT</button>
+          <button type="button" id="cbSkipBtn" class="hw-btn" title="Fast-forward the current track (mix.skip)">⏩ SKIP</button>
+          <button type="button" id="cbOnAirBtn" class="hw-btn" title="Switch Liquidsoap back to the live feed (transport.onAir)">📡 ON AIR</button>
+          <button type="button" id="cbOffAirBtn" class="hw-btn" title="Switch Liquidsoap to silence without stopping the engine">🔇 OFF AIR</button>
+          <button type="button" id="cbPanicBtn" class="hw-btn-red" title="Emergency: stop the engine AND silence the output">
+            ⚠ PANIC
+          </button>
+          <button type="button" id="cbStopBtn" class="hw-btn-red" title="Stop the engine and take the station off air">
+            ■ STOP
+          </button>
+        </div>
+        <!-- Confirmations render here. Both destructive actions arm first. -->
+        <div id="cbConfirmBar" hidden
+             style="margin-top:8px;padding:10px;border:1px solid #ef4444;border-radius:8px;background:rgba(239,68,68,0.12);">
+          <div class="mono" style="color:#f87171;font-weight:700;" id="cbConfirmText"></div>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button type="button" id="cbConfirmGo" class="hw-btn-red">Confirm</button>
+            <button type="button" id="cbConfirmCancel" class="hw-btn">Cancel</button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:12px;">
+          <!-- Engine status -->
+          <article class="cb-card">
+            <h3 class="cb-card-title mono">ENGINE</h3>
+            <div class="cb-rows mono" id="cbEngineRows">
+              <div class="cb-row"><span>state</span><b>--</b></div>
+            </div>
+            <div class="cb-note mono" id="cbEngineError" hidden></div>
+                <!-- The delivery-path measurement and any auto-recovery. Kept
+                     separate from the engine rows because it is the one thing
+                     here that describes what listeners are actually receiving,
+                     rather than what the engine intends to send. -->
+                <div class="cb-note mono" id="cbWatchdogNote" hidden></div>
+          </article>
+
+          <!-- Autopilot -->
+          <article class="cb-card">
+            <h3 class="cb-card-title mono">AUTOPILOT</h3>
+            <div class="cb-rows mono">
+              <div class="cb-row"><span>state</span><b id="cbAutopilotState">--</b></div>
+              <div class="cb-row"><span>vibe</span><b id="cbVibeTemplate">--</b></div>
+              <div class="cb-row"><span>energy target</span><b id="cbEnergyTarget">--</b></div>
+              <div class="cb-row"><span>overridden</span><b id="cbEnergyOverridden">--</b></div>
+            </div>
+            <div class="cb-actions">
+              <button type="button" id="cbAutopilotToggle" class="hw-btn" title="autopilot.set">TOGGLE</button>
+              <button type="button" id="cbResequenceBtn" class="hw-btn" title="autopilot.resequence — make played tracks eligible again">RESEQUENCE</button>
+            </div>
+            <label class="cb-slider mono">
+              <span>ENERGY <b id="cbEnergyOut">0.55</b></span>
+              <input type="range" id="cbEnergySlider" min="0" max="100" value="55"
+                     title="autopilot.setEnergyTarget — pins the target; picking a vibe hands it back to the curve">
+            </label>
+          </article>
+
+          <!-- Imaging -->
+          <article class="cb-card">
+            <h3 class="cb-card-title mono">IMAGING</h3>
+            <div class="cb-rows mono">
+              <div class="cb-row"><span>library</span><b id="cbImagingLib">--</b></div>
+              <div class="cb-row"><span>station output</span><b id="cbImagingOut">--</b></div>
+            </div>
+            <div class="cb-note mono" id="cbImagingNote"></div>
+          </article>
+
+          <!-- Live queue -->
+          <article class="cb-card">
+            <h3 class="cb-card-title mono">UP NEXT (ENGINE)</h3>
+            <ol class="cb-queue mono" id="cbQueueList">
+              <li class="cb-empty">not read yet</li>
+            </ol>
+          </article>
+        </div>
+
+        <!-- ================= STATION OPS (PIN-gated) =================
+             Reads and decisions live in station-web's database, so this panel
+             calls it through the /station proxy rather than opening a second,
+             disagreeing copy of the same records. The PIN gate is the same one
+             the station site uses. -->
+        <article class="cb-card" id="opsPanel" style="margin-top:14px;">
+          <h3 class="cb-card-title mono">STATION OPS</h3>
+
+          <!-- Locked state -->
+          <div id="opsLocked">
+            <p class="cb-note mono" style="color:var(--muted,#94a3b8);margin:0 0 8px;">
+              Review submissions, run the rights gate and the ad sync. These act on
+              the station database, so the station site must be running.
+            </p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <input type="password" id="opsPinInput" class="cb-input mono" placeholder="Station PIN"
+                     autocomplete="off" aria-label="Station PIN">
+              <button type="button" id="opsUnlockBtn" class="hw-btn">UNLOCK</button>
+            </div>
+            <div class="cb-note mono" id="opsAuthNote" style="margin-top:6px;"></div>
+          </div>
+
+          <!-- Unlocked state -->
+          <div id="opsUnlocked" hidden>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+              <span class="mono" style="font-size:11px;opacity:0.7;">Control room unlocked</span>
+              <button type="button" id="opsLockBtn" class="hw-btn">LOCK</button>
+            </div>
+
+            <div class="cb-rows mono" style="margin-top:10px;" id="opsStatsRows">
+              <div class="cb-row"><span>loading…</span><b class="unknown">--</b></div>
+            </div>
+
+            <div style="margin-top:12px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                <span class="cb-card-title mono">SUBMISSIONS</span>
+                <button type="button" id="opsRefreshBtn" class="hw-btn" title="Re-read from the station database">↻ REFRESH</button>
+              </div>
+              <div id="opsSubmissions" style="margin-top:6px;">
+                <p class="cb-empty mono" style="opacity:0.5;font-style:italic;margin:0;">not read yet</p>
+              </div>
+            </div>
+
+            <div style="margin-top:12px;">
+              <span class="cb-card-title mono">RIGHTS GATE</span>
+              <div id="opsRights" style="margin-top:6px;">
+                <p class="cb-empty mono" style="opacity:0.5;font-style:italic;margin:0;">not read yet</p>
+              </div>
+            </div>
+
+            <div class="cb-actions" style="margin-top:12px;">
+              <button type="button" id="opsAdSyncBtn" class="hw-btn"
+                      title="POST /api/ops/ad-sync — stamps computed rows into the ad ledger">
+                RUN AD SYNC
+              </button>
+            </div>
+            <div class="cb-note mono" id="opsActionNote" style="margin-top:6px;"></div>
+          </div>
+        </article>
+      </section>
     </section>
   </main>
+
+  <!-- OBS overlay. Rendered only when the URL carries #obs-overlay, which is
+       what an OBS Browser Source points at. Everything else on the page is
+       hidden so the source has a transparent background to composite over the
+       scene. Fed from the engine's real broadcast state, not from local
+       console state, so it shows what listeners hear. -->
+  <div id="obsOverlay" hidden>
+    <div class="obs-ticker">
+      <div class="obs-ticker-left">
+        <span class="obs-live-dot" id="obsLiveDot"></span>
+        <span class="obs-station" id="obsStationName">NCSound Radio</span>
+        <span class="obs-tag" id="obsTagline"></span>
+      </div>
+      <div class="obs-ticker-right">
+        <span class="obs-listeners" id="obsListeners"></span>
+        <span class="obs-state" id="obsState"></span>
+      </div>
+    </div>
+    <div class="obs-now">
+      <div class="obs-now-label">ON AIR</div>
+      <div class="obs-now-text">
+        <div class="obs-now-title" id="obsNowTitle">—</div>
+        <div class="obs-now-artist" id="obsNowArtist"></div>
+      </div>
+      <div class="obs-now-next">
+        <span class="obs-next-label">UP NEXT</span>
+        <span id="obsNextTitle">—</span>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="/src/main.ts"></script>
 </body>

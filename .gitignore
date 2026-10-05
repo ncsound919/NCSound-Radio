@@ -30,5 +30,9 @@ analysis/out/
 *.db-journal
 *.db-wal
 *.db-shm
+# station-web database: live runtime state, plus three pre-wipe snapshots sitting
+# beside it (custom.db.pre-campaign-wipe, .pre-demock, .pre-wipe2). Not source.
+# Regenerate from prisma/schema.prisma + the seed scripts.
+apps/station-web/db/
 # decoded-analysis cache: regenerated from the library, never committed
 .ncsound-cache/

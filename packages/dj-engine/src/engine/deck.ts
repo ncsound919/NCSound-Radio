@@ -21,12 +21,35 @@ export class Deck {
   modRegions: Array<{ startSec: number; endSec: number; label: string }> = [];
   scratchOverrideOffset: number | null = null;
   private src?: AudioBufferSourceNode;
+  /**
+   * Context time of the last `ended` event seen from this deck's source node,
+   * or 0 if the node has not ended since the last load/start.
+   *
+   * Nothing in this class previously observed natural end-of-track: an
+   * AudioBufferSourceNode that plays to its end simply stops emitting, but
+   * `isPlaying` stayed true forever. The mixer therefore kept reporting
+   * `playing: true` and a deck whose playhead was pinned at `duration` -- a
+   * finished track that looked like it was still going. Read this to tell
+   * "the track ran off the end" apart from "the track is still running".
+   */
+  srcEndedAt = 0;
 
   // Live playback tracking so we can pause/resume, pitch-shift, loop, and beat-jump seamlessly
   private startedAtCtx = 0;
   private startedOffset = 0;
   private currentRate = 1;
   private isPlaying = false;
+  /**
+   * Playhead captured at the moment the source node ended, or null if it has
+   * not ended.
+   *
+   * rawOffset() falls back to `startedOffset` while a deck is not playing, so
+   * without this a track that ran off its end would report its *start* offset
+   * again: the position would jump backwards to wherever it began, remaining
+   * would climb back to nearly the full length of the track, and the sequencer
+   * would sit and wait out the whole song a second time.
+   */
+  private endedOffset: number | null = null;
 
   // Per-deck channel volume & pitch slider state
   channelVolume = 1.0; // 0..1 channel fader level
@@ -129,6 +152,8 @@ export class Deck {
     this.startedOffset = analysis.firstBeat ?? 0;
     this.currentRate = 1;
     this.pitchPct = 0;
+    this.srcEndedAt = 0;
+    this.endedOffset = null;
     this.autoGainDb = analysis.autoGainDb ?? 0;
     this.dryGate.gain.setValueAtTime(1, this.ctx.currentTime);
     this.applyTrimGain(autoGainEnabled);
@@ -238,7 +263,11 @@ export class Deck {
   /** Computes underlying unscratched slip-mat playback position in seconds. */
   rawOffset(now = this.ctx.currentTime): number {
     if (!this.buffer) return 0;
-    if (!this.isPlaying) return this.startedOffset;
+    if (!this.isPlaying) {
+      // A deck that ran off the end of its buffer keeps reporting the position
+      // it reached, not the one it started from.
+      return this.endedOffset ?? this.startedOffset;
+    }
     const elapsedWall = Math.max(0, now - this.startedAtCtx);
     let pos = this.startedOffset + elapsedWall * this.currentRate;
     if (this.loopBars > 0 && this.analysis) {
@@ -256,24 +285,47 @@ export class Deck {
     if (!this.buffer) return;
     this.stopNodeOnly();
     const safeOffset = Math.max(0, Math.min(this.buffer.duration - 0.05, offset));
-    this.src = this.ctx.createBufferSource();
-    this.src.buffer = this.buffer;
-    this.src.playbackRate.value = rate;
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.buffer;
+    src.playbackRate.value = rate;
 
     if (this.loopBars > 0 && this.analysis) {
       const secPerBar = (60 / this.analysis.bpm) * 4;
       const loopLen = this.loopBars * secPerBar;
-      this.src.loop = true;
-      this.src.loopStart = safeOffset;
-      this.src.loopEnd = Math.min(this.buffer.duration, safeOffset + loopLen);
+      src.loop = true;
+      src.loopStart = safeOffset;
+      src.loopEnd = Math.min(this.buffer.duration, safeOffset + loopLen);
     }
 
-    this.src.connect(this.dryGate);
-    this.src.start(when, safeOffset);
+    /**
+     * A node that reaches the end of its buffer ends on its own, and nothing
+     * else here noticed. Track it, and clear isPlaying, so a deck that has run
+     * out of track is distinguishable from one that is still rolling.
+     *
+     * The identity guard matters: load()/start() stop the previous node and
+     * install a replacement, and the old node's `ended` event can arrive after
+     * that replacement is live. Without the guard the stale event would clear
+     * the flags of the source that is currently supposed to be playing.
+     */
+    src.onended = () => {
+      if (this.src !== src) return;
+      // Capture the position while isPlaying is still true: rawOffset() only
+      // integrates elapsed time on that path.
+      this.endedOffset = this.currentOffset(this.ctx.currentTime);
+      this.src = undefined;
+      this.isPlaying = false;
+      this.srcEndedAt = this.ctx.currentTime;
+    };
+
+    src.connect(this.dryGate);
+    src.start(when, safeOffset);
+    this.src = src;
     this.startedAtCtx = when;
     this.startedOffset = safeOffset;
     this.currentRate = rate;
     this.isPlaying = true;
+    this.srcEndedAt = 0;
+    this.endedOffset = null;
   }
 
   /** Pauses deck playback while preserving exact playhead offset for instant resume. */
@@ -283,6 +335,9 @@ export class Deck {
     }
     this.stopNodeOnly();
     this.isPlaying = false;
+    // A pause is not a track ending: startedOffset is the live position, so any
+    // captured end position from an earlier run is stale.
+    this.endedOffset = null;
   }
 
   /** Seeks to an exact offset (in seconds) whether the deck is playing or paused/cued. */
@@ -293,6 +348,7 @@ export class Deck {
       this.start(now + 0.01, clamped, this.currentRate);
     } else {
       this.startedOffset = clamped;
+      this.endedOffset = null;
     }
   }
 
@@ -498,6 +554,9 @@ export class Deck {
     if (when <= this.ctx.currentTime + 0.02) {
       this.src = undefined;
       this.isPlaying = false;
+      // Cleared here as well as in load(): stop() is what load() calls, and a
+      // carried-over endedOffset would override the firstBeat that load() sets.
+      this.endedOffset = null;
     }
   }
 }

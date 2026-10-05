@@ -22,9 +22,21 @@ const ICECAST_PORT = Number(process.env.NEXT_PUBLIC_ICECAST_PORT ?? 8010)
 
 export type StreamQuality = 'hi' | 'mobile'
 
-const MOUNTS: Record<StreamQuality, string> = {
-  hi: '/live.mp3',
-  mobile: '/mobile.mp3',
+/**
+ * The two mounts, with what they actually carry.
+ *
+ * `bitrateKbps` and `codec` were previously duplicated as UI literals in the
+ * player bar, where they read "128 kbps AAC" and "64 kbps HE-AAC". Both were
+ * wrong twice over: the bitrates happened to match, but Liquidsoap encodes these
+ * mounts with `%mp3` (infra/liquidsoap/ncsound.liq), so the codec was fiction.
+ * One authority here, so the label cannot drift from the encoder again.
+ */
+export const MOUNTS: Record<
+  StreamQuality,
+  { path: string; bitrateKbps: number; codec: string; label: string }
+> = {
+  hi: { path: '/live.mp3', bitrateKbps: 128, codec: 'MP3', label: 'Full quality' },
+  mobile: { path: '/mobile.mp3', bitrateKbps: 64, codec: 'MP3', label: 'Data saver' },
 }
 
 export type StreamSource = {
@@ -69,7 +81,7 @@ function create(): StreamSource {
     // normal and does not mean the stream died.
   })
 
-  const urlFor = (q: StreamQuality) => `http://127.0.0.1:${ICECAST_PORT}${MOUNTS[q]}`
+  const urlFor = (q: StreamQuality) => `http://127.0.0.1:${ICECAST_PORT}${MOUNTS[q].path}`
 
   const cancelFade = () => {
     if (raf) cancelAnimationFrame(raf)

@@ -115,9 +115,23 @@ export type HarborOptions = {
 };
 
 export type HarborState = {
-  connected: boolean;
+connected: boolean;
+  /**
+   * Bytes handed to the socket, which Node buffers when the peer is not reading.
+   * This counts *produced and queued*, not *delivered*; see backlogBytes.
+   */
   bytesSent: number;
+  /** Audio frames handed to the socket. Optimistic for the same reason. */
   framesSent: number;
+  /**
+   * Bytes currently sitting in the socket's write queue with no reader draining
+   * them. Zero on a healthy link. A value that keeps climbing while
+   * `connected` stays true is the one honest signal that the upload is going
+   * nowhere, which is why it is reported rather than only acted on.
+   */
+  backlogBytes: number;
+  /** How long the backlog has been past the dead threshold, in ms. */
+  backlogMs: number;
   lastError: string | null;
   connectedAt: string | null;
   /** Set once the server has closed the upload (rejected or ended). */
@@ -162,6 +176,8 @@ export class HarborPublisher {
     connected: false,
     bytesSent: 0,
     framesSent: 0,
+    backlogBytes: 0,
+    backlogMs: 0,
     lastError: null,
     connectedAt: null,
     endedByServer: false,
@@ -414,6 +430,11 @@ export class HarborPublisher {
       } else {
         this.backlogSince = null;
       }
+      // Publish the backlog even below the dead threshold. framesSent keeps
+      // climbing while the peer is gone, so without this the status showed a
+      // healthy-looking rising counter for the whole detection window.
+      this.state.backlogBytes = desired;
+      this.state.backlogMs = this.backlogSince ? Date.now() - this.backlogSince : 0;
 
       const pcm = interleave(channels, frames);
       const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);

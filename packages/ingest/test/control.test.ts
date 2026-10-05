@@ -130,8 +130,234 @@ describe("command dispatcher", () => {
     if (!r.ok) expect(r.code).toBe("INVALID_PARAMS");
   });
 
-  test("reports NO_SUCH_TRACK rather than throwing", async () => {
+  test("mixNext runs at the requested transition length, not a guessed one", async () => {
+    const { engine, send } = await fixture();
+    // The dispatcher used to build a bare `{ id }` from presetId alone, and
+    // `runTransition` reads `p.bars || 2`. Every engine-side transition was
+    // therefore 2 bars — an 8-bar blend chosen in the console played as 2.
+    // This needs a playing engine with both decks loaded; `next()` otherwise
+    // refuses before the preset is ever read. The default fixture crate holds
+    // a single synthesised track, which is enough — it goes into both decks.
+    const only = engine.library[0];
+    expect(only).toBeDefined();
+    await send({ type: "cue.track", trackId: only.id, slot: 0 });
+    await send({ type: "cue.track", trackId: only.id, slot: 1 });
+    await send({ type: "transport.play" });
+
+    const long = await send({ type: "mix.mixNext", presetId: "long", bars: 8, curve: "equal-power" });
+    expect(long.ok).toBe(true);
+    if (long.ok) expect((long.result as { bars: number }).bars).toBe(8);
+
+    await engine.close();
+  });
+
+  test("mixNext defaults to the documented length when no bars are given", async () => {
+    const { engine, send } = await fixture();
+    // The field is optional, so a bare command has to fall back to the value
+    // the engine was silently using before the field existed.
+    const bare = await send({ type: "mix.mixNext" });
+    // It may be refused for want of two loaded decks; what matters is that it
+    // is not rejected by validation when it does reach the mixer.
+    if (bare.ok) expect((bare.result as { bars: number }).bars).toBe(2);
+    else expect(bare.code).not.toBe("INVALID_PARAMS");
+    await engine.close();
+  });
+
+  test("rejects a transition length the mixer would silently clamp", async () => {
     const { send } = await fixture();
+    const r = await send({ type: "mix.mixNext", presetId: "long", bars: 64 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe("INVALID_PARAMS");
+  });
+
+  test("transport.stop also takes the station off air", async () => {
+    // Stopping the engine is not enough. ncsound.liq falls back to the library
+    // playlist when the harbor drops, so "stop" alone left the station playing
+    // filler while the UI said it had stopped.
+    const engine = new HeadlessEngine({ publish: false });
+    await engine.start();
+    const setOnAir: boolean[] = [];
+    let current = true;
+    const dispatcher = new CommandDispatcher({
+      engine,
+      station: {
+        setOnAir: async (on) => {
+          setOnAir.push(on);
+          current = on;
+        },
+        onAir: async () => ({ onAir: current, error: null }),
+      },
+    });
+    const send = (command: unknown) =>
+      dispatcher.dispatch({
+        id: "t-offair",
+        issuedAt: new Date().toISOString(),
+        actor: { id: "test", role: "ops", label: "test" },
+        command: command as never,
+      } satisfies CommandEnvelope);
+
+    const stopped = await send({ type: "transport.stop" });
+    expect(stopped.ok).toBe(true);
+    expect(setOnAir).toEqual([false]);
+    if (stopped.ok) expect((stopped.result as { onAir: boolean | null }).onAir).toBe(false);
+
+    // And coming back up brings it back on air, so an emergency is not sticky.
+    const played = await send({ type: "transport.play" });
+    expect(played.ok).toBe(true);
+    expect(setOnAir).toEqual([false, true]);
+
+    await engine.close();
+  });
+
+  test("off-air works without stopping the engine", async () => {
+    const engine = new HeadlessEngine({ publish: false });
+    await engine.start();
+    let current = true;
+    const dispatcher = new CommandDispatcher({
+      engine,
+      station: {
+        setOnAir: async (on) => {
+          current = on;
+        },
+        onAir: async () => ({ onAir: current, error: null }),
+      },
+    });
+    const send = (command: unknown) =>
+      dispatcher.dispatch({
+        id: "t-mute",
+        issuedAt: new Date().toISOString(),
+        actor: { id: "test", role: "ops", label: "test" },
+        command: command as never,
+      } satisfies CommandEnvelope);
+
+    const off = await send({ type: "transport.offAir" });
+    expect(off.ok).toBe(true);
+    if (off.ok) expect((off.result as { onAir: boolean | null }).onAir).toBe(false);
+    // The engine is untouched: still playing, just not being broadcast.
+    expect(engine.status.state).not.toBe("offline");
+
+    const on = await send({ type: "transport.onAir", enabled: true });
+    expect(on.ok).toBe(true);
+    if (on.ok) expect((on.result as { onAir: boolean | null }).onAir).toBe(true);
+
+    await engine.close();
+  });
+
+  test("a missing Liquidsoap does not make stop fail", async () => {
+    // No `station` dep at all — the test fixture, and any machine without
+    // Liquidsoap. The engine state change still happened and must be reported;
+    // the on-air answer is null because it could not be determined.
+    const { engine, send } = await fixture();
+    const r = await send({ type: "transport.stop" });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect((r.result as { onAir: boolean | null }).onAir).toBeNull();
+    await engine.close();
+  });
+  test("a Liquidsoap that refuses does not make stop fail", async () => {
+    const engine = new HeadlessEngine({ publish: false });
+    await engine.start();
+    const dispatcher = new CommandDispatcher({
+      engine,
+      station: {
+        setOnAir: async () => {
+          throw new Error("connection refused");
+        },
+        onAir: async () => ({ onAir: null, error: "connection refused" }),
+      },
+    });
+    const r = await dispatcher.dispatch({
+      id: "t-refused",
+      issuedAt: new Date().toISOString(),
+      actor: { id: "test", role: "ops", label: "test" },
+      command: { type: "transport.stop" } as never,
+    } satisfies CommandEnvelope);
+    // A control-plane hiccup must not be reported as "the stop failed" — the
+    // engine did stop. It reports onAir:null so the UI can say so.
+    expect(r.ok).toBe(true);
+    if (r.ok) expect((r.result as { onAir: boolean | null }).onAir).toBeNull();
+    await engine.close();
+  });
+
+  test("setEnergyTarget pins the energy the autopilot actually aims at", async () => {
+    const engine = new HeadlessEngine({ publish: false });
+    await engine.start();
+    const dispatcher = new CommandDispatcher({ engine });
+    const send = (command: unknown) =>
+      dispatcher.dispatch({
+        id: "t-energy",
+        issuedAt: new Date().toISOString(),
+        actor: { id: "test", role: "ops", label: "test" },
+        command: command as never,
+      } satisfies CommandEnvelope);
+
+    const before = engine.autopilot.energyTarget;
+    const r = await send({ type: "autopilot.setEnergyTarget", energy: 0.9 });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const result = r.result as { energyTarget: number; overridden: boolean };
+      // Used to validate the input and then report the template curve's value
+      // back, writing nothing — so 0.9 came back as something else entirely.
+      expect(result.energyTarget).toBeCloseTo(0.9, 6);
+      expect(result.overridden).toBe(true);
+      expect(engine.autopilot.energyTarget).toBeCloseTo(0.9, 6);
+    }
+    expect(before).not.toBeCloseTo(0.9, 6);
+
+    // Out of range is refused rather than silently clamped.
+    const bad = await send({ type: "autopilot.setEnergyTarget", energy: 4 });
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.code).toBe("INVALID_PARAMS");
+
+    // Choosing a vibe template hands control back to the curve.
+    await send({ type: "autopilot.setVibe", templateId: "club-peak" });
+    expect(engine.autopilot.isEnergyOverridden).toBe(false);
+
+    await engine.close();
+  });
+
+  test("resequence makes played tracks eligible again", async () => {
+    const engine = new HeadlessEngine({ publish: false });
+    await engine.start();
+    const dispatcher = new CommandDispatcher({ engine });
+    const send = (command: unknown) =>
+      dispatcher.dispatch({
+        id: "t-reseq",
+        issuedAt: new Date().toISOString(),
+        actor: { id: "test", role: "ops", label: "test" },
+        command: command as never,
+      } satisfies CommandEnvelope);
+
+    // Force some history, which is the only thing that makes autopilot avoid a
+    // repeat — it scores the whole crate on every transition.
+    (engine.autopilot as unknown as { history: string[] }).history = ["x", "y"];
+
+    const r = await send({ type: "autopilot.resequence" });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const result = r.result as { crateSize: number };
+      expect(result.crateSize).toBe(engine.autopilot.crate.length);
+    }
+    expect((engine.autopilot as unknown as { history: string[] }).history).toEqual([]);
+    await engine.close();
+  });
+
+  test("resequence can pin an energy target in the same call", async () => {
+    const engine = new HeadlessEngine({ publish: false });
+    await engine.start();
+    const dispatcher = new CommandDispatcher({ engine });
+    const r = await dispatcher.dispatch({
+      id: "t-reseq2",
+      issuedAt: new Date().toISOString(),
+      actor: { id: "test", role: "ops", label: "test" },
+      command: { type: "autopilot.resequence", targetEnergy: 0.25 } as never,
+    } satisfies CommandEnvelope);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect((r.result as { energyTarget: number }).energyTarget).toBeCloseTo(0.25, 6);
+    expect(engine.autopilot.energyTarget).toBeCloseTo(0.25, 6);
+    await engine.close();
+  });
+
+  test("reports NO_SUCH_TRACK rather than throwing", async () => {    const { send } = await fixture();
     const r = await send({ type: "cue.track", trackId: "not-in-crate" });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.code).toBe("NO_SUCH_TRACK");

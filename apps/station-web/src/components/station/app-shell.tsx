@@ -17,8 +17,13 @@ import type { TabId } from '@/lib/station-types'
 
 const TAB_ORDER: TabId[] = ['on-air', 'schedule', 'submit', 'rights', 'sponsors', 'ops']
 
-export function AppShell() {
-  const [tab, setTab] = useState<TabId>('on-air')
+/**
+ * `initialTab` is how the internal /ops route opens straight into the control
+ * room. On the listener-facing page it stays undefined and the shell opens on
+ * On Air.
+ */
+export function AppShell({ initialTab }: { initialTab?: TabId } = {}) {
+  const [tab, setTab] = useState<TabId>(initialTab ?? 'on-air')
   const [shortcutsOpen, setShortcutsOpen] = useKeyboardShortcuts(setTab)
 
   const navigate = useCallback((t: string) => {
@@ -66,7 +71,13 @@ export function AppShell() {
             </div>
             <p className="mt-2 text-muted-foreground leading-relaxed">
               The Carolinas&rsquo; independent hip-hop signal. Streaming 24/7 from the
-              Piedmont. Powered by AzuraCast &middot; Icecast 128 kbps.
+              Piedmont. {/*
+                Was "Powered by AzuraCast · Icecast 128 kbps". There is no
+                AzuraCast in this stack — the stack is a headless DJ engine
+                publishing into Liquidsoap, which encodes to Icecast. Naming a
+                vendor that does not run here is the kind of claim that
+                survives long after it stops being true.
+              */}Headless DJ engine &rarr; Liquidsoap &rarr; Icecast, 128 kbps MP3.
             </p>
           </div>
           <div>
@@ -85,8 +96,19 @@ export function AppShell() {
               Find Us
             </div>
             <ul className="mt-2 space-y-1 text-muted-foreground">
-              <li>Directory listing: TuneIn &middot; Radio Browser</li>
-              <li>Studio line: (910) 555-0191</li>
+              {/*
+                Both lines below were invented. "(910) 555-0191" is a
+                fictional exchange used in US example text, and "Directory
+                listing: TuneIn · Radio Browser" asserted a presence that has
+                never been verified. A station that has not been listed
+                anywhere should say it rather than imply otherwise; the
+                stream URLs are the thing a listener actually needs.
+              */}
+              <li>Not listed in any directory yet.</li>
+              <li>
+                Listen: <code className="font-mono">/live.mp3</code> (128 kbps) or{' '}
+                <code className="font-mono">/mobile.mp3</code> (64 kbps)
+              </li>
               <li>&copy; {new Date().getFullYear()} NCSound Radio. All bars reserved.</li>
             </ul>
           </div>

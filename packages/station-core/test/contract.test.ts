@@ -10,7 +10,7 @@ const SAMPLES: Record<string, Record<string, unknown>> = {
   "mix.setDeckVolume": { slot: 0, volume: 0.5 },
   "mix.setEq": { slot: 0, band: "low", db: 0 },
   "mix.setFilter": { slot: 0, bipolar: 0 },
-  "mix.setMasterGain": { gain: 0.5 },
+  "mix.setMasterGain": { gain: -3 },
   "mix.setAutoGain": { enabled: true },
   "mix.setTransitionBars": { bars: 4 },
   "mix.mixNext": {},
@@ -35,11 +35,25 @@ const SAMPLES: Record<string, Record<string, unknown>> = {
   "library.setPitchRange": { range: 8 },
   "library.setPreset": { preset: { id: "auto", name: "Auto", bars: 4, curve: "equal-power" } },
   "query.analysis": { trackId: "t" },
+  "transport.onAir": { enabled: true },
 };
 
 describe("command coverage", () => {
   test("every declared command type has a schema branch", () => {
     expect(djCommandSchema.options.length).toBe(COMMAND_TYPES.length);
+  });
+
+  /**
+   * Pin the count.
+   *
+   * The consistency test above passes for any number, so prose that quotes one
+   * ("station-core defines 42 commands") drifted unnoticed when
+   * `transport.onAir`/`transport.offAir` were added. Bumping this number is
+   * cheap; leaving a stale claim in a header is how the dispatcher and its
+   * documentation end up describing different systems.
+   */
+  test("the command count is what the documentation claims", () => {
+    expect(COMMAND_TYPES.length).toBe(44);
   });
 
   test.each(COMMAND_TYPES)("%s accepts a minimal valid payload", (type) => {
@@ -55,7 +69,23 @@ describe("valid commands", () => {
     { type: "mix.setCrossfader", position: 1 },
     { type: "mix.setCrossfader", position: 0 },
     { type: "mix.setEq", slot: 0, band: "high", db: -6 },
-    { type: "mix.setEq", slot: 1, band: "low", db: -48 },
+    // Boundaries of the range Deck.setEq actually implements (-24..+6).
+    { type: "mix.setEq", slot: 1, band: "low", db: -24 },
+    { type: "mix.setEq", slot: 1, band: "high", db: 6 },
+    // Boundaries of Mixer.setMasterBpm (70..175).
+    { type: "sync.masterBpm", bpm: 70 },
+    { type: "sync.masterBpm", bpm: 175 },
+    // The console offers 32B and 1/2B, which the old 1/2/4/8 dispatcher
+    // list rejected outright.
+    { type: "mix.setTransitionBars", bars: 32 },
+    { type: "mix.setTransitionBars", bars: 0.5 },
+    { type: "mix.setMasterGain", gain: -60 },
+    // An 8-bar blend has to be expressible: the dispatcher used to receive
+    // only an id, guessed 2 bars, and played every engine-side transition at
+    // the default length.
+    { type: "mix.mixNext", presetId: "long", bars: 8, curve: "equal-power" },
+    { type: "mix.mixNext" },
+    { type: "library.setPreset", preset: { id: "slam", name: "Half-Bar Slam", bars: 0.5, curve: "cut" } },
     { type: "cue.track", trackId: "abc", slot: 1 },
     { type: "cue.track", trackId: "abc" },
     { type: "cue.hotCue", slot: 1, cue: "drop" },
@@ -86,6 +116,26 @@ describe("malformed and hostile input is rejected", () => {
     ["unknown command type", { type: "transport.explode" }],
     ["deck slot out of range", { type: "mix.setEq", slot: 2, band: "high", db: -6 }],
     ["unknown eq band", { type: "mix.setEq", slot: 0, band: "treble", db: -6 }],
+    // Below the deck's own clamp: validating this used to "succeed" while the
+    // deck silently narrowed it to -24.
+    ["eq below the deck clamp", { type: "mix.setEq", slot: 0, band: "low", db: -48 }],
+    ["eq above the deck clamp", { type: "mix.setEq", slot: 0, band: "low", db: 12 }],
+    ["transition bars over the mixer clamp", { type: "mix.setTransitionBars", bars: 64 }],
+    ["transition bars below the mixer clamp", { type: "mix.setTransitionBars", bars: 0.1 }],
+    ["master gain above 6dB", { type: "mix.setMasterGain", gain: 7 }],
+    ["master bpm below the mixer clamp", { type: "sync.masterBpm", bpm: 69 }],
+    ["master bpm above the mixer clamp", { type: "sync.masterBpm", bpm: 176 }],
+    // `mixNext` now carries the transition length. Without these bounds a
+    // caller could ask for a 400-bar transition that the mixer silently
+    // clamps to 32.
+    ["mixNext bars above the mixer clamp", { type: "mix.mixNext", presetId: "long", bars: 64 }],
+    ["mixNext bars below the transition floor", { type: "mix.mixNext", bars: 0.1 }],
+    ["mixNext unknown curve", { type: "mix.mixNext", curve: "wobble" }],
+    ["mixNext empty preset id", { type: "mix.mixNext", presetId: "" }],
+    // `library.setPreset` shares the same object schema; it used to allow 64
+    // bars while `mixNext` allowed none at all.
+    ["setPreset bars above the mixer clamp", { type: "library.setPreset", preset: { id: "long", name: "Long", bars: 64, curve: "equal-power" } }],
+    ["setPreset bars below the transition floor", { type: "library.setPreset", preset: { id: "cut", name: "Cut", bars: 0.1, curve: "cut" } }],
     ["non-enum pitch range", { type: "library.setPitchRange", range: 7 }],
     ["unknown scratch pattern", { type: "scratch.pattern", patternId: "uzis-not-real" }],
     ["empty track id", { type: "cue.request", requestId: "" }],

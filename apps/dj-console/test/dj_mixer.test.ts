@@ -53,10 +53,18 @@ class MockAnalyserNode {
   connect() {}
 }
 
+/**
+ * Routing-capable channel merger mock.
+ *
+ * The merge mock this replaced had no `disconnect`, which the mixer never called
+ * before: `routeOutputs` is now the single owner of the destination wiring and
+ * rebuilds it on construction, so the mock has to model teardown too.
+ */
 class MockChannelMergerNode {
-  connect() {}
-}
-
+connect() {}
+  disconnect() {}
+  }
+  
 class MockAudioBuffer {
   duration = 10;
   sampleRate = 44100;

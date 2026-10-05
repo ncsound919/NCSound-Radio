@@ -347,10 +347,36 @@ export function analyze(buf: AudioBuffer): TrackAnalysis {
   }
   // 3) refine tempo + phase over a widening window (drift stays inside the search window)
   let P2 = P;
-  for (const sec of [8, 20, 45, MAX_SECONDS, MAX_SECONDS]) ({ P: P2, a } = fitBeats(flux, hz, P2, a, sec));
-
-  const finalBpm = (60 * hz) / P2;
-  const firstBeat = (((a % P2) + P2) % P2) / hz;
+  let a2 = a;
+  let fitOk = true;
+  for (const sec of [8, 20, 45, MAX_SECONDS, MAX_SECONDS]) {
+    const fit = fitBeats(flux, hz, P2, a2, sec);
+    // fitBeats is an unconstrained least-squares slope, so a decreasing beat
+    // grid or a degenerate fit hands back a non-positive period. Everything
+    // downstream divides by this, and a non-finite period makes
+    // runTransition's fade duration non-finite, which throws
+    // setValueCurveAtTime and leaves both decks silenced mid-handover.
+    if (!(fit.P > 0) || !Number.isFinite(fit.P) || !Number.isFinite(fit.a)) {
+      fitOk = false;
+      break;
+    }
+    P2 = fit.P;
+    a2 = fit.a;
+  }
+  /**
+   * detectTempo's [TEMPO_MIN, TEMPO_MAX] bounds apply to its own search, not to
+   * the refined fit, so the refined value was never range-checked. When the fit
+   * degrades, fall back to the coarse tempogram result, which is always in
+   * range and always has a positive period.
+   */
+  const rawBpm = fitOk ? (60 * hz) / P2 : bpm;
+  const finalBpm =
+    Number.isFinite(rawBpm) && rawBpm > 0
+      ? Math.min(TEMPO_MAX, Math.max(TEMPO_MIN, rawBpm))
+      : bpm;
+  const beatPeriod = fitOk ? P2 : P;
+  const beatPhase = fitOk ? a2 : a;
+  const firstBeat = (((beatPhase % beatPeriod) + beatPeriod) % beatPeriod) / hz;
   const { key, keyName } = detectCamelotKey(buf);
   const { energy, rmsDb, autoGainDb, cuePoints, waveform } = extractWaveformAndCues(buf, finalBpm, firstBeat);
 

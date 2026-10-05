@@ -93,7 +93,15 @@ model AdPlay {
   campaignId String
   campaign   Campaign @relation(fields: [campaignId], references: [id])
   playedAt   DateTime
-  source     String   @default("azuracast-history")
+  /// Provenance of this row. `program-clock` means the ad-sync job computed it
+  /// from the station's own schedule and the on-air clock.
+  ///
+  /// The default used to be `azuracast-history`, which asserted these rows were
+  /// pulled from a broadcaster's song-history API. There is no AzuraCast in
+  /// this stack; the rows were computed here and then labelled as someone
+  /// else's telemetry, which made computed proof-of-play indistinguishable
+  /// from externally attested proof-of-play.
+  source     String   @default("program-clock")
 
   @@index([playedAt])
   @@unique([campaignId, playedAt])

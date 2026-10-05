@@ -34,6 +34,7 @@ export class MasterRinger {
   private source: AudioNode | null = null;
   private running = false;
   private totalFrames = 0;
+  private lastBlockAtMs = 0;
 
   constructor(opts: RingerOptions = {}) {
     this.ctx = createHeadlessContext({
@@ -44,6 +45,7 @@ export class MasterRinger {
       bufferSize: opts.bufferSize,
       onChunk: ({ channels, frames, contextTime }) => {
         this.totalFrames += frames;
+        this.lastBlockAtMs = performance.now();
         if (opts.onFrames) {
           const m = measureChunk(channels);
           opts.onFrames({ frames, peak: m.peak, rms: m.rms });
@@ -63,6 +65,43 @@ export class MasterRinger {
 
   get isRunning(): boolean {
     return this.running;
+  }
+
+  /** The ScriptProcessor node, so a caller can register it as a durable tap. */
+  get tapNode(): AudioNode {
+    return this.tap.node;
+  }
+
+  /**
+   * Re-attach the tap to the master bus.
+   *
+   * `AudioNode.disconnect()` removes every outgoing connection of a node,
+   * including ones made from outside the mixer. Anything that re-routes the
+   * master bus therefore silently detaches this tap, and the consequence is
+   * severe and quiet: `onaudioprocess` stops firing, `onChunk` stops publishing,
+   * harbor receives nothing, and the station goes silent while every status field
+   * still reports a playing engine.
+   *
+   * Recovery from that is to put the connection back, which is what this does.
+   */
+  reattach(from: AudioNode): void {
+    this.source = from;
+    try {
+      from.connect(this.tap.node);
+    } catch {
+      /* already connected */
+    }
+    // The ScriptProcessor only runs while something pulls its output.
+    try {
+      this.tap.node.connect(this.ctx.destination);
+    } catch {
+      /* already connected */
+    }
+  }
+
+  /** True when this tap has seen a block recently enough to be publishing. */
+  get lastBlockAgeMs(): number {
+    return this.lastBlockAtMs === 0 ? Infinity : performance.now() - this.lastBlockAtMs;
   }
 
   async start(from: AudioNode): Promise<void> {

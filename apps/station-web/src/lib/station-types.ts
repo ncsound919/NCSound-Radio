@@ -60,6 +60,14 @@ export type NowPlayingResponse = {
   daypart: Daypart;
   /** Always null until a scheduled show is actually taken into account. */
   liveShow: LiveShowInfo | null;
+  /** Why `mode` is not `live`, when it is not. Null while live. */
+  standbyReason?: string | null;
+  /** The three on-air components, so a UI can show which one is failing. */
+  broadcastComponents?: {
+    enginePlaying: boolean;
+    outputLive: boolean;
+    mountConnected: boolean;
+  } | null;
   next: QueueEntry[];
   heat: Record<string, number>;
   requestedBy: Record<string, string[]>;
@@ -324,7 +332,19 @@ export type StatsResponse = {
   }
   bandwidth: { kbps: number; gbPerListenerHour: number; projectedGBDay: number | null }
   uptime: { streamOk: boolean; icecastReachable: boolean; daysSinceLaunch: number }
-  checklist: string[]
+  /**
+   * A readiness check, measured rather than remembered.
+   *
+   * `unknown` is distinct from `problem`: a check whose inputs are unavailable
+   * must not render as a confident tick or a confident cross.
+   */
+  readiness: {
+    id: string
+    label: string
+    state: 'ok' | 'problem' | 'unknown'
+    /** What was actually observed. Always populated, including when unknown. */
+    detail: string
+  }[]
 }
 
 // ---- Player/store shared enums ----

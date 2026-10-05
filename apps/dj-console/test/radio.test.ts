@@ -72,7 +72,11 @@ const radio = new RadioBroadcastEngine(mockCtx);
 
 // 1. Initial State & Configuration
 assert.equal(radio.isOnAir, false);
-assert.equal(radio.config.stationName, "Club Horizon Radio");
+// Asserted against the config, not a literal. This used to pin the brand
+// string "Club Horizon Radio" in three places, so renaming the station broke
+// the test rather than the behaviour — and the test passed for the old
+// default even after an operator changed it.
+assert.ok(radio.config.stationName.length > 0, "a station name must be configured");
 assert.equal(radio.config.broadcastDspEnabled, true);
 assert.ok(radio.sweepers.length >= 4, "Must have built-in radio sweepers initialized");
 
@@ -119,7 +123,7 @@ const payload = radio.buildNowPlayingPayload(
   }
 );
 
-assert.equal(payload.station.name, "Club Horizon Radio");
+assert.equal(payload.station.name, radio.config.stationName);
 assert.equal(payload.nowPlaying.title, "Midnight Warehouse");
 assert.equal(payload.nowPlaying.artist, "Studio Syndicate");
 assert.equal(payload.nowPlaying.bpm, 124);
@@ -137,9 +141,29 @@ assert.equal(radio.totalJinglesPlayed, 1);
 
 // 6. Embed Player Snippet Generation
 const embedHtml = radio.generateEmbedWidgetHtml();
-assert.ok(embedHtml.includes("Club Horizon Radio"));
+assert.ok(
+  embedHtml.includes(radio.config.stationName),
+  "widget carries the configured station name",
+);
 assert.ok(embedHtml.includes("LIVE BROADCAST"));
-assert.ok(embedHtml.includes("/api/radio/nowplaying"));
+// The old assertion looked for "/api/radio/nowplaying", which only survives in
+// the explanatory comment above the fetch — it passed whether or not the
+// widget pointed anywhere real. Assert the endpoint the script actually calls.
+assert.ok(
+  embedHtml.includes(`fetch('${radio.config.nowPlayingApiUrl}')`),
+  "widget polls the live now-playing endpoint",
+);
+// ...and the endpoint it polls must be the station app's real route. The
+// removed `/api/radio/nowplaying` fixture answered with a hardcoded track, so a
+// widget pointed at it displayed music that never aired.
+assert.ok(
+  /\/api\/nowplaying$/.test(radio.config.nowPlayingApiUrl),
+  `now-playing endpoint must be the station app's /api/nowplaying, got ${radio.config.nowPlayingApiUrl}`,
+);
+assert.ok(
+  embedHtml.includes(`src="${radio.config.websiteUrl}${radio.config.mountPoint}"`),
+  "widget audio element points at the configured stream mount",
+);
 
 // 7. Silence Watchdog & 24/7 Failover
 radio.toggleOnAir(true);

@@ -14,6 +14,8 @@
 #
 # Start the engine yourself, then run this.
 
+. "$(dirname "$0")/load-credentials.sh"
+
 HOST=127.0.0.1
 PORT=8010
 LOG=/tmp/ncsound-onair.log
@@ -33,7 +35,7 @@ echo "== 2. is the harbor receiving data right now? =="
 # Instead ask the only thing that matters and is observable from WSL: is the
 # harbor still accepting an upload? A silent mount with a healthy source would
 # mean the engine stopped feeding it.
-if curl -s -o /dev/null -w '%{http_code}' -u engine:REDACTED \
+if curl -s -o /dev/null -w '%{http_code}' -u "$HARBOR_USER:$HARBOR_PASSWORD" \
      --max-time 3 -X POST -H 'Content-Type: audio/wav' \
      --data-binary @/dev/null "http://$HOST:8008/dj" 2>/dev/null | grep -q '^[45]'; then
   echo "  PASS  harbor endpoint reachable and answering source requests"
@@ -71,8 +73,8 @@ rc=$?
 
 echo
 echo "== 4. live mounts from icecast =="
-curl -s -u admin:REDACTED "http://$HOST:$PORT/admin/listmounts" | tr '<' '\n' | grep -a mountname || \
-  curl -s -u admin:REDACTED "http://$HOST:$PORT/admin/stats" | tr '<' '\n' | grep -aE 'source mount|listeners' | head -8
+curl -s -u "$ICECAST_ADMIN_USER:$ICECAST_ADMIN_PASSWORD" "http://$HOST:$PORT/admin/listmounts" | tr '<' '\n' | grep -a mountname || \
+curl -s -u "$ICECAST_ADMIN_USER:$ICECAST_ADMIN_PASSWORD" "http://$HOST:$PORT/admin/stats" | tr '<' '\n' | grep -aE 'source mount|listeners' | head -8
 
 if [ $rc -eq 0 ]; then
   echo

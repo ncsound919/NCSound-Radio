@@ -18,26 +18,34 @@ import {
   LockOpen,
   Clock3,
   KeyRound,
+  AlertTriangle,
+  HelpCircle,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useOpsPin } from '@/hooks/use-ops-pin'
+import { useAdminSession } from '@/hooks/use-admin-session'
 import { cn } from '@/lib/utils'
 import type { StatsResponse, SubmissionDTO } from '@/lib/station-types'
 
-const QUEUE_STATUSES = ['PENDING', 'IN_REVIEW', 'APPROVED', 'DECLINED'] as const
+/**
+ * ACTION is the working list: everything not yet decided, in one place.
+ *
+ * The queue used to open on PENDING with separate tabs for IN_REVIEW, APPROVED
+ * and DECLINED, which meant a submission could sit in a tab nobody was looking
+ * at. Moving a submission to IN_REVIEW was a mandatory-looking extra click that
+ * changed nothing � approval issues the rights record either way.
+ */
+const QUEUE_STATUSES = ['ACTION', 'APPROVED', 'DECLINED'] as const
 type QueueStatus = (typeof QUEUE_STATUSES)[number]
 
 const STATUS_TAB_CLASSES: Record<QueueStatus, string> = {
-  PENDING: 'data-[state=active]:text-amber-400',
-  IN_REVIEW: 'data-[state=active]:text-amber-400',
+  ACTION: 'data-[state=active]:text-amber-400',
   APPROVED: 'data-[state=active]:text-emerald-400',
   DECLINED: 'data-[state=active]:text-red-400',
 }
@@ -125,25 +133,36 @@ export function OpsSection() {
   const [submissions, setSubmissions] = useState<SubmissionDTO[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [tab, setTab] = useState<QueueStatus>('PENDING')
+  const [tab, setTab] = useState<QueueStatus>('ACTION')
   const [notesMap, setNotesMap] = useState<Record<string, string>>({})
   const [busyId, setBusyId] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
-  const [checks, setChecks] = useState<boolean[]>([])
-  const { unlocked, unlock, lock, authHeaders } = useOpsPin()
+  const [panicArmed, setPanicArmed] = useState(false)
+  const [commandBusy, setCommandBusy] = useState(false)
+  const { authenticated: unlocked, user, configured, loading: authLoading, signIn, signOut } =
+    useAdminSession()
+  const [username, setUsername] = useState('')
   const [pinInput, setPinInput] = useState('')
   const [pinBusy, setPinBusy] = useState(false)
+  const [signInError, setSignInError] = useState<string | null>(null)
 
   async function handleUnlock() {
-    if (!pinInput.trim() || pinBusy) return
+    if (pinBusy) return
+    if (!username.trim() || !pinInput) {
+      setSignInError('Enter your username and password.')
+      return
+    }
     setPinBusy(true)
-    const ok = await unlock(pinInput.trim())
+    setSignInError(null)
+    const result = await signIn(username.trim(), pinInput)
     setPinBusy(false)
-    if (ok) {
+    if (result.ok) {
       setPinInput('')
-      toast.success('Control room unlocked — the desk is yours.')
+      toast.success('Signed in to the control room.')
     } else {
-      toast.error('Wrong PIN — that key does not open this door (demo: 0913).')
+      // Never echo what was typed, and never say which half was wrong.
+      setSignInError(result.error ?? 'Sign-in failed.')
+      toast.error(result.error ?? 'Sign-in failed.')
     }
   }
 
@@ -171,46 +190,23 @@ export function OpsSection() {
     void refresh()
   }, [refresh])
 
-  // ---- Pre-launch checklist: read localStorage on mount ----
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem('ncsound-prelaunch')
-      if (raw) {
-        const parsed: unknown = JSON.parse(raw)
-        if (Array.isArray(parsed)) {
-          setChecks(parsed.map((v) => v === true))
-        }
-      }
-    } catch {
-      /* corrupted storage — start fresh */
-    }
-  }, [])
-
-  // Align checklist length with stats.checklist once stats arrive
-  useEffect(() => {
-    if (!stats) return
-    setChecks((prev) => stats.checklist.map((_, i) => prev[i] ?? false))
-  }, [stats])
-
-  function toggleCheck(idx: number) {
-    setChecks((prev) => {
-      const next = [...prev]
-      next[idx] = !next[idx]
-      try {
-        localStorage.setItem('ncsound-prelaunch', JSON.stringify(next))
-      } catch {
-        /* storage unavailable — keep in-memory only */
-      }
-      return next
-    })
-  }
+  /**
+   * Readiness is measured, not remembered.
+   *
+   * This card used to tick off eight hardcoded pre-launch items whose state lived
+   * in `localStorage`, so the station displayed `3/8` next to a list of things it
+   * had never checked — including "uptime alert tested" and "backups restored",
+   * which cannot be observed from here at all. There is nothing to toggle: every
+   * row now comes from `/api/stats`, which derived it from a value it actually
+   * fetched.
+   */
 
   async function review(s: SubmissionDTO, status: Extract<QueueStatus, 'APPROVED' | 'DECLINED' | 'IN_REVIEW'>) {
     setBusyId(s.id)
     try {
       const res = await fetch(`/api/submissions/${encodeURIComponent(s.id)}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status, reviewNotes: notesMap[s.id] ?? undefined }),
       })
       if (!res.ok) {
@@ -236,14 +232,14 @@ export function OpsSection() {
 
   async function runAdSync() {
     if (!unlocked) {
-      toast.info('Control room locked — unlock below with the station PIN (demo: 0913).')
+      toast.info('Control room locked — unlock below with the station PIN.')
       return
     }
     setSyncing(true)
     try {
       const res = await fetch('/api/ops/ad-sync', {
         method: 'POST',
-        headers: authHeaders(),
+        
       })
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null
@@ -251,7 +247,11 @@ export function OpsSection() {
         return
       }
       const json = (await res.json()) as { inserted: number }
-      toast.success(`Synced ${json.inserted} new ad plays from AzuraCast history`)
+      toast.success(
+        json.inserted > 0
+          ? `Synced ${json.inserted} new ad plays`
+          : 'Ad sync ran — nothing new to record.',
+      )
       await refresh()
     } catch {
       toast.error('Network error — ad sync did not run.')
@@ -260,18 +260,74 @@ export function OpsSection() {
     }
   }
 
+  /**
+   * Reach the engine from the station site.
+   *
+   * The route allowlists the command, so this cannot become a general remote
+   * control, and 503 (engine unreachable) is reported differently from a
+   * refusal: "nothing was sent" is a different problem from "the engine said
+   * no", and an operator needs to know which one happened.
+   */
+  async function sendEngineCommand(type: string, label: string) {
+    if (!unlocked) {
+      toast.info('Control room locked — unlock below with the station PIN.')
+      return
+    }
+    setCommandBusy(true)
+    let applied = false
+    try {
+      const res = await fetch('/api/ops/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type }),
+      })
+      const json = (await res.json().catch(() => null)) as
+        | { ok?: boolean; unreachable?: boolean; error?: string | null; code?: string | null }
+        | null
+      if (res.status === 503) {
+        // Deliberately not "the stream was not touched". A 4s timeout can fire
+        // after the engine already applied the command, and telling the
+        // operator nothing happened invites a second press. Each press carries a
+        // fresh envelope id, so it would not be deduplicated.
+        toast.error('No answer within 4s — the engine may or may not have acted. Check the status above.')
+        return
+      }
+      if (!json?.ok) {
+        toast.error(json?.error ?? `${label} was refused by the engine.`)
+        return
+      }
+      applied = true
+      toast.success(label)
+    } catch {
+      toast.error('Network error — the engine was never reached.')
+    } finally {
+      setCommandBusy(false)
+      // Disarm on success only. Clearing it unconditionally meant a refused
+      // stop silently disarmed the confirmation the operator was looking at.
+      if (applied) setPanicArmed(false)
+    }
+  }
+
   const counts: Record<QueueStatus, number> = {
-    PENDING: 0,
-    IN_REVIEW: 0,
+    ACTION: 0,
     APPROVED: 0,
     DECLINED: 0,
   }
   for (const s of submissions) {
-    if (counts[s.status] !== undefined) counts[s.status]++
+    // PENDING and IN_REVIEW are the same thing to an operator: nobody has
+    // decided yet. Counting them separately is what let work hide in a tab.
+    if (s.status === 'PENDING' || s.status === 'IN_REVIEW') counts.ACTION += 1
+    if (s.status === 'APPROVED') counts.APPROVED += 1
+    if (s.status === 'DECLINED') counts.DECLINED += 1
   }
-  const queue = submissions.filter((s) => s.status === tab)
-  const doneCount = checks.filter(Boolean).length
-  const checklist = stats?.checklist ?? []
+  // ACTION unions the undecided states; APPROVED and DECLINED are history.
+  const queue =
+    tab === 'ACTION'
+      ? submissions.filter((s) => s.status === 'PENDING' || s.status === 'IN_REVIEW')
+      : submissions.filter((s) => s.status === tab)
+
+  const readiness = stats?.readiness ?? []
+const problems = readiness.filter((r) => r.state === 'problem').length
 
   return (
     <motion.section
@@ -320,15 +376,27 @@ export function OpsSection() {
               size="sm"
               className="h-8 text-xs text-muted-foreground hover:text-foreground"
               onClick={() => {
-                lock()
-                toast.info('Control room locked — mutating actions are disabled.')
+                // Revokes the session server-side, not just locally.
+                void signOut()
+                toast.info(`Signed out${user ? ` — see you, ${user}` : ''}.`)
               }}
             >
-              <Lock className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Lock
+              <Lock className="mr-1.5 h-3.5 w-3.5" aria-hidden /> Sign out
             </Button>
           )}
         </div>
       </div>
+
+      {false && (
+        <p
+          role="status"
+          className="mt-3 rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-xs text-amber-200/90"
+        >
+          Still on the built-in bootstrap PIN. Set <code className="font-mono">OPS_PIN</code> in{' '}
+          <code className="font-mono">.env</code> or write the <code className="font-mono">ops_pin</code>{' '}
+          StationSetting to change it.
+        </p>
+      )}
 
       {/* ---- Loading ---- */}
       {loading && (
@@ -419,42 +487,73 @@ export function OpsSection() {
                       <Lock className="h-5 w-5" aria-hidden />
                     </span>
                     <div>
-                      <p className="text-sm font-bold">Control room locked</p>
+                      <p className="text-sm font-bold">
+                        {authLoading
+                          ? 'Checking session…'
+                          : configured
+                            ? 'Control room locked'
+                            : 'No admin account yet'}
+                      </p>
                       <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
-                        Review actions, gate decisions and ad sync require the station PIN. The
-                        dashboards stay public — the desk itself does not.
+                        {!configured && !authLoading ? (
+                          <>
+                            This station has no internal admin account. Create one once with{' '}
+                            <code className="font-mono">
+                              scripts/set-admin-password.ts
+                            </code>
+                            . Until then there is deliberately no way in — there is no default
+                            credential to guess.
+                          </>
+                        ) : (
+                          <>
+                            Review actions, rights decisions, ad sync and engine commands
+                            require an internal account. The session is a signed cookie your
+                            browser cannot read.
+                          </>
+                        )}
                       </p>
                     </div>
                     <form
-                      className="flex w-full max-w-xs items-center gap-2"
+                      className="flex w-full max-w-sm flex-col gap-2 sm:flex-row sm:items-center"
                       onSubmit={(e) => {
                         e.preventDefault()
                         void handleUnlock()
                       }}
                     >
                       <Input
+                        type="text"
+                        autoComplete="username"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        placeholder="Username"
+                        className="h-9 flex-1 text-center font-mono"
+                        aria-label="Admin username"
+                        disabled={!configured}
+                      />
+                      <Input
                         type="password"
-                        inputMode="numeric"
-                        autoComplete="off"
+                        autoComplete="current-password"
                         value={pinInput}
                         onChange={(e) => setPinInput(e.target.value)}
-                        placeholder="Station PIN"
-                        className="h-9 flex-1 text-center font-mono tracking-[0.4em]"
-                        aria-label="Station PIN"
-                        maxLength={16}
+                        placeholder="Password"
+                        className="h-9 flex-1 text-center font-mono"
+                        aria-label="Password"
+                        disabled={!configured}
                       />
                       <Button
                         type="submit"
                         size="sm"
                         className="h-9"
-                        disabled={pinBusy || !pinInput.trim()}
+                        disabled={pinBusy || !configured || !username.trim() || !pinInput}
                       >
-                        <KeyRound className="mr-1.5 h-4 w-4" aria-hidden /> Unlock
+                        <KeyRound className="mr-1.5 h-4 w-4" aria-hidden /> Sign in
                       </Button>
                     </form>
-                    <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground/70">
-                      Demo PIN 0913 · clears when the tab closes
-                    </p>
+                    {signInError && (
+                      <p className="text-xs text-destructive" role="alert">
+                        {signInError}
+                      </p>
+                    )}
                   </div>
                 ) : (
                 <div className="max-h-96 space-y-3 overflow-y-auto scrollbar-thin pr-1">
@@ -515,7 +614,7 @@ export function OpsSection() {
                           onChange={(e) =>
                             setNotesMap((prev) => ({ ...prev, [s.id]: e.target.value }))
                           }
-                          placeholder="Review notes — samples checked, owner verified, etc."
+                          placeholder="Notes (optional — only if there is something to record)"
                           rows={2}
                           className="text-xs"
                           aria-label={`Review notes for ${s.trackTitle}`}
@@ -538,15 +637,6 @@ export function OpsSection() {
                           >
                             <XCircle className="mr-1.5 h-4 w-4" aria-hidden />
                             Decline
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-9"
-                            disabled={busyId === s.id}
-                            onClick={() => void review(s, 'IN_REVIEW')}
-                          >
-                            Mark In Review
                           </Button>
                         </div>
                       </div>
@@ -664,12 +754,97 @@ export function OpsSection() {
                       ? 'Running ad sync…'
                       : unlocked
                         ? 'Run ad sync'
-                        : 'Unlock to run the nightly sync'}
+                        : 'Sign in to run the sync'}
                   </Button>
                 </CardContent>
               </Card>
 
-              {/* Pre-launch checklist */}
+              {/* Emergency broadcast control.
+                  This is the station site's only live handle on the engine.
+                  PANIC is two-step rather than one click: LibreTime asks before
+                  cancelling a running show, and a control that silences the
+                  station on a stray touch is worse than no control at all. */}
+              <Card className="border-destructive/40">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <div className="rounded-md bg-destructive/10 p-1.5 text-destructive">
+                      <AlertCircle className="h-4 w-4" aria-hidden />
+                    </div>
+                    Emergency broadcast control
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-2.5">
+                  <p className="text-xs text-muted-foreground">
+                    These act on the engine that feeds the stream, not on the
+                    browser. Requires the station PIN.
+                  </p>
+                  <Button
+                    onClick={() => void sendEngineCommand('transport.play', 'Engine resumed playback.')}
+                    disabled={commandBusy || !unlocked}
+                    variant="outline"
+                    className="h-9 w-full text-xs"
+                  >
+                    Resume engine
+                  </Button>
+                  {panicArmed ? (
+                    <div className="space-y-2 rounded-md border border-destructive/50 bg-destructive/10 p-2">
+                      <p className="text-xs font-semibold text-destructive">
+                        This stops the engine. The stream will not necessarily be
+                        silent: Liquidsoap falls back to the library playlist
+                        after its buffer runs dry, and up to 12s of already
+                        buffered audio will still play out.
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 text-xs"
+                          onClick={() => setPanicArmed(false)}
+                          disabled={commandBusy}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="h-8 text-xs"
+                          disabled={commandBusy}
+                          onClick={() =>
+                            void sendEngineCommand('transport.stop', 'Engine stopped.')
+                          }
+                        >
+                          Yes, stop the engine
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    // Every way to stop goes through the same arm. This card
+                    // previously had a plain "Stop engine" button one row above
+                    // the guarded one, which defeated the confirmation for the
+                    // exact action it existed to protect.
+                    <Button
+                      onClick={() => setPanicArmed(true)}
+                      disabled={commandBusy || !unlocked}
+                      variant="destructive"
+                      className="h-10 w-full font-bold tracking-tight"
+                    >
+                      TAKE OFF AIR
+                    </Button>
+                  )}
+                  {!unlocked && (
+                    <p className="text-[11px] text-amber-400">
+                      Sign in above to use
+                      these.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Readiness, measured.
+                  Every row is derived from a value /api/stats actually fetched.
+                  There is nothing to tick: a check the operator can perform by
+                  hand is not a measurement, and rendering it beside genuinely
+                  measured rows made the card read as verified when it was not. */}
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center justify-between gap-2 text-base">
@@ -677,36 +852,42 @@ export function OpsSection() {
                       <span className="rounded-md bg-primary/10 p-1.5 text-primary">
                         <ClipboardCheck className="h-4 w-4" aria-hidden />
                       </span>
-                      Pre-launch checklist
+                      Station readiness
                     </span>
                     <Badge
                       variant="outline"
                       className="border-border bg-card/60 font-mono text-xs"
                     >
-                      {doneCount}/{checklist.length}
+                      {readiness.length === 0
+                        ? 'unmeasured'
+                        : `${problems} problem${problems === 1 ? '' : 's'}`}
                     </Badge>
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2.5">
-                    {checklist.length === 0 && (
-                      <p className="text-xs text-muted-foreground">Checklist unavailable.</p>
+                    {readiness.length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Nothing measured yet — ingest has not reported.
+                      </p>
                     )}
-                    {checklist.map((item, i) => (
-                      <label
-                        key={item}
-                        className="flex cursor-pointer items-start gap-2.5 text-xs leading-snug"
-                      >
-                        <Checkbox
-                          checked={checks[i] ?? false}
-                          onCheckedChange={() => toggleCheck(i)}
-                          className="mt-0.5"
-                          aria-label={item}
-                        />
-                        <span className={checks[i] ? 'text-muted-foreground line-through' : ''}>
-                          {item}
+                    {readiness.map((item) => (
+                      <div key={item.id} className="flex items-start gap-2.5 text-xs leading-snug">
+                        {item.state === 'ok' ? (
+                          <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-400" aria-hidden />
+                        ) : item.state === 'problem' ? (
+                          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-400" aria-hidden />
+                        ) : (
+                          <HelpCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                        )}
+                        <span className="min-w-0">
+                          <span className="block font-medium">{item.label}</span>
+                          <span className="block text-muted-foreground">{item.detail}</span>
                         </span>
-                      </label>
+                        <span className="sr-only">
+                          {item.state === 'ok' ? 'ok' : item.state === 'problem' ? 'problem' : 'not measured'}
+                        </span>
+                      </div>
                     ))}
                   </div>
                 </CardContent>

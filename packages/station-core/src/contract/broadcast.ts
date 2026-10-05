@@ -130,6 +130,40 @@ export type EngineStatus = {
   lastError: string | null;
 };
 
+/**
+ * "Is a listener hearing programme audio right now?"
+ *
+ * This was decided twice, differently, and the two answers disagreed in the
+ * case that mattered:
+ *
+ *  - the station site called it live when the Icecast mount was connected and
+ *    the engine had a track armed;
+ *  - the DJ console called it on-air when the operator had not switched
+ *    Liquidsoap to silence.
+ *
+ * Going off air satisfies the first and fails the second, so the listener-facing
+ * site kept announcing "live" while the station was transmitting silence — and
+ * `transport.stop` did the same, because the engine's own state string does not
+ * change when it stops. Both surfaces were locally defensible and jointly wrong.
+ *
+ * So the answer is computed once, here, from all three inputs, and every
+ * surface reads the same field.
+ */
+export type BroadcastState = {
+  /** True only when all three components below are true. */
+  onAir: boolean;
+  /** Why not, when off. Empty string while on air. */
+  reason: string;
+  components: {
+    /** The engine has audio armed and is rendering it. */
+    enginePlaying: boolean;
+    /** Liquidsoap's output is switched to the live feed, not to silence. */
+    outputLive: boolean;
+    /** Icecast has a connected source on the mount. */
+    mountConnected: boolean;
+  };
+};
+
 export type StreamEncoder = "mp3" | "opus" | "aac" | "none";
 
 export type StreamMount = {

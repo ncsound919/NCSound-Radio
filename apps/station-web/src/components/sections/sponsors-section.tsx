@@ -27,6 +27,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import type { AdPlaysResponse, SponsorsResponse } from '@/lib/station-types'
+import { useAdminSession } from '@/hooks/use-admin-session'
 
 const TIER_LABELS: Record<string, string> = {
   ON_AIR_SPOT: 'On-Air Spots',
@@ -58,6 +59,7 @@ export function SponsorsSection() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
+  const { authenticated: unlocked } = useAdminSession()
 
   const refresh = useCallback(async () => {
     try {
@@ -81,16 +83,30 @@ export function SponsorsSection() {
   }, [refresh])
 
   async function runAdSync() {
+    // This button used to POST with no `x-ops-pin` against a route that
+    // requires one, so it could only ever 401 and the success toast was
+    // unreachable.
+    if (!unlocked) {
+      toast.info('Control room locked — unlock it in Ops to run the ad sync.')
+      return
+    }
     setSyncing(true)
     try {
-      const res = await fetch('/api/ops/ad-sync', { method: 'POST' })
+      const res = await fetch('/api/ops/ad-sync', {
+        method: 'POST',
+        
+      })
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: string } | null
         toast.error(body?.error ?? `Ad sync failed (${res.status})`)
         return
       }
       const json = (await res.json()) as { inserted: number }
-      toast.success(`Synced ${json.inserted} new ad plays from AzuraCast history`)
+      toast.success(
+        json.inserted > 0
+          ? `Synced ${json.inserted} new ad plays`
+          : 'Ad sync ran — nothing new to record.',
+      )
       await refresh()
     } catch {
       toast.error('Network error — ad sync did not run.')
@@ -299,7 +315,7 @@ export function SponsorsSection() {
                 </Badge>
                 <Button onClick={() => void runAdSync()} disabled={syncing} className="h-9">
                   <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? 'animate-spin' : ''}`} aria-hidden />
-                  {syncing ? 'Syncing…' : 'Run nightly sync now'}
+                  {syncing ? 'Syncing…' : unlocked ? 'Run nightly sync now' : 'Unlock to run the sync'}
                 </Button>
               </div>
             </CardHeader>
@@ -341,11 +357,18 @@ export function SponsorsSection() {
                           {p.campaignName}
                         </TableCell>
                         <TableCell className="text-right">
+                          {/*
+                            Was a hardcoded "azuracast-history" badge. That label
+                            named software this station does not run, and it was
+                            printed regardless of what the row actually said — so
+                            even a genuinely locally computed row claimed to be
+                            AzuraCast history. The DTO already carries `source`.
+                          */}
                           <Badge
                             variant="outline"
                             className="font-mono text-[9px] text-muted-foreground"
                           >
-                            azuracast-history
+                            {p.source}
                           </Badge>
                         </TableCell>
                       </TableRow>

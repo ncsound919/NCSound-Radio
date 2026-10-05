@@ -1,10 +1,20 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { ingestStatus, streamUrl } from '@/lib/ingest'
-import { maybeLogPlays, DAY_MS } from '@/lib/broadcast'
-import type { ElementKind, NowPlayingElement, QueueEntry } from '@/lib/station-types'
+import { maybeLogPlays, getActiveShow, etWallClock, DAY_MS } from '@/lib/broadcast'
+import type {
+  ElementKind,
+  LiveShowInfo,
+  NowPlayingElement,
+  QueueEntry,
+  WheelSlice,
+} from '@/lib/station-types'
+import type { Show } from '@prisma/client'
 
 export const dynamic = 'force-dynamic'
+
+/** Label for a track the station library has no row for yet. */
+const UNFILED_PLAYLIST = 'Unfiled'
 
 /**
  * GET /api/nowplaying
@@ -36,7 +46,9 @@ export async function GET() {
           wheel: [],
           cycleIndex: 0,
           cycleSec: 0,
-          listeners: { current: 0, peak24h: 0 },
+          // null, not 0: with the engine unreachable the count is unknown, and
+          // a confident 0 is a lie about a measurement we never took.
+          listeners: { current: null, peak24h: null },
           mode: 'offline' as const,
           offlineReason: 'DJ engine is not reachable',
           streamUrl: null,
@@ -50,16 +62,18 @@ export async function GET() {
     const onAir = engine.onAir
     const stream = live.stream
 
-    // Queue entries straight from the engine's autopilot.
+    // Queue entries straight from the engine's autopilot. Album, rights id,
+    // explicit flag and playlist label are station data the engine cannot
+    // know, so they start unknown and are filled in from the library below.
     const next: QueueEntry[] = (onAir?.next ?? []).map((t) => ({
       id: t.id,
       title: t.title,
       artist: t.artist,
       album: null,
       durationSec: t.durationSec,
-      rightsId: t.id.toUpperCase(),
+      rightsId: null,
       explicit: false,
-      playlist: engine.autopilot.vibeTemplateId ?? 'Core Rotation',
+      playlist: UNFILED_PLAYLIST,
       bpm: t.bpm,
       elementKind: (t.elementKind ?? 'MUSIC') as ElementKind,
       sponsorName: null,
@@ -72,14 +86,39 @@ export async function GET() {
           artist: onAir.current.track.artist,
           album: null,
           durationSec: onAir.current.track.durationSec,
-          rightsId: onAir.current.track.id.toUpperCase(),
+          rightsId: null,
           explicit: false,
-          playlist: engine.autopilot.vibeTemplateId ?? 'Core Rotation',
+          playlist: UNFILED_PLAYLIST,
           bpm: onAir.current.track.bpm,
           elementKind: (onAir.element.kind ?? 'MUSIC') as ElementKind,
           sponsorName: null,
         }
       : null
+
+    // Enrich from the station library. These fields used to be synthesised —
+    // `rightsId: track.id.toUpperCase()` invented a clearance reference for a
+    // rights record that was never created.
+    const entryIds = [currentEntry?.id, ...next.map((e) => e.id)].filter(
+      (id): id is string => Boolean(id),
+    )
+    const stationRows =
+      entryIds.length > 0
+        ? await db.track.findMany({
+            where: { id: { in: entryIds } },
+            select: { id: true, album: true, rightsId: true, explicit: true, playlist: true },
+          })
+        : []
+    const stationById = new Map(stationRows.map((r) => [r.id, r]))
+    const enrich = (entry: QueueEntry | null) => {
+      const row = entry ? stationById.get(entry.id) : undefined
+      if (!entry || !row) return
+      entry.album = row.album
+      entry.rightsId = row.rightsId
+      entry.explicit = row.explicit
+      entry.playlist = row.playlist
+    }
+    enrich(currentEntry)
+    next.forEach(enrich)
 
     // Request heat + who shouted, from the app's own database.
     const musicIds = [currentEntry, ...next].filter((e) => e?.elementKind === 'MUSIC').map((e) => e!.id)
@@ -112,7 +151,39 @@ export async function GET() {
       await maybeLogPlays(currentEntry.id, new Date(onAir!.current.startedAt), 'AUTODJ')
     }
 
-    const onAirNow = stream?.onAir === true && onAir !== null
+    /**
+     * The engine's single on-air answer.
+     *
+     * This line used to be `stream?.onAir === true && onAir !== null`, which
+     * stayed true after the station was taken off air: the Icecast mount keeps
+     * its source connected while Liquidsoap outputs `blank()`, and
+     * `transport.stop` does not change the engine's state string. Listeners were
+     * told "live" while the station was transmitting silence. The DJ console
+     * read a different subset of the same three inputs and reached the opposite
+     * conclusion, which is how two halves of one station came to disagree about
+     * whether it was on.
+     */
+    const broadcast = live.broadcast
+    const onAirNow = broadcast?.onAir === true
+
+    // The scheduled show actually running. This was hardcoded to null while
+    // getActiveShow() sat unused, so the player bar's LIVE badge could never
+    // render.
+    const activeShow = await getActiveShow(nowMs)
+    const liveShow = activeShow ? liveShowInfo(activeShow, nowMs) : null
+
+    // Program-clock slices built from the engine's real timeline: what is
+    // spinning now plus what it has queued. This replaced a synthetic
+    // one-element wheel that always drew a single full circle.
+    const wheel: WheelSlice[] = onAir
+      ? [
+          {
+            kind: (onAir.element.kind ?? 'MUSIC') as ElementKind,
+            durSec: onAir.current.duration,
+          },
+          ...next.map((e) => ({ kind: e.elementKind, durSec: e.durationSec })),
+        ]
+      : []
 
     return NextResponse.json({
       station: stationIdentity(settingsMap),
@@ -128,16 +199,16 @@ export async function GET() {
         : null,
       element: (onAir?.element ?? { kind: 'MUSIC' }) as NowPlayingElement,
       daypart: onAir?.daypart ?? { clean: true, label: 'Music only' },
-      liveShow: null,
+      liveShow,
       next,
       heat,
       requestedBy,
-      wheel: onAir ? [{ kind: 'MUSIC' as ElementKind, durSec: onAir.current.duration }] : [],
+      wheel,
       cycleIndex: 0,
       cycleSec: onAir?.cycleSec ?? 0,
       // Real, from Icecast. Never derived from a curve.
       listeners: engine.listeners,
-engine: {
+      engine: {
         state: engine.state,
         crateSize: engine.autopilot.crateSize,
         autopilot: engine.autopilot.enabled,
@@ -157,6 +228,15 @@ engine: {
           }
         : null,
       mode: onAirNow ? ('live' as const) : ('standby' as const),
+      /**
+       * Why it is not live, when it is not.
+       *
+       * "standby" on its own is ambiguous between an idle station, an operator
+       * who took it off air, and a mount with no source. The engine says which.
+       */
+      standbyReason: onAirNow ? null : broadcast?.reason ?? 'status unknown',
+      /** The three components, so the UI can show which one is failing. */
+      broadcastComponents: broadcast?.components ?? null,
       streamUrl: onAirNow ? streamUrl() : null,
       serverTime: new Date(nowMs).toISOString(),
     })
@@ -166,6 +246,30 @@ engine: {
       { error: 'Failed to load now-playing data' },
       { status: 500 },
     )
+  }
+}
+
+/**
+ * Project a scheduled Show onto the LiveShowInfo the player bar renders.
+ *
+ * Times are derived from `nowMs` rather than re-parsed so the countdown
+ * always agrees with the timestamp the caller polled at.
+ */
+function liveShowInfo(show: Show, nowMs: number): LiveShowInfo {
+  const wc = etWallClock(new Date(nowMs))
+  const startMin = show.startHour * 60 + show.startMinute
+  const elapsedMin = Math.max(0, wc.minuteOfDay - startMin)
+  const minutesLeft = Math.max(0, startMin + show.durationMin - wc.minuteOfDay)
+  return {
+    id: show.id,
+    name: show.name,
+    host: show.host,
+    description: show.description,
+    kind: show.kind === 'LIVE' ? 'LIVE' : 'PLAYLIST',
+    accent: show.accent,
+    startedAtIso: new Date(nowMs - elapsedMin * 60_000).toISOString(),
+    endsAtIso: new Date(nowMs + minutesLeft * 60_000).toISOString(),
+    minutesLeft,
   }
 }
 

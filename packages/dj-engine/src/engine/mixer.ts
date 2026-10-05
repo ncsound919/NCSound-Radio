@@ -68,7 +68,113 @@ export type NextResult =
   | { ok: true; rate: number; clamped: boolean; harmonicLabel: string }
   | { ok: false; reason: string };
 
+/**
+ * Handover diagnostics.
+ *
+ * Everything needed to tell apart the four ways a track change can fail, which
+ * are indistinguishable from the outside: next() was never called, next()
+ * refused, next() threw part-way through, or next() succeeded and the deck
+ * still produced no audio.
+ */
+export type DeckTrace = {
+  slot: 0 | 1;
+  bpm: number | null;
+  firstBeat: number | null;
+  /** Buffer length in seconds, or null when nothing is loaded. */
+  duration: number | null;
+  /** Current playhead in seconds. Pinned at `duration` once the track runs out. */
+  offset: number;
+  /** True only while this deck's source node has not ended. */
+  rolling: boolean;
+  /** Context time the source node last ended, or 0. */
+  srcEndedAt: number;
+  /** Analyser RMS 0..1; 0 on a deck with nothing rolling. */
+  level: number;
+  /** Gain the master bus is currently being asked to play this deck at. */
+  outGain: number;
+};
+
+export type HandoverTrace = {
+  seq: number;
+  at: string;
+  /** ctx.currentTime when next() was entered. */
+  ctxNow: number;
+  outcome: "ok" | "refused" | "threw";
+  reason?: string;
+  error?: string;
+  preset: string;
+  style: string;
+  bars: number;
+  /** mixer.playing at entry. */
+  playing: boolean;
+  /** true when ctx.currentTime < busyUntil at entry. */
+  busy: boolean;
+  /** Entry values, which is where "refused" is decided. */
+  entry: {
+    active: 0 | 1;
+    idle: 0 | 1;
+    busyUntil: number;
+    fadeStart: number;
+    anchor: number;
+    effBpm: number;
+    from: DeckTrace;
+    to: DeckTrace;
+  };
+  /** Scheduling. Absent when next() refused before scheduling. */
+  scheduling?: {
+    /** Raw bar/beat-grid time, before the clamp. May be far in the future. */
+    gridTime: number;
+    /** Time actually used. */
+    startAt: number;
+    /** startAt - ctxNow. The clamp bounds this to one bar. */
+    waitSec: number;
+    /** Offset handed to to.start(). */
+    startOffset: number;
+    /** True once to.start() returned without throwing. */
+    toStarted: boolean;
+  };
+  /** Values written back onto the mixer. Absent when next() refused. */
+  result?: {
+    /** runTransition's end, which becomes busyUntil. */
+    transitionEnd: number;
+    activeAfter: 0 | 1;
+    effBpmAfter: number;
+  };
+};
+
+/**
+ * Handover tracing is opt-in and off by default: next() runs on a one-second
+ * heartbeat for the life of the station, and this emits a line per attempt.
+ * Set NCSOUND_HANDOVER_TRACE=1 on the engine process to turn it on.
+ *
+ * Read through globalThis rather than `process`, because the DJ console bundles
+ * this module for the browser, where `process` does not exist and where a bare
+ * reference is a build error.
+ */
+const HANDOVER_TRACE_ON =
+  (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
+    ?.NCSOUND_HANDOVER_TRACE === "1";
+
+/** How many handover records to keep in memory for inspection. */
+const HANDOVER_TRACE_LIMIT = 64;
+
 export type ScratchArchetypeId = "premier" | "philly" | "bombsquad" | "custom";
+
+/** An imaging element currently laid over the master bus. */
+type ActiveJingle = {
+  src: AudioBufferSourceNode;
+  gain: GainNode;
+  endAt: number;
+};
+
+/**
+ * How far the music ducks under a sweeper, as a linear multiplier (~-10dB).
+ *
+ * Applied to `imagingDuck`, which rests at 1 and is owned solely by imaging —
+ * so nothing has to guess what level to put back, and the headroom guard's own
+ * `masterGain` target is irrelevant here.
+ */
+const IMAGING_DUCK_DEPTH = 0.3;
 
 export interface AgentTriggerOptions {
   bars: 2 | 4;
@@ -95,6 +201,15 @@ export interface AgentTriggerOutput {
   sourceBuffer?: AudioBuffer;
   scratchBuffer?: AudioBuffer;
 }
+
+/**
+ * Which audio a mixer is allowed to put on the operator's speakers.
+ *
+ * See {@link Mixer.monitorPolicy}. "program" is the broadcast engine; "cue-only"
+ * is the booth, which monitors the cued deck only because the engine owns the
+ * stream.
+ */
+export type MonitorPolicy = "program" | "cue-only";
 
 /** Downmixes an AudioBuffer to peak-normalized mono Float32Array (gate-click threshold assumes peak 1). */
 function extractNormalizedMono(b: AudioBuffer): Float32Array {
@@ -125,10 +240,38 @@ export class Mixer {
   ctx: AudioContext;
   masterGain: GainNode;
   subsonicFilter: BiquadFilterNode;
+  /** Operator master level from `mix.setMasterGain`. Owned by that command. */
+  masterTrim: GainNode;
+  /** Station-imaging sidechain. Owned by playJingle/stopJingle. */
+  imagingDuck: GainNode;
   masterLimiter: DynamicsCompressorNode;
   masterAnalyser: AnalyserNode;
   private splitMerger: ChannelMergerNode;
   private cueBusGain: GainNode;
+
+  /**
+   * Who owns the sound the operator hears through this mixer.
+   *
+   * - `program`: this mixer IS the broadcast. The headless engine renders into
+   *   `getMasterOutputNode()` and publishes to harbor, so the program bus must
+   *   reach the destination for a local monitor to be meaningful.
+   * - `cue-only`: the engine owns the broadcast and this mixer is a booth
+   *   control surface. The program bus must NOT reach the speakers — a second
+   *   copy of the same music here is the doubling that made the booth and the
+   *   stream "interrupt each other". Only the pre-fader cue bus is audible.
+   */
+  monitorPolicy: MonitorPolicy = "program";
+
+  /**
+   * External consumers of the program bus, reconnected by every routeOutputs().
+   *
+   * `AudioNode.disconnect()` takes no arguments and removes *every* outgoing
+   * connection, including ones made from outside this class. So the first call
+   * to routeOutputs after an external tap was wired by hand silently killed that
+   * tap — which is how changing split-cue could mute the station stream player
+   * with no error anywhere. Taps are registered here so routing owns them.
+   */
+  private programTaps: AudioNode[] = [];
 
   decks: [Deck, Deck];
   active = 0;
@@ -152,11 +295,22 @@ export class Mixer {
   private micGain?: GainNode;
   micActive = false;
 
+  /** In-flight sweeper/jingle laid over the master bus, if any. */
+  private activeJingle: ActiveJingle | null = null;
+
   private anchor = 0;       // ctx time of a beat on the active deck (bar grid anchor)
   private effBpm = 124;     // tempo actually heard on the active deck (bpm * playbackRate)
   private busyUntil = 0;    // ctx time the running transition ends
   private fadeStart = 0;    // ctx time the running transition begins (bar-aligned)
   private prev = { deck: 0, anchor: 0, eff: 124 }; // outgoing deck, audible until fadeStart
+
+  /**
+   * Rolling record of every next() attempt, newest last. Read this when the
+   * station goes quiet at a track boundary: `outcome` says whether the
+   * handover was refused, threw, or reported success.
+   */
+  readonly handover: HandoverTrace[] = [];
+  private handoverSeq = 0;
 
   // Crossfader (-1 = Deck A, 0 = Center, +1 = Deck B) & Curve
   crossfader = -1;
@@ -237,6 +391,8 @@ export class Mixer {
 
     this.masterGain = this.ctx.createGain();
     this.subsonicFilter = this.ctx.createBiquadFilter();
+    this.masterTrim = this.ctx.createGain();
+    this.imagingDuck = this.ctx.createGain();
     this.masterLimiter = this.ctx.createDynamicsCompressor();
     this.masterAnalyser = this.ctx.createAnalyser();
     this.splitMerger = this.ctx.createChannelMerger(2);
@@ -261,10 +417,26 @@ export class Mixer {
     this.masterAnalyser.fftSize = 256;
     this.masterAnalyser.smoothingTimeConstant = 0.75;
 
+    // Master chain, and who owns each gain:
+    //
+    //   decks -> masterGain -> subsonicFilter -> masterTrim -> imagingDuck -> masterLimiter
+    //
+    // `masterGain` belongs to the headroom guard (engine-service rewrites it on
+    // every ~21ms audio block toward 10^(trimDb/20), which is 1.0 at rest).
+    // `masterTrim` belongs to `mix.setMasterGain`. `imagingDuck` belongs to
+    // station imaging.
+    //
+    // They were all writing `masterGain`, and the guard won: it overwrote the
+    // imaging duck within one block and overwrote `setMasterGain` within one
+    // block, while both reported success. One writer per node.
+    this.masterTrim.gain.value = 1;
+    this.imagingDuck.gain.value = 1;
+
     this.masterGain.connect(this.subsonicFilter);
-    this.subsonicFilter.connect(this.masterLimiter);
-    this.masterLimiter.connect(this.masterAnalyser);
-    this.masterLimiter.connect(this.ctx.destination);
+    this.subsonicFilter.connect(this.masterTrim);
+    this.masterTrim.connect(this.imagingDuck);
+    this.imagingDuck.connect(this.masterLimiter);
+    this.routeOutputs();
 
     // Pre-fader Cue Bus for Split-Cue (Left = Master PA, Right = Headphone Cue)
     this.cueBusGain.gain.value = 0.9;
@@ -279,9 +451,79 @@ export class Mixer {
     this.scratchGain.connect(this.masterGain);
   }
 
+  /**
+   * Decide what reaches the speakers. Single owner of the destination wiring.
+   *
+   * This used to be inlined in the constructor and again in setSplitCue, which is
+   * how the booth ended up with a second copy of the broadcast on its program
+   * bus: each site decided independently what to connect to `ctx.destination`.
+   */
+  private routeOutputs(): void {
+    this.masterLimiter.disconnect();
+    this.cueBusGain.disconnect();
+    this.splitMerger.disconnect();
+
+    // The analyser and the set recorder observe the program bus in every
+    // policy. A booth that cannot hear the program still needs to meter it, and
+    // in `program` mode the recorder is capturing the broadcast itself.
+    this.masterLimiter.connect(this.masterAnalyser);
+    if (this.recDest) this.masterLimiter.connect(this.recDest);
+    for (const tap of this.programTaps) this.masterLimiter.connect(tap);
+
+    if (this.monitorPolicy === "cue-only") {
+      // The program bus is deliberately left unconnected. The engine is already
+      // publishing this music to the stream; playing it here too is the doubled
+      // audio, and the booth's copy runs on a different clock from the engine's
+      // so the two drift against each other.
+      if (this.splitCueEnabled) {
+        this.cueBusGain.connect(this.splitMerger, 0, 1); // Right = Cue PFL
+        this.splitMerger.connect(this.ctx.destination);
+      } else {
+        this.cueBusGain.connect(this.ctx.destination);
+      }
+      this.updatePflRouting();
+      return;
+    }
+
+    if (this.splitCueEnabled) {
+      this.masterLimiter.connect(this.splitMerger, 0, 0); // Left = Master
+      this.cueBusGain.connect(this.splitMerger, 0, 1);    // Right = Cue PFL
+      this.splitMerger.connect(this.ctx.destination);
+      this.updatePflRouting();
+    } else {
+      this.masterLimiter.connect(this.ctx.destination);
+    }
+  }
+
+  /**
+   * Choose whether this mixer feeds the speakers or only the cue bus.
+   *
+   * Switching from `program` to `cue-only` does not stop the decks: they keep
+   * running so the booth's transport model, waveforms and playhead stay live.
+   * Only the program bus stops reaching the destination.
+   */
+  setMonitorPolicy(policy: MonitorPolicy): void {
+    if (this.monitorPolicy === policy) return;
+    this.monitorPolicy = policy;
+    this.routeOutputs();
+  }
+
   /** Returns the master limiter audio output node for external broadcast routing / radio stream engine. */
   getMasterOutputNode(): AudioNode {
     return this.masterLimiter;
+  }
+
+  /**
+   * Register a consumer of the program bus that survives re-routing.
+   *
+   * Prefer this over wiring `getMasterOutputNode()` by hand: the destination
+   * wiring is rebuilt on every split-cue or monitor-policy change, and a
+   * hand-made connection does not come back.
+   */
+  addProgramTap(node: AudioNode): void {
+    if (this.programTaps.includes(node)) return;
+    this.programTaps.push(node);
+    this.masterLimiter.connect(node);
   }
 
   /** Recomputes beat-grid anchor from a deck's current offset so bar/beat phase never drifts. */
@@ -349,22 +591,10 @@ export class Mixer {
   setSplitCue(enabled: boolean) {
     if (this.splitCueEnabled === enabled) return;
     this.splitCueEnabled = enabled;
-    this.masterLimiter.disconnect();
-    this.cueBusGain.disconnect();
-    this.splitMerger.disconnect();
-
-    this.masterLimiter.connect(this.masterAnalyser);
-    if (this.recDest) {
-      this.masterLimiter.connect(this.recDest);
-    }
-    if (enabled) {
-      this.masterLimiter.connect(this.splitMerger, 0, 0); // Left = Master
-      this.cueBusGain.connect(this.splitMerger, 0, 1);    // Right = Cue PFL
-      this.splitMerger.connect(this.ctx.destination);
-      this.updatePflRouting();
-    } else {
-      this.masterLimiter.connect(this.ctx.destination);
-    }
+    // Routing is owned by routeOutputs, which also honours monitorPolicy. Wiring
+    // the destination here as well is what let the booth's program bus reach the
+    // speakers regardless of policy.
+    this.routeOutputs();
   }
 
   private updatePflRouting() {
@@ -388,7 +618,14 @@ export class Mixer {
     }
     this.auditioningSlot = slot;
     if (!this.splitCueEnabled) {
-      this.setSplitCue(true);
+      if (this.monitorPolicy === "cue-only") {
+        // The booth has no program monitor to split away from, so forcing
+        // split-cue here would put the only audio the operator is meant to hear
+        // on the right channel alone.
+        this.routeOutputs();
+      } else {
+        this.setSplitCue(true);
+      }
     } else {
       this.updatePflRouting();
     }
@@ -398,7 +635,20 @@ export class Mixer {
         d.currentOffset() > 0.5
           ? d.currentOffset()
           : d.analysis.cuePoints?.drop ?? d.analysis.firstBeat;
-      const rate = this.playing ? pickRate(this.effBpm, d.analysis.bpm).rate : 1;
+      /**
+       * A pre-listen plays at the track's own pitch.
+       *
+       * `pickRate` is a tempo ratio, and a tempo ratio applied as the deck's
+       * `playbackRate` is a resampling playhead: slowing it drags pitch down
+       * with it. That was the "tracks play pitched down" report — the booth's
+       * copy was flat while the broadcast, which beatmatches through
+       * TimePitchEngine, was correct. In cue-only mode the cue bus is the only
+       * thing the operator hears, so it must not be the flat one.
+       */
+      const rate =
+        this.monitorPolicy === "cue-only" || !this.playing
+          ? 1
+          : pickRate(this.effBpm, d.analysis.bpm).rate;
       d.start(this.ctx.currentTime + 0.02, offset, rate);
     }
     return true;
@@ -451,6 +701,96 @@ export class Mixer {
     } catch {
       return { ok: false, active: false, message: "Microphone permission declined or unavailable" };
     }
+  }
+
+  /**
+   * Operator master level, in dB.
+   *
+   * Writes `masterTrim`, not `masterGain`: the headroom guard owns
+   * `masterGain` and rewrites it toward its own target every audio block, so a
+   * command that wrote it directly was reverted within ~21ms while still
+   * reporting success.
+   */
+  setMasterGainDb(db: number): { applied: number } {
+    const clamped = Math.max(-60, Math.min(6, db));
+    this.masterTrim.gain.setTargetAtTime(
+      Math.pow(10, clamped / 20),
+      this.ctx.currentTime,
+      0.02,
+    );
+    return { applied: clamped };
+  }
+
+  /**
+   * Plays a station imaging element (sweeper, jingle, stinger) over the music.
+   *
+   * The jingle is injected post-masterLimiter, exactly like the mic talkover, so
+   * it survives the music duck and never feeds back through it. The music ducks
+   * via `imagingDuck`, a node this path owns outright.
+   *
+   * It used to duck `masterGain`, which the headroom guard overwrote within one
+   * audio block — the imaging played over full-volume music and was not a
+   * sweeper at all.
+   */
+  playJingle(buffer: AudioBuffer): { ok: boolean; durationSec: number; message: string } {
+    if (!buffer || buffer.duration <= 0) {
+      return { ok: false, durationSec: 0, message: "imaging buffer is empty" };
+    }
+
+    // Newest imaging wins: a second sweeper mid-flight replaces the first
+    // rather than fighting it for the duck. Stopping first is what makes this
+    // safe — there is no captured level to get wrong, because the duck is a
+    // multiplier that rests at 1 rather than a level restored by subtraction.
+    this.stopJingle();
+
+    const startAt = this.ctx.currentTime + 0.02;
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    const gain = this.ctx.createGain();
+    gain.gain.value = 1;
+    src.connect(gain);
+    gain.connect(this.masterLimiter);
+
+    this.imagingDuck.gain.setTargetAtTime(IMAGING_DUCK_DEPTH, startAt, 0.06);
+    src.start(startAt);
+
+    const endAt = startAt + buffer.duration;
+    this.imagingDuck.gain.setTargetAtTime(1, endAt, 0.08);
+
+    const node: ActiveJingle = { src, gain, endAt };
+    this.activeJingle = node;
+    src.onended = () => {
+      if (this.activeJingle !== node) return;
+      this.activeJingle = null;
+      try {
+        gain.disconnect();
+      } catch {
+        /* already torn down */
+      }
+      this.imagingDuck.gain.setTargetAtTime(1, this.ctx.currentTime, 0.08);
+    };
+    return { ok: true, durationSec: buffer.duration, message: "imaging fired" };
+  }
+
+  /** Stops the in-flight imaging element, if any, and lifts the music duck. */
+  stopJingle(): boolean {
+    const node = this.activeJingle;
+    if (!node) return false;
+    this.activeJingle = null;
+    node.src.onended = null;
+    try {
+      node.src.stop();
+    } catch {
+      /* already stopped */
+    }
+    try {
+      node.gain.disconnect();
+    } catch {
+      /* already torn down */
+    }
+    this.imagingDuck.gain.setTargetAtTime(1, this.ctx.currentTime, 0.05);
+    return true;
   }
 
   /** Starts or stops live master bus audio recording via MediaStreamDestination + MediaRecorder. */
@@ -1242,6 +1582,34 @@ export class Mixer {
     };
   }
 
+  /**
+   * The transition window the mixer actually committed to, in context time.
+   *
+   * Reported from here rather than from the autopilot's plan because the plan
+   * describes intent and is discarded the moment the handover lands, while these
+   * are the times that were really scheduled. Returns null when no transition
+   * has been scheduled, or when the window has already closed.
+   */
+  transitionWindow(): {
+    fromDeck: 0 | 1;
+    toDeck: 0 | 1;
+    fadeStart: number;
+    endsAt: number;
+    progress: number;
+  } | null {
+    const now = this.ctx.currentTime;
+    if (this.busyUntil <= 0) return null;
+    if (now >= this.busyUntil) return null;
+    const span = Math.max(0.01, this.busyUntil - this.fadeStart);
+    return {
+      fromDeck: this.prev.deck as 0 | 1,
+      toDeck: this.active as 0 | 1,
+      fadeStart: this.fadeStart,
+      endsAt: this.busyUntil,
+      progress: Math.max(0, Math.min(1, (now - this.fadeStart) / span)),
+    };
+  }
+
   /** Live playback info for the UI (null before Start). */
   info() {
     if (!this.playing) return null;
@@ -1266,12 +1634,23 @@ export class Mixer {
     const beatInBar = Math.floor(beatFloat) % 4;
     const nextBarIn = Math.max(0, nextBarTime(now, anchor, secPerBar, 0.02) - now);
 
+    /**
+     * Displayed crossfader position, computed rather than assigned.
+     *
+     * This used to write `this.crossfader` from inside a getter, and autopilot
+     * calls info() once a second. Two consequences: reading state changed it, and
+     * the value reported as the crossfader was the *animated* sweep position
+     * while the audio gains followed the *commanded* field, so
+     * telemetry.crossfader could describe a fader position nothing was actually
+     * at. The commanded position stays in the field and drives the gains; this is
+     * what the UI should draw during a transition.
+     */
+    let crossfader = this.crossfader;
     if (now >= this.fadeStart && now < this.busyUntil) {
       const targetPos = this.active === 0 ? -1 : 1;
-      const startPos = -targetPos;
-      this.crossfader = startPos + (targetPos - startPos) * fade;
+      crossfader = -targetPos + (targetPos - -targetPos) * fade;
     } else if (!queued && !this.manualCrossfaderOverride) {
-      this.crossfader = this.active === 0 ? -1 : 1;
+      crossfader = this.active === 0 ? -1 : 1;
     }
 
     return {
@@ -1283,6 +1662,7 @@ export class Mixer {
       speed,
       queued,
       fade,
+      crossfader,
       beatInBar,
       beatPhase: beatFloat % 1,
       nextBarIn,
@@ -1301,14 +1681,44 @@ export class Mixer {
     // Analysing costs about a second per track and the crate already has a
     // cached analysis for every file. Recomputing it here and then overwriting
     // it with the override threw that second away on every single cue.
+    //
+    // "Complete" has to mean *usable*, not merely present. `typeof 0 === "number"`
+    // and `typeof NaN === "number"` both hold, so a zero, negative or NaN bpm
+    // used to be accepted as a complete analysis and trusted by every timing
+    // computation in the deck: secPerBeat, the bar grid, pickRate. A non-finite
+    // bpm makes runTransition's fade duration non-finite, setValueCurveAtTime
+    // throws, and the handover leaves both decks silent with `active` unflipped.
+    // An unusable override falls back to a real analysis, which is now guaranteed
+    // to produce an in-range positive tempo.
+    const usable = (v: unknown): v is number =>
+      typeof v === "number" && Number.isFinite(v);
     const hasCompleteOverride =
       overrideAnalysis != null &&
-      typeof overrideAnalysis.bpm === "number" &&
-      typeof overrideAnalysis.firstBeat === "number";
+      usable(overrideAnalysis.bpm) &&
+      overrideAnalysis.bpm > 0 &&
+      usable(overrideAnalysis.firstBeat) &&
+      overrideAnalysis.firstBeat >= 0;
 
-    const analyzed = hasCompleteOverride
-      ? ({ ...overrideAnalysis } as TrackAnalysis)
-      : { ...analyze(buf), ...overrideAnalysis };
+    let analyzed: TrackAnalysis;
+    if (hasCompleteOverride) {
+      analyzed = { ...overrideAnalysis } as TrackAnalysis;
+    } else {
+      // One analysis, not two: the override fields that are actually usable are
+      // kept, the rest come from the fresh analysis.
+      const base = analyze(buf);
+      analyzed = {
+        ...base,
+        ...overrideAnalysis,
+        bpm:
+          usable(overrideAnalysis?.bpm) && overrideAnalysis.bpm > 0
+            ? overrideAnalysis.bpm
+            : base.bpm,
+        firstBeat:
+          usable(overrideAnalysis?.firstBeat) && overrideAnalysis.firstBeat >= 0
+            ? overrideAnalysis.firstBeat
+            : base.firstBeat,
+      };
+    }
 
     this.decks[slot].load(buf, analyzed, this.autoGainEnabled);
     return analyzed;
@@ -1347,6 +1757,18 @@ export class Mixer {
     this.decks[1].pause(now);
     this.stopScratch();
     this.playing = false;
+    /**
+     * Abandon the running transition.
+     *
+     * busyUntil and fadeStart were only ever written by next(), so pausing
+     * mid-transition left the mixer reporting a transition that was no longer
+     * scheduled. applyFaderGains() returns early while busy, so a pause during a
+     * transition also froze the channel faders at their old gains until the clock
+     * caught up - and info() reported `queued: true` for a fade that had stopped
+     * existing. Both windows describe committed scheduling, so a pause ends them.
+     */
+    this.busyUntil = 0;
+    this.fadeStart = 0;
   }
 
   /** Starts or pauses an individual deck (A or B) for manual DJ mixing. */
@@ -1686,19 +2108,116 @@ export class Mixer {
     }
   }
 
-  /** Beat-matched, bar-aligned transition to the other deck. */
+  /** Point-in-time picture of both decks plus the scheduling state that next() gates on. */
+  traceDecks(now = this.ctx.currentTime): { active: 0 | 1; idle: 0 | 1; busy: boolean; busyUntil: number; fadeStart: number; anchor: number; effBpm: number; decks: [DeckTrace, DeckTrace] } {
+    return {
+      active: this.active as 0 | 1,
+      idle: this.idle,
+      busy: this.busy,
+      busyUntil: +this.busyUntil.toFixed(3),
+      fadeStart: +this.fadeStart.toFixed(3),
+      anchor: +this.anchor.toFixed(3),
+      effBpm: this.effBpm,
+      decks: [this.traceDeck(0, now), this.traceDeck(1, now)],
+    };
+  }
+
+  private traceDeck(slot: 0 | 1, now: number): DeckTrace {
+    const d = this.decks[slot];
+    return {
+      slot,
+      bpm: d.analysis ? +d.analysis.bpm.toFixed(2) : null,
+      firstBeat: d.analysis ? +d.analysis.firstBeat.toFixed(3) : null,
+      duration: d.buffer ? +d.buffer.duration.toFixed(3) : null,
+      offset: +d.currentOffset(now).toFixed(3),
+      rolling: d.playing,
+      srcEndedAt: +d.srcEndedAt.toFixed(3),
+      level: +d.getLevel().toFixed(4),
+      outGain: +d.out.gain.value.toFixed(4),
+    };
+  }
+
+  /** Record a handover attempt, keep it in the rolling buffer, and echo it if tracing is on. */
+  private recordHandover(trace: HandoverTrace): void {
+    this.handover.push(trace);
+    if (this.handover.length > HANDOVER_TRACE_LIMIT) this.handover.shift();
+    if (!HANDOVER_TRACE_ON) return;
+
+    const d = (t: DeckTrace) =>
+      `d${t.slot}{bpm=${t.bpm ?? "-"} dur=${t.duration ?? "-"} off=${t.offset} ` +
+      `rolling=${t.rolling} endedAt=${t.srcEndedAt} lvl=${t.level} gain=${t.outGain}}`;
+
+    const sched = trace.scheduling
+      ? `grid=${trace.scheduling.gridTime.toFixed(3)} start=${trace.scheduling.startAt.toFixed(3)} ` +
+        `wait=${trace.scheduling.waitSec.toFixed(2)}s off=${trace.scheduling.startOffset.toFixed(2)} ` +
+        `started=${trace.scheduling.toStarted}`
+      : "scheduled=no";
+    const res = trace.result
+      ? `end=${trace.result.transitionEnd.toFixed(3)} active=${trace.result.activeAfter} effBpm=${trace.result.effBpmAfter}`
+      : "committed=no";
+
+    console.log(
+      `[handover#${trace.seq}] ${trace.outcome.toUpperCase()} preset=${trace.preset}/${trace.style}/${trace.bars}b ` +
+        `ctx=${trace.ctxNow.toFixed(3)} playing=${trace.playing} busy=${trace.busy} ` +
+        `busyUntil=${trace.entry.busyUntil.toFixed(3)} fadeStart=${trace.entry.fadeStart.toFixed(3)} ` +
+        `anchor=${trace.entry.anchor.toFixed(3)} active=${trace.entry.active} idle=${trace.entry.idle}\n` +
+        `            from ${d(trace.entry.from)}\n` +
+        `            to   ${d(trace.entry.to)}\n` +
+        `            ${sched}\n` +
+        `            ${res}` +
+        (trace.reason ? `\n            reason: ${trace.reason}` : "") +
+        (trace.error ? `\n            error : ${trace.error}` : ""),
+    );
+  }
+
+  /**
+   * Beat-matched, bar-aligned transition to the other deck.
+   *
+   * Every early return and every throw is recorded on `this.handover`, because
+   * a handover that fails silently is indistinguishable from one that was never
+   * attempted: both leave the station playing a track that has already ended.
+   */
   next(preset: TransitionPreset): NextResult {
+    const now = this.ctx.currentTime;
     const from = this.decks[this.active];
     const to = this.decks[this.idle];
-    if (!this.playing) return { ok: false, reason: "Press Start first" };
-    if (!to.analysis || !to.buffer) return { ok: false, reason: "Load a track into the next deck first" };
-    if (this.ctx.currentTime < this.busyUntil) return { ok: false, reason: "Transition already in progress" };
+const entry = {
+      active: this.active as 0 | 1,
+      idle: this.idle,
+      busyUntil: +this.busyUntil.toFixed(3),
+      fadeStart: +this.fadeStart.toFixed(3),
+      anchor: +this.anchor.toFixed(3),
+      effBpm: this.effBpm,
+      from: this.traceDeck(this.active as 0 | 1, now),
+      to: this.traceDeck(this.idle, now),
+    };
+    const trace: HandoverTrace = {
+      seq: ++this.handoverSeq,
+      at: new Date().toISOString(),
+      ctxNow: +now.toFixed(3),
+      outcome: "refused",
+      preset: preset.id,
+      style: preset.style ?? "(none)",
+      bars: preset.bars,
+      playing: this.playing,
+      busy: this.ctx.currentTime < this.busyUntil,
+      entry,
+    };
+
+    const refuse = (reason: string): NextResult => {
+      trace.reason = reason;
+      this.recordHandover(trace);
+      return { ok: false, reason };
+    };
+
+    if (!this.playing) return refuse("Press Start first");
+    if (!to.analysis || !to.buffer) return refuse("Load a track into the next deck first");
+    if (this.ctx.currentTime < this.busyUntil) return refuse("Transition already in progress");
 
     const { rate, effBpm, clamped } = pickRate(this.effBpm, to.analysis.bpm);
     const secPerBar = (60 / this.effBpm) * 4;
     const secPerBeat = 60 / this.effBpm;
     const isInstantCut = preset.id === "drop-cut" || preset.id === "quick";
-    const now = this.ctx.currentTime;
     const gridTime = isInstantCut
       ? nextBeatTime(now, this.anchor, secPerBeat, 0.02)
       : nextBarTime(now, this.anchor, secPerBar, 0.04);
@@ -1721,13 +2240,6 @@ export class Mixer {
     const startAt =
       gridTime > now && gridTime - now <= maxWaitSec ? gridTime : now + 0.02;
 
-    for (const p of [from.out.gain, to.out.gain, from.filter.frequency, to.filter.frequency]) {
-      p.cancelScheduledValues(0);
-    }
-    to.out.gain.setValueAtTime(0, this.ctx.currentTime);
-    to.filter.frequency.setValueAtTime(10, this.ctx.currentTime);
-    from.out.gain.setValueAtTime(from.channelVolume, this.ctx.currentTime);
-
     // Start on the intro cue, but never so late that the incoming track has
     // almost nothing left to play. The beat detector can place firstBeat late on
     // short files, which previously left the deck silent right after a
@@ -1739,22 +2251,85 @@ export class Mixer {
     const maxOffset = Math.max(0, Math.min(dur - MIN_REMAINING_SEC, dur * (1 - MIN_REMAINING_FRACTION)));
     const startOffset = Number.isFinite(rawOffset) ? Math.min(Math.max(0, rawOffset), Math.max(0, maxOffset)) : 0;
 
-    to.start(startAt, startOffset, rate);
-    const end = runTransition(from, to, preset, startAt, secPerBar);
-    from.stop(end + 0.1);
+    trace.scheduling = {
+      gridTime: +gridTime.toFixed(3),
+      startAt: +startAt.toFixed(3),
+      waitSec: +(startAt - now).toFixed(3),
+      startOffset: +startOffset.toFixed(3),
+      toStarted: false,
+    };
 
-    const match = evaluateHarmonicMatch(from.analysis?.key, to.analysis.key);
+    /**
+     * Everything past this point mutates live AudioParams and decks. A throw
+     * here used to escape next() entirely: autopilot's tick() had no guard, so
+     * the exception escaped the interval callback, `this.active` was never
+     * flipped, and the gains had already been forced to (outgoing up, incoming
+     * at zero) by the lines below. The station then broadcast silence with
+     * `playing` still true and no handover recorded anywhere.
+     */
+    try {
+      for (const p of [from.out.gain, to.out.gain, from.filter.frequency, to.filter.frequency]) {
+        p.cancelScheduledValues(0);
+      }
+      to.out.gain.setValueAtTime(0, this.ctx.currentTime);
+      to.filter.frequency.setValueAtTime(10, this.ctx.currentTime);
+      from.out.gain.setValueAtTime(from.channelVolume, this.ctx.currentTime);
 
-    this.prev = { deck: this.active, anchor: this.anchor, eff: this.effBpm };
-    this.fadeStart = startAt;
-    this.busyUntil = end;
-    this.active = this.idle;
-    this.manualCrossfaderOverride = false;
-    this.auditioningSlot = null;
-    if (this.splitCueEnabled) this.updatePflRouting();
-    this.anchor = startAt;
-    this.effBpm = effBpm;
-    return { ok: true, rate, clamped, harmonicLabel: match.label };
+      to.start(startAt, startOffset, rate);
+      trace.scheduling.toStarted = true;
+
+      const end = runTransition(from, to, preset, startAt, secPerBar);
+      from.stop(end + 0.1);
+
+      const match = evaluateHarmonicMatch(from.analysis?.key, to.analysis.key);
+
+      this.prev = { deck: this.active, anchor: this.anchor, eff: this.effBpm };
+      this.fadeStart = startAt;
+      this.busyUntil = end;
+      this.active = this.idle;
+      this.manualCrossfaderOverride = false;
+      // Park the commanded fader hard over on the incoming deck. info() used to do
+      // this as a side effect, and now only reports the animated sweep, so without
+      // it the gains would stay wherever the previous transition left them.
+      this.crossfader = this.active === 0 ? -1 : 1;
+      this.auditioningSlot = null;
+      if (this.splitCueEnabled) this.updatePflRouting();
+      this.anchor = startAt;
+      this.effBpm = effBpm;
+
+      trace.outcome = "ok";
+      trace.result = {
+        transitionEnd: +end.toFixed(3),
+        activeAfter: this.active as 0 | 1,
+        effBpmAfter: effBpm,
+      };
+      this.recordHandover(trace);
+      return { ok: true, rate, clamped, harmonicLabel: match.label };
+    } catch (err) {
+      /**
+       * Roll the mixer back to a state that at least keeps making the sound it
+       * was making, then report the failure. `to` may already be rolling with a
+       * zero gain, so hand the output back to `from` and re-announce `from` as
+       * active, which is where every caller believes it still is.
+       */
+      const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      try {
+        from.out.gain.cancelScheduledValues(0);
+        from.out.gain.setValueAtTime(from.channelVolume, this.ctx.currentTime);
+        to.out.gain.cancelScheduledValues(0);
+        to.out.gain.setValueAtTime(0, this.ctx.currentTime);
+      } catch {
+        /* the audio graph is already in an unknown state; the trace is the record */
+      }
+      this.active = entry.active;
+      this.busyUntil = 0;
+      this.fadeStart = 0;
+
+      trace.outcome = "threw";
+      trace.error = message;
+      this.recordHandover(trace);
+      return { ok: false, reason: `transition threw - ${message}` };
+    }
   }
 
   /**

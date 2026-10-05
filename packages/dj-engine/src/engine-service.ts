@@ -85,6 +85,8 @@ export class HeadlessEngine {
   /** Wall-clock seconds of audio rendered beyond what has been published. */
   private renderedAheadSec = 0;
   private lastBlockAtMs = 0;
+  /** Wall clock at ctx.currentTime 0, sampled at start, for ctx -> Date conversion. */
+  private ctxEpochMs = Date.now();
 
   constructor(opts: HeadlessEngineOptions = {}) {
     this.opts = opts;
@@ -143,6 +145,31 @@ export class HeadlessEngine {
     return [...this.decodeFailures];
   }
 
+  /**
+   * Re-attach the render tap to the master bus.
+   *
+   * The repair for a starved pump. When `onaudioprocess` stops firing the engine
+   * keeps reporting itself healthy while harbor receives nothing, so this is the
+   * only action that can actually fix that — restarting the mixer or re-asserting
+   * on air cannot, because neither is the broken part.
+   */
+  reprimeRenderTap(): boolean {
+    if (!this.ringer.isRunning) return false;
+    this.ringer.reattach(this.mixer.getMasterOutputNode());
+    return true;
+  }
+
+  /**
+   * Milliseconds since the render tap last produced a block.
+   *
+   * A direct observation, unlike `renderedAheadSec` which is a derived estimate
+   * that saturates at both ends. This is what distinguishes a live-but-silent
+   * station from a working one.
+   */
+  get renderStallMs(): number {
+    return this.ringer.lastBlockAgeMs;
+  }
+
   get library(): DecodedTrack[] {
     return this.crate;
   }
@@ -183,15 +210,13 @@ export class HeadlessEngine {
   /** Real per-deck state, read off the decks rather than assumed. */
   private deckSnapshot(slot: 0 | 1): DeckSnapshot {
     const deck = this.mixer.decks[slot];
-    const info = this.mixer.info();
-    const isAudible = info != null && info.deck === slot;
     const level = deck.getLevel();
 
     return {
       slot,
       trackId: deck.buffer ? this.trackIdForDeck(slot) : null,
       playing: deck.playing,
-      bpm: isAudible ? deck.analysis?.bpm ?? null : deck.analysis?.bpm ?? null,
+      bpm: deck.analysis?.bpm ?? null,
       key: deck.analysis ? deck.getEffectiveKey() : null,
       positionSec: deck.buffer ? deck.currentOffset(this.audioContext.currentTime) : 0,
       durationSec: deck.buffer?.duration ?? 0,
@@ -234,8 +259,20 @@ export class HeadlessEngine {
   }
 
   /**
-   * Transition state derived from when the mixer actually started and expects
-   * to finish a fade, not a hardcoded "not transitioning".
+   * Transition state read from the times the mixer actually scheduled.
+   *
+   * This used to be derived from `autopilot.nowPlaying.plan`, on the assumption
+   * that autopilot keeps the plan on the track that became audible. It does the
+   * opposite: a successful handover builds a fresh NowPlaying with `plan: null`,
+   * so the plan was only ever set during the cue window - the eight seconds
+   * *before* the track change, when nothing is mixing yet. The panel therefore
+   * showed a transition in progress while the successor sat silently cued, and
+   * showed nothing during the transition itself.
+   *
+   * The mixer knows the real answer: fadeStart and busyUntil are the committed
+   * times, and prev.deck is the deck that faded out. Context time is converted
+   * to wall clock with an offset captured at start, which drifts by well under a
+   * second over a session - far less than the window this reports.
    */
   private transitionState(): TransitionState {
     const np = this.autopilot.nowPlaying;
@@ -251,27 +288,24 @@ export class HeadlessEngine {
     };
     if (!np) return idle;
 
-    // Autopilot records the plan on the track that is now audible, so the
-    // transition is the bar-aligned window that led up to it. The plan has no
-    // duration of its own: it is `bars` bars at the tempo being mixed.
-    const plan = np.plan;
-    if (!plan) return idle;
+    const win = this.mixer.transitionWindow();
+    if (!win) return idle;
 
-    const bpm = this.mixer.decks[this.mixer.active].analysis?.bpm ?? 120;
-    const secPerBar = (60 / bpm) * 4;
-    const total = Math.max(0.5, plan.preset.bars * secPerBar);
+    const ctxToWallMs = (ctxSec: number): string =>
+      new Date(this.ctxEpochMs + ctxSec * 1000).toISOString();
 
-    const elapsed = (Date.now() - np.startedAtMs) / 1000;
-    const active = elapsed < total;
     return {
-      active,
-      preset: plan.preset,
-      fromTrackId: null,
-      toTrackId: np.track.id,
-      startedAt: new Date(np.startedAtMs - total * 1000).toISOString(),
-      endsAt: new Date(np.startedAtMs).toISOString(),
-      progress: active ? Math.min(1, elapsed / total) : 1,
-      harmonicMatch: plan.harmonicLabel,
+      active: true,
+      // The plan of the track that is now audible is not available (see above),
+      // so the preset is read off the deck the handover landed on. Its identity is
+      // not the preset, so this is reported as null rather than guessed at.
+      preset: null,
+      fromTrackId: this.trackIdForDeck(win.fromDeck),
+      toTrackId: this.trackIdForDeck(win.toDeck) ?? np.track.id,
+      startedAt: ctxToWallMs(win.fadeStart),
+      endsAt: ctxToWallMs(win.endsAt),
+      progress: win.progress,
+      harmonicMatch: null,
     };
   }
 
@@ -295,7 +329,11 @@ export class HeadlessEngine {
    */
   private onAirSnapshot(): OnAirSnapshot | null {
     const np = this.autopilot.nowPlaying;
-    if (!np) return null;
+    // A manual `transport.play` rolls a deck without arming the autopilot, and
+    // that is still a broadcast. Returning null here made the listener-facing
+    // now-playing empty and the verdict say "engine has no audio armed" while the
+    // station was transmitting at -13 dBFS.
+    if (!np) return this.rollingDeckSnapshot();
 
     const track = toTrackDTO(np.track, this.autopilot.template?.name ?? "Core Rotation");
     const deck = this.mixer.decks[this.mixer.info()?.deck ?? this.mixer.active];
@@ -322,6 +360,77 @@ export class HeadlessEngine {
     };
   }
 
+  /**
+   * On-air state derived from whichever deck is audibly rolling.
+   *
+   * Used when the autopilot has no now-playing record but a deck is playing —
+   * the manual-play case. The deck carries no artist/title (the mixer only holds
+   * PCM and analysis), so the crate is searched for the library entry whose
+   * duration matches the loaded buffer, and failing that the track is reported by
+   * its duration alone rather than being given an invented title.
+   */
+  private rollingDeckSnapshot(): OnAirSnapshot | null {
+    const now = this.audioContext.currentTime;
+    const slot = this.mixer.decks.findIndex((d) => d.playing && d.buffer);
+    if (slot < 0) return null;
+    const deck = this.mixer.decks[slot];
+    const buffer = deck.buffer;
+    if (!buffer) return null;
+
+    const elapsed = deck.currentOffset(now);
+    const duration = buffer.duration;
+
+    /**
+     * Match the loaded audio back to the crate.
+     *
+     * Duration is the only handle available: the mixer stores no track id. It
+     * can collide between two files of the same length, so a collision is
+     * reported as unknown rather than guessed at — a wrong title on air is worse
+     * than an honest "unknown track".
+     */
+    const candidates = this.crate.filter(
+      (t) => Math.abs((t.durationSec ?? 0) - duration) < 0.75,
+    );
+    const matched = candidates.length === 1 ? candidates[0] : null;
+
+    const track: TrackDTO = matched
+      ? toTrackDTO(matched, this.autopilot.template?.name ?? "Core Rotation")
+      : {
+          id: `deck-${slot}`,
+          title: "Unknown track",
+          artist: "",
+          album: null,
+          durationSec: duration,
+          // No invented clearance record and no invented playlist: both are
+          // station data this path does not have.
+          rightsId: null,
+          explicit: false,
+          playlist: "Unfiled",
+          bpm: deck.analysis?.bpm ?? null,
+        };
+
+    return {
+      current: {
+        track,
+        // There is no autopilot record, so there is no honest start time. The
+        // elapsed position is real, and saying so beats inventing one.
+        startedAt: new Date((now - elapsed) * 1000).toISOString(),
+        elapsed: Math.max(0, elapsed),
+        duration,
+        remaining: Math.max(0, duration - elapsed),
+        progress: duration > 0 ? Math.min(1, Math.max(0, elapsed / duration)) : 0,
+      },
+      element: { kind: "MUSIC" },
+      daypart: { clean: true, label: "Music only, no ad slots" },
+      liveShow: null,
+      next: [],
+      wheel: [{ kind: "MUSIC", durSec: Math.round(duration) }],
+      cycleIndex: 0,
+      cycleSec: this.startedAt ? (Date.now() - this.startedAt) / 1000 : 0,
+      serverTime: new Date().toISOString(),
+    };
+  }
+
   get status(): HeadlessEngineStatus {
     return {
       state: this.state,
@@ -332,13 +441,22 @@ export class HeadlessEngine {
         masterRmsDb: this.rms > 0 ? 20 * Math.log10(this.rms) : -Infinity,
         limiterReductionDb: this.mixer.getMasterTelemetry().limiterReductionDb,
         spectrum: this.spectrum(),
-        crossfader: this.mixer.crossfader,
+        crossfader: this.mixer.info()?.crossfader ?? this.mixer.crossfader,
         crossfaderCurve: this.mixer.crossfaderCurve,
         decks: [this.deckSnapshot(0), this.deckSnapshot(1)],
         scratch: this.mixer.idle ? null : this.mixer.scratchTelemetry(),
         master: this.mixer.getMasterTelemetry(),
-        renderedAheadSec: this.renderedAheadSec,
-        cpuMsPerBlock: this.cpuMsPerBlock,
+renderedAheadSec: this.renderedAheadSec,
+      /**
+       * How long the render tap has produced nothing.
+       *
+       * `renderedAheadSec` pins to -1 when the pump stalls, which is easy to
+       * misread as "slightly behind". This is unambiguous: a value climbing into
+       * the thousands means the engine has stopped producing audio entirely while
+       * still reporting itself healthy.
+       */
+      renderStallMs: Number.isFinite(this.renderStallMs) ? Math.round(this.renderStallMs) : -1,
+      cpuMsPerBlock: this.cpuMsPerBlock,
         sampleRate: this.sampleRate,
       },
       autopilot: this.autopilotState(),
@@ -362,6 +480,7 @@ export class HeadlessEngine {
    */
   async start(): Promise<void> {
     this.state = "loading";
+    this.ctxEpochMs = Date.now() - this.audioContext.currentTime * 1000;
     try {
       const ctx = this.audioContext;
 
@@ -433,6 +552,16 @@ export class HeadlessEngine {
         }
       }
       await this.ringer.start(this.mixer.getMasterOutputNode());
+      /**
+       * Register the render tap as a durable program tap.
+       *
+       * `routeOutputs` rebuilds the master bus's outgoing connections whenever the
+       * mixer's routing changes, and `disconnect()` is indiscriminate — so the
+       * tap has to be one the mixer knows about, or a routing change detaches the
+       * thing that publishes to harbor and the station goes silent with every
+       * field still reporting health.
+       */
+      this.mixer.addProgramTap(this.ringer.tapNode);
       this.applyHeadroomGuard();
 
       this.startedAt = Date.now();
@@ -490,7 +619,17 @@ export class HeadlessEngine {
   async stop(): Promise<void> {
     this.ringer.stop();
     this.harbor?.disconnect();
-    this.mixer.pause();
+    /**
+     * Stop the autopilot, not just the mixer.
+     *
+     * Pausing the mixer alone left autopilot's tick running: it reads
+     * `info()`, gets null because `mixer.playing` is false, and calls its
+     * recovery path, which restarts playback - while `state` is being set to
+     * "offline" and the harbour connection is being dropped. The engine reported
+     * a stopped station that was still rendering, and a later start() then hit
+     * "autopilot refused to start" because the mixer was already playing again.
+     */
+    this.autopilot.stop();
     this.state = "offline";
   }
 

@@ -10,6 +10,8 @@
 # Note: the mounts are infinite streams, so curl is bounded with --max-time
 # (not `timeout`), otherwise curl is SIGKILLed and never flushes %{http_code}.
 
+. "$(dirname "$0")/load-credentials.sh"
+
 HOST=127.0.0.1
 PORT=8010
 SECS=6
@@ -31,7 +33,7 @@ fi
 echo
 echo "== 2. icecast has a live source on each mount =="
 for m in live.mp3 mobile.mp3; do
-  if curl -s -u admin:REDACTED "http://$HOST:$PORT/admin/listmounts" | grep -q "/$m"; then
+  if curl -s -u "$ICECAST_ADMIN_USER:$ICECAST_ADMIN_PASSWORD" "http://$HOST:$PORT/admin/listmounts" | grep -q "/$m"; then
     ok "/$m is mounted"
   else
     bad "/$m is NOT mounted"
@@ -96,7 +98,7 @@ fi
 
 echo
 echo "== 5. real listener counts from icecast (replaces the fake sine wave) =="
-if timeout 6 curl -s -u admin:REDACTED -o /tmp/stats.xml \
+if timeout 6 curl -s -u "$ICECAST_ADMIN_USER:$ICECAST_ADMIN_PASSWORD" -o /tmp/stats.xml \
      "http://$HOST:$PORT/admin/stats" && [ -s /tmp/stats.xml ]; then
   ok "admin/stats returned data"
   python3 - <<'PY'

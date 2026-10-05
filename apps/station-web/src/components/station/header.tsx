@@ -26,13 +26,21 @@ import { useNowPlaying } from '@/hooks/use-nowplaying'
 import type { TabId } from '@/lib/station-types'
 import { cn } from '@/lib/utils'
 
+/**
+ * Listener-facing tabs.
+ *
+ * `ops` is deliberately absent. The control room holds internal figures —
+ * crate size, engine state, revenue, review queues — and putting it in the
+ * same nav as "Listen" told listeners it was part of the station. It is still
+ * reachable at /ops, and it still works, but finding it requires typing the
+ * path or following an internal link, which is the right amount of effort.
+ */
 const TABS: Array<{ id: TabId; label: string; icon: LucideIcon }> = [
   { id: 'on-air', label: 'On Air', icon: Radio },
   { id: 'schedule', label: 'Schedule', icon: CalendarClock },
   { id: 'submit', label: 'Submit', icon: Upload },
   { id: 'rights', label: 'Rights', icon: ShieldCheck },
   { id: 'sponsors', label: 'Sponsors', icon: Megaphone },
-  { id: 'ops', label: 'Ops', icon: SlidersHorizontal },
 ]
 
 /** Eastern Time clock, refreshed every 30 s (client-only to avoid hydration drift). */

@@ -114,11 +114,17 @@ const globalForRotation = globalThis as unknown as {
 /**
  * House-promo creative pool — unsold ad-break inventory rotates through these
  * instead of airing a single canned spot (deterministic pick per slot).
+ *
+ * Every line here is copy the operator has to be willing to broadcast. The
+ * studio-line promo previously quoted "(910) 555-0191", a fictional US
+ * exchange number, which meant a station could put a dead phone number on the
+ * air in an ad break. Unsold inventory is still inventory — it should say
+ * something true, or say nothing.
  */
 export const HOUSE_PROMOS: Array<{ title: string; line: string }> = [
-  { title: 'House promo — submit your track', line: 'Artists: send your music through the rights gate at ncsound.fm/submit.' },
-  { title: 'House promo — the studio line is open', line: 'Text the studio at (910) 555-0191 or join the studio line on the site.' },
-  { title: 'House promo — sponsor this daypart', line: 'Your brand here: daypart sponsorship from $180/mo — sales@ncsound.fm.' },
+  { title: 'House promo — submit your track', line: 'Artists: send your music through the rights gate on this site.' },
+  { title: 'House promo — listener requests open', line: 'Request a track from the request line while you listen.' },
+  { title: 'House promo — sponsor this daypart', line: 'Daypart sponsorship available — enquire on the station site.' },
 ]
 
 /** Deterministic house-promo variant for a slot instant. */

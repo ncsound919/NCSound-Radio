@@ -80,7 +80,9 @@ function hashString(s: string): number {
 }
 
 /** Deterministic art hue from the rights ID — amber/red family only (20..45). */
-function hueForRightsId(rightsId: string): number {
+function hueForRightsId(rightsId: string | null): number {
+  // No rights record yet: use the neutral hue rather than hashing null.
+  if (!rightsId) return 32
   return 20 + (hashString(rightsId) % 26)
 }
 
@@ -275,7 +277,7 @@ function TrackDialog({
               </div>
               <div>
                 <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Rights ID</dt>
-                <dd className="font-mono text-primary">{entry.rightsId}</dd>
+                <dd className="font-mono text-primary">{entry.rightsId ?? '—'}</dd>
               </div>
               <div>
                 <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Explicit</dt>
@@ -361,7 +363,7 @@ function FavoriteHeartButton({
   track,
   alwaysVisible = false,
 }: {
-  track: { id: string; title: string; artist: string; rightsId: string }
+  track: { id: string; title: string; artist: string; rightsId: string | null }
   alwaysVisible?: boolean
 }) {
   const { ids, toggle } = useFavorites()
@@ -479,7 +481,15 @@ function Hero({
   useAudioLevel(heroRef, '--audio-level', isPlaying)
 
   const chips = [
-    { icon: Gauge, label: '128 kbps AAC' },
+    // Was hardcoded "128 kbps AAC". The live mount is MP3 at 128 kbps, and the
+    // figure should come from what Icecast is actually publishing rather than
+    // from a constant that happened to be half right.
+    {
+      icon: Gauge,
+      label: data?.stream?.mounts?.[0]
+        ? `${data.stream.mounts[0].bitrateKbps} kbps ${data.stream.encoder.toUpperCase()}`
+        : 'bitrate unknown',
+    },
     { icon: ShieldCheck, label: 'Rights-cleared library' },
     data?.daypart
       ? {
@@ -753,9 +763,11 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
                   >
                     {track.playlist}
                   </Badge>
-                  <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
-                    {track.rightsId}
-                  </span>
+                  {track.rightsId && (
+                    <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
+                      {track.rightsId}
+                    </span>
+                  )}
                   {track.bpm !== null && (
                     <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
                       {track.bpm} BPM
@@ -771,7 +783,7 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
                   )}
                 </>
               )}
-              {kind === 'STATION_ID' && (
+              {kind === 'STATION_ID' && track.rightsId && (
                 <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
                   {track.rightsId}
                 </span>
@@ -794,7 +806,8 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
               className="pointer-events-none absolute inset-x-0 bottom-0 h-12 px-6 pb-1 opacity-80 sm:h-14"
               aria-hidden="true"
             >
-              <SpectrumCanvas active={isPlaying} bars={40} />
+              {/* The station being on air, not this browser playing audio. */}
+      <SpectrumCanvas onAir={data?.mode === 'live'} bars={40} />
             </div>
 
             {/* title overlay */}

@@ -20,7 +20,6 @@ import {
   pickExactSyncRate,
 } from "@ncsound/dj-engine/sync";
 import { calculateHarmonicKeyShift } from "@ncsound/dj-engine/timePitchEngine";
-import { BUILTIN_TRACK_SPECS, synthesizeStudioTrack } from "@ncsound/dj-engine/synthTracks";
 import {
   categorizeTrackAcoustics,
   clearIndexedDbCrate,
@@ -42,6 +41,7 @@ import type {
   PartyTemplate,
   PitchFaderRange,
   ScratchCutMode,
+  ScratchPatternId,
   ScratchQuantizeMode,
   ScratchSourceMode,
   SetlistEntry,
@@ -50,35 +50,104 @@ import type {
 } from "./engine/types";
 import { RadioBroadcastEngine } from "./engine/radioBroadcast";
 import { broadcastLink, type BroadcastStatus } from "./engine/broadcastLink";
+import { controlBus, type ConsoleMode } from "./engine/controlBus";
+import { StationOps, type SubmissionStatus } from "./engine/stationOps";
+import { emptyCrateSource, fetchEngineCrate, formatDuration, type CrateSource } from "./engine/engineCrate";
+import { ObsOverlay, isOverlayRequested } from "./engine/obsOverlay";
+import type { DjCommand, TrackDTO } from "@ncsound/station-core/contract";
 import type { RadioNowPlayingPayload, RadioSongRequest, StationSweeper } from "./engine/radioBroadcast";
+import { $, setTxt, setHTML, setStyleProp, toggleClass } from "./ui/dom";
+import {
+  clean,
+  COMPACT_SCRATCH_LABELS,
+  fmt,
+  formatCriticMetric,
+  formatFileSize,
+  formatMidiAssignment,
+  SHORT_PRESET_LABELS,
+} from "./ui/format";
 
 const presets = transitions as TransitionPreset[];
 const templates = partyTemplates as PartyTemplate[];
 const mixer = new Mixer();
+
+/**
+ * The booth monitors the cued deck; the engine owns the broadcast.
+ *
+ * This used to be `program`, so the booth played the same music the engine was
+ * publishing — locally through the program bus AND again through the stream
+ * player below. Two copies, on two unrelated clocks, is the "they interrupt
+ * each other" symptom. Separately, the booth's Smart Mix drove the deck via
+ * `playbackRate`, which resamples the playhead and drags pitch down with the
+ * tempo, so the booth's copy was flat while the broadcast was pitch-correct.
+ *
+ * `cue-only` leaves the decks running (the transport model, waveforms and
+ * playhead stay live) but takes the program bus off the speakers. What remains
+ * audible is the pre-fader cue bus for the idle deck, which plays the cued track
+ * at its native pitch — which is what a pre-listen should do.
+ */
+mixer.setMonitorPolicy("cue-only");
+
 const radio = new RadioBroadcastEngine(mixer.ctx);
-mixer.getMasterOutputNode().connect(radio.inputNode);
-const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-
-function setTxt(id: string, text: string) {
-  const el = $(id);
-  if (el) el.textContent = text;
-}
-
-function setHTML(id: string, html: string) {
-  const el = $(id);
-  if (el) el.innerHTML = html;
-}
-
-function setStyleProp(id: string, prop: keyof CSSStyleDeclaration, val: string) {
-  const el = $(id);
-  if (el) (el.style as any)[prop] = val;
-}
-
-function toggleClass(id: string, cls: string, active: boolean) {
-  const el = $(id);
-  if (el) el.classList.toggle(cls, active);
-}
+// Registered as a tap rather than wired by hand, so re-routing the destination
+// does not silently detach the stream player.
+mixer.addProgramTap(radio.inputNode);
 const RING = 351.86; // circumference of r=56 ring
+
+/**
+ * Mirror a control on the engine.
+ *
+ * The local mixer always applies the change first, because the booth graph is
+ * the monitor and must stay responsive. This sends the same change to the
+ * engine that owns the stream. Refusals and outages surface through
+ * `controlBus.onRefusal`, which toasts — so a control that cannot reach the
+ * engine says so instead of silently moving only the local graph.
+ */
+function mirror(command: DjCommand): void {
+  void controlBus.send(command);
+}
+
+/** Same as `mirror`, for a control that moves continuously: newest value wins. */
+function mirrorLive(command: DjCommand): void {
+  controlBus.sendCoalesced(command);
+}
+
+/**
+ * Run a transition on the booth graph and tell the engine to run its own.
+ *
+ * Every transition trigger in the console — the pad matrix, START PARTY, the
+ * silence watchdog's failover — goes through here, so none of them can end up
+ * being a booth-only flourish while the badge says ON AIR.
+ *
+ * `bars` and `curve` travel with the command. `mixNext` used to carry only an
+ * id, and the dispatcher built a bare `{ id }` from it, which `runTransition`
+ * reads as "2 bars" — so an 8-bar blend chosen here played as a 2-bar blend on
+ * the stream.
+ */
+function boothNext(preset: TransitionPreset): ReturnType<typeof mixer.next> {
+  const r = mixer.next(preset);
+  mirror({
+    type: "mix.mixNext",
+    presetId: preset.id,
+    bars: preset.bars,
+    curve: preset.curve,
+  });
+  return r;
+}
+
+/** Fire a scratch pattern locally and on the engine. */
+function boothScratch(patternId: ScratchPatternId): ReturnType<typeof mixer.triggerScratchPad> {
+  const fired = mixer.triggerScratchPad(patternId);
+  mirror({ type: "scratch.pattern", patternId });
+  return fired;
+}
+
+/** Fire an autotriggered scratch locally and on the engine. */
+function boothAutoscratch(patternId: ScratchPatternId): ReturnType<typeof mixer.triggerAutoscratch> {
+  const res = mixer.triggerAutoscratch(patternId);
+  mirror({ type: "scratch.pattern", patternId });
+  return res;
+}
 
 interface CrateTrack {
   id: string;
@@ -90,6 +159,8 @@ interface CrateTrack {
   buffer?: AudioBuffer;
   file?: File;
   analysis: TrackAnalysis;
+  /** Set when this track came from the engine's crate; enables on-demand audio. */
+  stationCrateId?: string;
   playCount?: number;
   lastPlayedAtMs?: number;
   dateAddedMs?: number;
@@ -110,6 +181,8 @@ const queue: CrateTrack[] = [];
 const setlistHistory: SetlistEntry[] = [];
 
 let selectedPresetId = "auto";
+/** Transition length chosen in the bar selector; undefined = follow the preset. */
+let selectedTransitionBars: number | undefined;
 let selectedTemplateId = templates[0].id;
 let autoPilotEnabled = true;
 let autoScratchDrops = true;
@@ -226,11 +299,6 @@ let agentRunning = false;
 const platterAngles = [0, 0];
 let lastFrameTime = performance.now();
 
-const fmt = (s: number) => {
-  s = Math.max(0, Math.round(s));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-};
-const clean = (n: string) => n.replace(/\.[^.]+$/, "");
 
 function toast(msg: string) {
   $("toast").textContent = msg;
@@ -243,17 +311,6 @@ function toast(msg: string) {
 }
 
 // 1. Render Fast Interlocking Transition Preset Keys (Auto Variety + 8 Real DJ Mixing Techniques)
-const SHORT_PRESET_LABELS: Record<string, string> = {
-  auto: "Auto Variety",
-  "drop-cut": "Drop Slam",
-  "bass-swap": "Bass Swap",
-  filter: "Filter Riser",
-  "vinyl-brake": "Vinyl Brake",
-  backspin: "Backspin",
-  "echo-out": "Echo Out",
-  smooth: "Smooth Blend",
-  long: "8-Bar Club",
-};
 
 const recentTransitionPresetIds: string[] = [];
 
@@ -286,11 +343,12 @@ if (blendContainer) {
   blendContainer.addEventListener("change", e => {
     selectedPresetId = (e.target as HTMLInputElement).value;
     saveBoothPrefs();
+    const chosen = presets.find(x => x.id === selectedPresetId);
+    if (chosen) mirror({ type: "library.setPreset", preset: chosen });
     if (selectedPresetId === "auto") {
       toast("Transition mode: Auto-DJ Variety (Dynamically picks Drop Slam, Bass Swap, Filter Riser, Brake, Spinback, or Smooth Blend)");
-    } else {
-      const p = presets.find(x => x.id === selectedPresetId);
-      if (p) toast(`Transition mode locked: ${p.name} (${p.bars} bars)`);
+    } else if (chosen) {
+      toast(`Transition mode locked: ${chosen.name} (${chosen.bars} bars)`);
     }
   });
 }
@@ -325,16 +383,6 @@ function resolveActiveTransitionPreset(): { preset: TransitionPreset; autoReason
 }
 
 // 2. Render 8 Fitted Autoscratch Performance Pads (4x2 Matrix)
-const COMPACT_SCRATCH_LABELS: Record<string, { title: string; tag: string }> = {
-  baby: { title: "Baby Scratch", tag: "2B OPEN" },
-  flare: { title: "Orbit Flare", tag: "2B 2-CLK" },
-  transformer: { title: "Transformer", tag: "2B GATE" },
-  chirp: { title: "Chirp Cut", tag: "2B EDGE" },
-  crab: { title: "4-Finger Crab", tag: "2B ROLL" },
-  tear: { title: "Tear Scratch", tag: "2B SPLIT" },
-  backspin: { title: "Backspin", tag: "4B WHIP" },
-  uzis: { title: "Laser Stutter", tag: "2B 1/32" },
-};
 
 const scratchPadsContainer = $("scratchPads");
 if (scratchPadsContainer) {
@@ -366,7 +414,7 @@ if (scratchPadsContainer) {
 
     btn.addEventListener("click", async () => {
       await mixer.ctx.resume();
-      const res = mixer.triggerAutoscratch(pat.id);
+      const res = boothAutoscratch(pat.id);
       if (res.ok) toast(`Autoscratch: ${res.message}`);
     });
 
@@ -601,17 +649,6 @@ const agentSeedInput = $<HTMLInputElement>("agentSeedInput");
 const agentWithHookInput = $<HTMLInputElement>("agentWithHook");
 const agentExportWavBtn = $<HTMLButtonElement>("agentExportWavBtn");
 
-function formatCriticMetric(name: string, val: number | null, threshold: number | null): string {
-  if (val === null) return "not measured";
-  if (name === "clipping") return `peak=${val.toFixed(2)}`;
-  if (name === "gate_clicks") return `jump=${val.toFixed(2)}`;
-  if (name === "grid_adherence") return `${val.toFixed(1)}ms`;
-  if (name === "density") return `${val.toFixed(0)}/${threshold ?? 0}bar`;
-  if (name === "silence") return `rms=${val.toFixed(3)}`;
-  if (name === "diversity") return `rep=${val.toFixed(0)}`;
-  if (name === "intelligibility") return `${Math.round(val * 100)}%`;
-  return `${val.toFixed(2)}`;
-}
 
 function renderAgentInspector(out: AgentTriggerOutput) {
   const res = out.result;
@@ -703,6 +740,15 @@ async function trigger90sScratchAgent(incrementSeed = false) {
       archetype: agentArchetype,
       sentenceWords,
       withHook: agentWithHookInput ? agentWithHookInput.checked : true,
+    });
+    // `scratch.agent` only carries bars/style/seed — the console's placement
+    // mode, archetype and lyric sentence have no counterpart in the contract,
+    // so the engine runs its own agent from the same seed.
+    mirror({
+      type: "scratch.agent",
+      bars: agentBars === 4 ? 4 : 2,
+      style: agentStyle,
+      seed,
     });
     lastAgentOutput = out;
     if (out.result && agentSeedInput) {
@@ -907,6 +953,7 @@ function renderPartyTemplates() {
       renderQueue();
       renderPartyTemplates();
       saveBoothPrefs();
+      mirror({ type: "autopilot.setVibe", templateId: t.id });
       toast(`Party Vibe: ${t.name} (Queue auto-sequenced to ${t.name} energy curve)`);
     });
     partyTemplatesBar.append(btn);
@@ -1037,6 +1084,7 @@ autoPilotBtn.addEventListener("click", () => {
   autoPilotEnabled = !autoPilotEnabled;
   autoPilotBtn.setAttribute("aria-pressed", String(autoPilotEnabled));
   autoPilotBtn.innerHTML = `<span class="switch-led"></span><span>Auto-DJ: ${autoPilotEnabled ? "On" : "Off"}</span>`;
+  mirror({ type: "autopilot.set", enabled: autoPilotEnabled });
   toast(
     autoPilotEnabled
       ? "Auto-DJ Pilot Enabled - Will auto-blend tracks at phrase outro"
@@ -1071,21 +1119,30 @@ recSetBtn.addEventListener("click", async () => {
 });
 
 // Master BPM Nudge Controls
+//
+// `sync.masterBpm` is 70..175 because that is what Mixer.setMasterBpm applies.
+// The booth nudge is free to walk outside it while rehearsing, so the mirrored
+// value is clamped rather than sent raw and refused on every press.
+const mirrorMasterBpm = (bpm: number) => mirror({ type: "sync.masterBpm", bpm: Math.max(70, Math.min(175, bpm)) });
+
 $("bpmDownBtn").addEventListener("click", () => {
   const cur = mixer.info()?.effBpm ?? slots[0]?.analysis.bpm ?? 124;
   mixer.setMasterBpm(cur - 1);
+  mirrorMasterBpm(cur - 1);
   syncPitchSlidersFromDecks();
   toast(`Master Tempo nudged to ${(cur - 1).toFixed(1)} BPM`);
 });
 $("bpmUpBtn").addEventListener("click", () => {
   const cur = mixer.info()?.effBpm ?? slots[0]?.analysis.bpm ?? 124;
   mixer.setMasterBpm(cur + 1);
+  mirrorMasterBpm(cur + 1);
   syncPitchSlidersFromDecks();
   toast(`Master Tempo nudged to ${(cur + 1).toFixed(1)} BPM`);
 });
 $("bpmResetBtn").addEventListener("click", () => {
   const native = slots[mixer.active]?.analysis.bpm ?? 124;
   mixer.setMasterBpm(native);
+  mirrorMasterBpm(native);
   syncPitchSlidersFromDecks();
   toast(`Master Tempo synced to ${native.toFixed(1)} BPM`);
 });
@@ -1139,6 +1196,14 @@ document.querySelectorAll<HTMLButtonElement>("[data-trans-bars]").forEach(btn =>
     btn.classList.add("active");
     const bars = parseFloat(btn.dataset.transBars || "2");
     mixer.setTransitionDurationBars(bars);
+    // Remembered so the control board's NEXT can send the length the operator
+    // actually chose. `mix.mixNext` used to carry only a preset id and the
+    // engine ran every transition at its 2-bar default.
+    selectedTransitionBars = bars;
+    // Mirrored, not replaced: the contract used to cap this at 1/2/4/8 bars
+    // while this selector also offers 16B and 32B, so half the buttons here
+    // could not have reached the engine at all.
+    mirror({ type: "mix.setTransitionBars", bars });
     toast(`Transition Speed configured to ${bars} bar(s)`);
   });
 });
@@ -1208,6 +1273,7 @@ $("phaseAlignMasterBtn").addEventListener("click", async () => {
   await mixer.ctx.resume();
   const idleSlot = mixer.idle as 0 | 1;
   const ok = mixer.phaseAlignDeck(idleSlot);
+  mirror({ type: "sync.phaseAlign", slot: idleSlot });
   if (ok) {
     toast(`Deck ${idleSlot === 0 ? "A" : "B"} Kick Phase locked into pocket with Master Deck`);
   } else {
@@ -1243,6 +1309,7 @@ document.querySelectorAll<HTMLButtonElement>(".pitch-range-btn").forEach(btn => 
     await mixer.ctx.resume();
     if (!slots[slot]) return toast(`Load a track into Deck ${prefix} first`);
     const res = mixer.syncDeckTempo(slot);
+    mirror({ type: "sync.deck", slot });
     syncPitchSlidersFromDecks();
     toast(`Deck ${prefix} SYNC: Locked to exact ${res.syncedBpm.toFixed(1)} BPM (${res.pct >= 0 ? "+" : ""}${res.pct.toFixed(2)}%)`);
   });
@@ -1269,6 +1336,7 @@ document.querySelectorAll<HTMLButtonElement>(".pitch-range-btn").forEach(btn => 
     await mixer.ctx.resume();
     if (!slots[slot]) return toast(`Load a track into Deck ${prefix} first`);
     const ok = mixer.phaseAlignDeck(slot);
+    mirror({ type: "sync.phaseAlign", slot });
     if (ok) {
       toast(`Deck ${prefix} Phase Aligned — kick transients locked to pocket`);
     } else {
@@ -1300,6 +1368,7 @@ document.querySelectorAll<HTMLButtonElement>("[data-beatjump-deck]").forEach(btn
     const beats = parseInt(btn.dataset.beats || "4", 10);
     if (!slots[slot]) return toast(`Load a track into Deck ${slot === 0 ? "A" : "B"} first`);
     const newOff = mixer.beatJump(slot, beats);
+    mirror({ type: "cue.seek", slot, seconds: newOff });
     const bars = beats / 4;
     toast(`Deck ${slot === 0 ? "A" : "B"} Beat Jump ${bars > 0 ? `+${bars}` : bars}B -> ${fmt(newOff)}`);
   });
@@ -1316,6 +1385,7 @@ document.querySelectorAll<HTMLButtonElement>(".cue-btn").forEach(btn => {
       slots[deckIdx]!.analysis.cuePoints![cueKey] = snapped;
     }
     updateDeckStaticLabels(deckIdx);
+    mirror({ type: "cue.hotCue", slot: deckIdx, cue: cueKey });
     toast(`Set Deck ${deckIdx === 0 ? "A" : "B"} ${cueKey.toUpperCase()} Cue at ${fmt(snapped)}`);
   };
 
@@ -1336,6 +1406,7 @@ document.querySelectorAll<HTMLButtonElement>(".cue-btn").forEach(btn => {
     if (!meta?.analysis.cuePoints) return toast("Load a track on this deck first");
     const targetSec = meta.analysis.cuePoints[cueKey];
     mixer.seekDeck(deckIdx, targetSec);
+    mirror({ type: "cue.seek", slot: deckIdx, seconds: targetSec });
     toast(`Deck ${deckIdx === 0 ? "A" : "B"} jumped to ${cueKey.toUpperCase()} (${fmt(targetSec)})`);
   });
 });
@@ -1347,6 +1418,7 @@ document.querySelectorAll<HTMLButtonElement>(".loop-btn").forEach(btn => {
     const d = mixer.decks[deckIdx];
     if (!d.buffer) return toast("Load a track on this deck first");
     d.setLoop(bars);
+    mirror({ type: "cue.loop", slot: deckIdx, enabled: d.loopBars > 0 });
     updateLoopButtons(deckIdx);
     toast(
       d.loopBars > 0
@@ -1388,6 +1460,7 @@ document.querySelectorAll<HTMLInputElement>("[data-eq-deck]").forEach(input => {
     const band = input.dataset.eqBand as "low" | "mid" | "high";
     const db = parseFloat(input.value);
     mixer.decks[deckIdx].setEq(band, db);
+    mirrorLive({ type: "mix.setEq", slot: deckIdx, band, db });
     const labelId = `eqVal${deckIdx === 0 ? "A" : "B"}${band.charAt(0).toUpperCase() + band.slice(1)}`;
     $(labelId).textContent = `${db > 0 ? "+" : ""}${db.toFixed(0)}dB`;
   };
@@ -1404,6 +1477,10 @@ document.querySelectorAll<HTMLButtonElement>("[data-kill-deck]").forEach(btn => 
     const band = btn.dataset.killBand as "low" | "mid" | "high";
     const killed = mixer.decks[deckIdx].toggleEqKill(band);
     btn.classList.toggle("active", killed);
+    // The contract has no kill command, and `mix.setEq` stops at -24dB while
+    // the isolator cut is -48dB. Mirroring the floor is the closest honest
+    // representation; the booth keeps the full kill.
+    mirror({ type: "mix.setEq", slot: deckIdx, band, db: killed ? -24 : 0 });
     toast(`Deck ${deckIdx === 0 ? "A" : "B"} ${band.toUpperCase()} EQ ${killed ? "KILLED (-48dB)" : "Restored"}`);
   });
 });
@@ -1414,11 +1491,13 @@ document.querySelectorAll<HTMLButtonElement>("[data-kill-deck]").forEach(btn => 
   input.addEventListener("input", () => {
     const v = parseFloat(input.value || "1");
     mixer.setDeckChannelVolume(slot, v);
+    mirrorLive({ type: "mix.setDeckVolume", slot, volume: v });
     $(`chanVolVal${prefix}`).textContent = `${Math.round(v * 100)}%`;
   });
   input.addEventListener("dblclick", () => {
     input.value = "1";
     mixer.setDeckChannelVolume(slot, 1);
+    mirror({ type: "mix.setDeckVolume", slot, volume: 1 });
     $(`chanVolVal${prefix}`).textContent = "100%";
   });
 });
@@ -1429,6 +1508,7 @@ document.querySelectorAll<HTMLButtonElement>("[data-cf-curve]").forEach(btn => {
     btn.classList.add("active");
     const curve = (btn.dataset.cfCurve as CrossfaderCurve) || "blend";
     mixer.setCrossfaderCurve(curve);
+    mirror({ type: "mix.setCrossfaderCurve", curve });
     toast(
       curve === "cut"
         ? "Crossfader Curve: Turntablist Sharp Cut (12% edge)"
@@ -1444,6 +1524,7 @@ document.querySelectorAll<HTMLInputElement>("[data-color-deck]").forEach(input =
     const deckIdx = Number(input.dataset.colorDeck) as 0 | 1;
     const val = parseFloat(input.value);
     mixer.decks[deckIdx].setColorFilter(val);
+    mirrorLive({ type: "mix.setFilter", slot: deckIdx, bipolar: val });
     const label = $(deckIdx === 0 ? "colorValA" : "colorValB");
     if (Math.abs(val) < 0.05) label.textContent = "FLAT";
     else if (val < 0) label.textContent = `LP ${Math.round((1 + val) * 100)}%`;
@@ -1458,11 +1539,14 @@ document.querySelectorAll<HTMLInputElement>("[data-color-deck]").forEach(input =
 
 const crossfaderInput = $<HTMLInputElement>("crossfaderInput");
 crossfaderInput.addEventListener("input", () => {
-  mixer.setCrossfader(parseFloat(crossfaderInput.value));
+  const position = parseFloat(crossfaderInput.value);
+  mixer.setCrossfader(position);
+  mirrorLive({ type: "mix.setCrossfader", position });
 });
 crossfaderInput.addEventListener("dblclick", () => {
   crossfaderInput.value = "0";
   mixer.setCrossfader(0);
+  mirror({ type: "mix.setCrossfader", position: 0 });
   toast("Crossfader centered (Both Deck A & Deck B live)");
 });
 
@@ -1483,15 +1567,18 @@ const midiEngine = new MidiControllerEngine({
   onCrossfader: pos => {
     mixer.setCrossfader(pos);
     crossfaderInput.value = pos.toFixed(2);
+    mirrorLive({ type: "mix.setCrossfader", position: pos });
   },
   onChannelVolume: (deck, val01) => {
     mixer.setDeckChannelVolume(deck, val01);
+    mirrorLive({ type: "mix.setDeckVolume", slot: deck, volume: val01 });
     const prefix = deck === 0 ? "A" : "B";
     $<HTMLInputElement>(`chanVol${prefix}`).value = val01.toFixed(2);
     $(`chanVolVal${prefix}`).textContent = `${Math.round(val01 * 100)}%`;
   },
   onEq: (deck, band, db) => {
     mixer.decks[deck].setEq(band, db);
+    mirrorLive({ type: "mix.setEq", slot: deck, band, db });
     const prefix = deck === 0 ? "A" : "B";
     const input = document.querySelector<HTMLInputElement>(
       `[data-eq-deck="${deck}"][data-eq-band="${band}"]`
@@ -1502,6 +1589,7 @@ const midiEngine = new MidiControllerEngine({
   },
   onEqKill: (deck, band) => {
     const killed = mixer.decks[deck].toggleEqKill(band);
+    mirror({ type: "mix.setEq", slot: deck, band, db: killed ? -24 : 0 });
     const btn = document.querySelector<HTMLButtonElement>(
       `[data-kill-deck="${deck}"][data-kill-band="${band}"]`
     );
@@ -1512,6 +1600,7 @@ const midiEngine = new MidiControllerEngine({
   },
   onColorFilter: (deck, val) => {
     mixer.decks[deck].setColorFilter(val);
+    mirrorLive({ type: "mix.setFilter", slot: deck, bipolar: val });
     const input = document.querySelector<HTMLInputElement>(`[data-color-deck="${deck}"]`);
     if (input) input.value = val.toFixed(2);
     const label = $(deck === 0 ? "colorValA" : "colorValB");
@@ -1533,6 +1622,7 @@ const midiEngine = new MidiControllerEngine({
     if (!d.buffer) return;
     const targetSec = ratio01 * d.buffer.duration;
     mixer.seekDeckContinuous(deck, targetSec);
+    mirrorLive({ type: "cue.seek", slot: deck, seconds: targetSec });
   },
   onJogNudge: (deck, deltaSec, deltaDeg) => {
     platterAngles[deck] = (platterAngles[deck] + deltaDeg) % 360;
@@ -1541,6 +1631,7 @@ const midiEngine = new MidiControllerEngine({
   onBeatJump: (deck, deltaBeats) => {
     const newSec = mixer.beatJump(deck, deltaBeats);
     const sign = deltaBeats > 0 ? "+" : "";
+    mirror({ type: "cue.seek", slot: deck, seconds: newSec });
     toast(`MIDI Deck ${deck === 0 ? "A" : "B"} Beatjump ${sign}${deltaBeats} Beats -> ${fmt(newSec)}`);
   },
   onPlatterTouch: (deck, touched) => {
@@ -1571,6 +1662,7 @@ const midiEngine = new MidiControllerEngine({
   onSyncDeck: deck => {
     if (!slots[deck]) return;
     const res = mixer.syncDeck(deck);
+    mirror({ type: "sync.deck", slot: deck });
     syncPitchSlidersFromDecks();
     toast(`MIDI Deck ${deck === 0 ? "A" : "B"} Synced to ${res.syncedBpm.toFixed(1)} BPM`);
   },
@@ -1584,6 +1676,7 @@ const midiEngine = new MidiControllerEngine({
     if (!d.buffer) return;
     if (action === "toggle") {
       d.setLoop(d.loopBars > 0 ? 0 : 4);
+      mirror({ type: "cue.loop", slot: deck, enabled: d.loopBars > 0 });
     } else if (action === "halve") {
       d.halveLoop();
     } else {
@@ -1608,11 +1701,12 @@ const midiEngine = new MidiControllerEngine({
     if (!meta?.analysis.cuePoints) return;
     const targetSec = meta.analysis.cuePoints[cue];
     mixer.seekDeck(deck, targetSec);
+    mirror({ type: "cue.seek", slot: deck, seconds: targetSec });
     toast(`MIDI Deck ${deck === 0 ? "A" : "B"} -> ${cue.toUpperCase()} (${fmt(targetSec)})`);
   },
   onScratchPad: patternId => {
     void mixer.ctx.resume();
-    const res = mixer.triggerAutoscratch(patternId);
+    const res = boothAutoscratch(patternId);
     if (res.ok) toast(`MIDI Pad: ${res.message}`);
   },
   on16PadHit: padIndex => {
@@ -1635,16 +1729,6 @@ const midiEngine = new MidiControllerEngine({
   },
 });
 
-function formatMidiAssignment(b: { kind: string; channel: number; number: number }): string {
-  const ch = b.channel < 0 ? "ANY" : `CH${b.channel + 1}`;
-  const kind =
-    b.kind === "cc"
-      ? `CC#${b.number}`
-      : b.kind === "pitchbend"
-        ? "PITCHBEND"
-        : `NOTE#${b.number}`;
-  return `${ch} ${kind}`;
-}
 
 function renderMidiUi() {
   const connectBtn = $<HTMLButtonElement>("midiConnectBtn");
@@ -1759,22 +1843,22 @@ interface Pad16Config {
 function get16PadsConfig(): Pad16Config[] {
   if (active16PadMode === "transitions") {
     return [
-      { label: "1B BLEND", sub: "Power", color: "#f59e0b", action: () => { const r = mixer.next({ id: "blend-1b", name: "1B Power Blend", bars: 1, curve: "equal-power", style: "blend" }); if (r.ok) toast("🔀 Pad 1: 1B Power Blend Triggered"); } },
-      { label: "2B BLEND", sub: "Club", color: "#f59e0b", action: () => { const r = mixer.next({ id: "blend-2b", name: "2B Power Blend", bars: 2, curve: "equal-power", style: "blend" }); if (r.ok) toast("🔀 Pad 2: 2B Club Blend Triggered"); } },
-      { label: "4B BLEND", sub: "Extended", color: "#f59e0b", action: () => { const r = mixer.next({ id: "blend-4b", name: "4B Deep Blend", bars: 4, curve: "equal-power", style: "blend" }); if (r.ok) toast("🔀 Pad 3: 4B Extended Blend Triggered"); } },
-      { label: "8B BLEND", sub: "Marathon", color: "#f59e0b", action: () => { const r = mixer.next({ id: "blend-8b", name: "8B Epic Blend", bars: 8, curve: "equal-power", style: "blend" }); if (r.ok) toast("🔀 Pad 4: 8B Epic Blend Triggered"); } },
-      { label: "1B BASS SWAP", sub: "Drop", color: "#fbbf24", action: () => { const r = mixer.next({ id: "bass-swap-1b", name: "1B Bass Swap", bars: 1, curve: "equal-power", style: "bass-swap" }); if (r.ok) toast("🔀 Pad 5: 1B Bass Swap Triggered"); } },
-      { label: "2B BASS SWAP", sub: "Smooth", color: "#fbbf24", action: () => { const r = mixer.next({ id: "bass-swap-2b", name: "2B Bass Swap", bars: 2, curve: "equal-power", style: "bass-swap" }); if (r.ok) toast("🔀 Pad 6: 2B Bass Swap Triggered"); } },
-      { label: "4B RISER", sub: "Filter", color: "#38bdf8", action: () => { const r = mixer.next({ id: "filter-riser-4b", name: "4B Filter Riser", bars: 4, curve: "equal-power", style: "filter-riser" }); if (r.ok) toast("🔀 Pad 7: 4B Filter Riser Triggered"); } },
-      { label: "8B RISER", sub: "Build", color: "#38bdf8", action: () => { const r = mixer.next({ id: "filter-riser-8b", name: "8B Filter Riser", bars: 8, curve: "equal-power", style: "filter-riser" }); if (r.ok) toast("🔀 Pad 8: 8B Filter Riser Triggered"); } },
-      { label: "VINYL BRAKE", sub: "Motor Stop", color: "#ef4444", action: () => { const r = mixer.next({ id: "vinyl-brake", name: "Vinyl Brake", bars: 1, curve: "equal-power", style: "vinyl-brake" }); if (r.ok) toast("🔀 Pad 9: Vinyl Brake Transition Triggered"); } },
-      { label: "BACKSPIN", sub: "Rewind", color: "#c084fc", action: () => { const r = mixer.next({ id: "backspin", name: "Backspin", bars: 1, curve: "equal-power", style: "backspin" }); if (r.ok) toast("🔀 Pad 10: Backspin Transition Triggered"); } },
-      { label: "ECHO OUT", sub: "Delay Tail", color: "#34d399", action: () => { const r = mixer.next({ id: "echo-out", name: "Echo Out", bars: 2, curve: "equal-power", style: "echo-out" }); if (r.ok) toast("🔀 Pad 11: Echo Out Transition Triggered"); } },
-      { label: "DROP CUT", sub: "Instant", color: "#f43f5e", action: () => { const r = mixer.next({ id: "drop-cut", name: "Drop Cut", bars: 0.5, curve: "equal-power", style: "drop-cut" }); if (r.ok) toast("🔀 Pad 12: Instant Drop Cut Triggered"); } },
-      { label: "SPIN WHIP", sub: "Flange", color: "#a855f7", action: () => { const r = mixer.next({ id: "spin-whip", name: "Spin Whip", bars: 1, curve: "equal-power", style: "spin-whip" }); if (r.ok) toast("🔀 Pad 13: Spin Whip Transition Triggered"); } },
-      { label: "REVERB TAIL", sub: "Spill", color: "#22c55e", action: () => { const r = mixer.next({ id: "reverb-tail", name: "Reverb Tail", bars: 2, curve: "equal-power", style: "echo-out" }); if (r.ok) toast("🔀 Pad 14: Reverb Tail Slam Triggered"); } },
-      { label: "1/2B SLAM", sub: "Quick Cut", color: "#f97316", action: () => { const r = mixer.next({ id: "slam-cut", name: "1/2B Slam Cut", bars: 0.5, curve: "equal-power", style: "drop-cut" }); if (r.ok) toast("🔀 Pad 15: 1/2-Bar Slam Cut Triggered"); } },
-      { label: "REV CROSS", sub: "Crossover", color: "#e11d48", action: () => { const r = mixer.next({ id: "reverse-crossover", name: "Reverse Crossover", bars: 1, curve: "equal-power", style: "bass-swap" }); if (r.ok) toast("🔀 Pad 16: Reverse Crossover Triggered"); } },
+      { label: "1B BLEND", sub: "Power", color: "#f59e0b", action: () => { const r = boothNext({ id: "blend-1b", name: "1B Power Blend", bars: 1, curve: "equal-power", style: "blend" }); if (r.ok) toast("🔀 Pad 1: 1B Power Blend Triggered"); } },
+      { label: "2B BLEND", sub: "Club", color: "#f59e0b", action: () => { const r = boothNext({ id: "blend-2b", name: "2B Power Blend", bars: 2, curve: "equal-power", style: "blend" }); if (r.ok) toast("🔀 Pad 2: 2B Club Blend Triggered"); } },
+      { label: "4B BLEND", sub: "Extended", color: "#f59e0b", action: () => { const r = boothNext({ id: "blend-4b", name: "4B Deep Blend", bars: 4, curve: "equal-power", style: "blend" }); if (r.ok) toast("🔀 Pad 3: 4B Extended Blend Triggered"); } },
+      { label: "8B BLEND", sub: "Marathon", color: "#f59e0b", action: () => { const r = boothNext({ id: "blend-8b", name: "8B Epic Blend", bars: 8, curve: "equal-power", style: "blend" }); if (r.ok) toast("🔀 Pad 4: 8B Epic Blend Triggered"); } },
+      { label: "1B BASS SWAP", sub: "Drop", color: "#fbbf24", action: () => { const r = boothNext({ id: "bass-swap-1b", name: "1B Bass Swap", bars: 1, curve: "equal-power", style: "bass-swap" }); if (r.ok) toast("🔀 Pad 5: 1B Bass Swap Triggered"); } },
+      { label: "2B BASS SWAP", sub: "Smooth", color: "#fbbf24", action: () => { const r = boothNext({ id: "bass-swap-2b", name: "2B Bass Swap", bars: 2, curve: "equal-power", style: "bass-swap" }); if (r.ok) toast("🔀 Pad 6: 2B Bass Swap Triggered"); } },
+      { label: "4B RISER", sub: "Filter", color: "#38bdf8", action: () => { const r = boothNext({ id: "filter-riser-4b", name: "4B Filter Riser", bars: 4, curve: "equal-power", style: "filter-riser" }); if (r.ok) toast("🔀 Pad 7: 4B Filter Riser Triggered"); } },
+      { label: "8B RISER", sub: "Build", color: "#38bdf8", action: () => { const r = boothNext({ id: "filter-riser-8b", name: "8B Filter Riser", bars: 8, curve: "equal-power", style: "filter-riser" }); if (r.ok) toast("🔀 Pad 8: 8B Filter Riser Triggered"); } },
+      { label: "VINYL BRAKE", sub: "Motor Stop", color: "#ef4444", action: () => { const r = boothNext({ id: "vinyl-brake", name: "Vinyl Brake", bars: 1, curve: "equal-power", style: "vinyl-brake" }); if (r.ok) toast("🔀 Pad 9: Vinyl Brake Transition Triggered"); } },
+      { label: "BACKSPIN", sub: "Rewind", color: "#c084fc", action: () => { const r = boothNext({ id: "backspin", name: "Backspin", bars: 1, curve: "equal-power", style: "backspin" }); if (r.ok) toast("🔀 Pad 10: Backspin Transition Triggered"); } },
+      { label: "ECHO OUT", sub: "Delay Tail", color: "#34d399", action: () => { const r = boothNext({ id: "echo-out", name: "Echo Out", bars: 2, curve: "equal-power", style: "echo-out" }); if (r.ok) toast("🔀 Pad 11: Echo Out Transition Triggered"); } },
+      { label: "DROP CUT", sub: "Instant", color: "#f43f5e", action: () => { const r = boothNext({ id: "drop-cut", name: "Drop Cut", bars: 0.5, curve: "equal-power", style: "drop-cut" }); if (r.ok) toast("🔀 Pad 12: Instant Drop Cut Triggered"); } },
+      { label: "SPIN WHIP", sub: "Flange", color: "#a855f7", action: () => { const r = boothNext({ id: "spin-whip", name: "Spin Whip", bars: 1, curve: "equal-power", style: "spin-whip" }); if (r.ok) toast("🔀 Pad 13: Spin Whip Transition Triggered"); } },
+      { label: "REVERB TAIL", sub: "Spill", color: "#22c55e", action: () => { const r = boothNext({ id: "reverb-tail", name: "Reverb Tail", bars: 2, curve: "equal-power", style: "echo-out" }); if (r.ok) toast("🔀 Pad 14: Reverb Tail Slam Triggered"); } },
+      { label: "1/2B SLAM", sub: "Quick Cut", color: "#f97316", action: () => { const r = boothNext({ id: "slam-cut", name: "1/2B Slam Cut", bars: 0.5, curve: "equal-power", style: "drop-cut" }); if (r.ok) toast("🔀 Pad 15: 1/2-Bar Slam Cut Triggered"); } },
+      { label: "REV CROSS", sub: "Crossover", color: "#e11d48", action: () => { const r = boothNext({ id: "reverse-crossover", name: "Reverse Crossover", bars: 1, curve: "equal-power", style: "bass-swap" }); if (r.ok) toast("🔀 Pad 16: Reverse Crossover Triggered"); } },
     ];
   } else if (active16PadMode === "fx") {
     return [
@@ -1801,18 +1885,18 @@ function get16PadsConfig(): Pad16Config[] {
       sub: `${(pat.beats / 4).toFixed(0)}B / ${pat.subtitle}`,
       color: "#22c55e",
       action: () => {
-        const res = mixer.triggerAutoscratch(pat.id);
+        const res = boothAutoscratch(pat.id);
         if (res.ok) toast(`🎛️ Pad ${idx + 1}: Scratch ${pat.name}`);
       },
     })).concat([
       { label: "90s ROUTINE", sub: "Agent Cut", color: "#f59e0b", action: () => { void trigger90sScratchAgent(false); toast("🎛️ Pad 9: 90s Scratch Agent Routine Triggered"); } },
-      { label: "'FRESH!' CUT", sub: "Vocal", color: "#22c55e", action: () => { mixer.triggerScratchPad("chirp"); toast("🎛️ Pad 10: 'Fresh!' Chirp Scratch"); } },
-      { label: "'AHHH!' CUT", sub: "Vocal", color: "#22c55e", action: () => { mixer.triggerScratchPad("transformer"); toast("🎛️ Pad 11: 'Ahhh!' Transformer Cut"); } },
-      { label: "LASER STAB", sub: "Battle", color: "#38bdf8", action: () => { mixer.triggerScratchPad("uzis"); toast("🎛️ Pad 12: Laser Stutter Scratch"); } },
-      { label: "HORN STAB", sub: "Shred", color: "#fbbf24", action: () => { mixer.triggerScratchPad("crab"); toast("🎛️ Pad 13: 4-Finger Crab Scratch"); } },
-      { label: "TEAR DRAG", sub: "Heavy", color: "#c084fc", action: () => { mixer.triggerScratchPad("tear"); toast("🎛️ Pad 14: Tear Drag Scratch"); } },
-      { label: "ORBIT FLARE", sub: "3-Click", color: "#34d399", action: () => { mixer.triggerScratchPad("flare"); toast("🎛️ Pad 15: Orbit Flare Scratch"); } },
-      { label: "REWIND FX", sub: "Backspin", color: "#ef4444", action: () => { mixer.triggerScratchPad("backspin"); toast("🎛️ Pad 16: Backspin Rewind Scratch"); } },
+      { label: "'FRESH!' CUT", sub: "Vocal", color: "#22c55e", action: () => { boothScratch("chirp"); toast("🎛️ Pad 10: 'Fresh!' Chirp Scratch"); } },
+      { label: "'AHHH!' CUT", sub: "Vocal", color: "#22c55e", action: () => { boothScratch("transformer"); toast("🎛️ Pad 11: 'Ahhh!' Transformer Cut"); } },
+      { label: "LASER STAB", sub: "Battle", color: "#38bdf8", action: () => { boothScratch("uzis"); toast("🎛️ Pad 12: Laser Stutter Scratch"); } },
+      { label: "HORN STAB", sub: "Shred", color: "#fbbf24", action: () => { boothScratch("crab"); toast("🎛️ Pad 13: 4-Finger Crab Scratch"); } },
+      { label: "TEAR DRAG", sub: "Heavy", color: "#c084fc", action: () => { boothScratch("tear"); toast("🎛️ Pad 14: Tear Drag Scratch"); } },
+      { label: "ORBIT FLARE", sub: "3-Click", color: "#34d399", action: () => { boothScratch("flare"); toast("🎛️ Pad 15: Orbit Flare Scratch"); } },
+      { label: "REWIND FX", sub: "Backspin", color: "#ef4444", action: () => { boothScratch("backspin"); toast("🎛️ Pad 16: Backspin Rewind Scratch"); } },
     ]);
   } else {
     // hotcues Mode
@@ -2100,12 +2184,6 @@ interface MetadataLogEntry {
 
 const metadataLogs: MetadataLogEntry[] = [];
 
-function formatFileSize(bytes: number): string {
-  if (!bytes || bytes <= 0) return "0 B";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
 
 function renderMetadataLog() {
   const tbody = $("metadataLogTableBody");
@@ -2219,6 +2297,56 @@ document.querySelectorAll<HTMLElement>(".crate-table th.sortable").forEach(th =>
   });
 });
 
+/**
+ * Make sure a crate track has playable audio, fetching it from the engine.
+ *
+ * The booth used to boot a synthesised crate of invented tracks, so the DJ was
+ * preparing sets from music the station does not own while the site listed the
+ * engine's real library. Now the crate IS the station's library, but the audio
+ * lives on the server's disk — 66 tracks is roughly 1.8 GB of PCM, so it is
+ * fetched per track on demand rather than up front. Transfer is fast (a 4-minute
+ * track arrives in ~55 ms on loopback); the wait is decodeAudioData.
+ */
+const crateAudioInFlight = new Map<string, Promise<AudioBuffer>>();
+
+async function ensureCrateAudio(item: CrateTrack): Promise<AudioBuffer | null> {
+  if (item.buffer) return item.buffer;
+  if (item.file) return null; // a local upload already has its bytes
+  if (!item.stationCrateId) return null;
+
+  const existing = crateAudioInFlight.get(item.stationCrateId);
+  if (existing) return existing;
+
+  const request = (async () => {
+    const res = await fetch(`/ingest/crate/audio/${encodeURIComponent(item.stationCrateId!)}.wav`, {
+      cache: "force-cache",
+    });
+    if (!res.ok) {
+      let detail = `${res.status}`;
+      try {
+        const body = (await res.json()) as { error?: string };
+        if (body.error) detail = body.error;
+      } catch {
+        /* a non-JSON error body is still an error */
+      }
+      throw new Error(detail);
+    }
+    const bytes = await res.arrayBuffer();
+    return mixer.ctx.decodeAudioData(bytes);
+  })();
+
+  crateAudioInFlight.set(item.stationCrateId, request);
+  try {
+    const buffer = await request;
+    item.buffer = buffer;
+    return buffer;
+  } catch (err) {
+    throw new Error(`could not load "${item.name}" from the engine — ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    crateAudioInFlight.delete(item.stationCrateId);
+  }
+}
+
 async function loadTrackIntoDeck(slot: 0 | 1, item: CrateTrack) {
   if (mixer.playing && slot === mixer.active && !mixer.busy) {
     return toast(`Deck ${slot === 0 ? "A" : "B"} is live on air. Load into Deck ${slot === 0 ? "B" : "A"}.`);
@@ -2231,6 +2359,11 @@ async function loadTrackIntoDeck(slot: 0 | 1, item: CrateTrack) {
       analysis = await mixer.loadFile(slot, item.file);
       item.analysis = analysis;
       item.buffer = mixer.decks[slot].buffer;
+    } else {
+      // Station crate: fetch the real audio from the engine, then load it.
+      const buffer = await ensureCrateAudio(item);
+      if (!buffer) return toast(`No audio available for "${item.name}".`);
+      analysis = mixer.loadBuffer(slot, buffer, item.analysis);
     }
     slots[slot] = {
       id: item.id,
@@ -2279,7 +2412,7 @@ function updateCrateStatsReadout() {
   if (!el) return;
   const userTracks = crate.filter(t => t.persistedToIdb || t.id.startsWith("user-")).length;
   let totalDurationSec = 0;
-  for (const t of crate) {
+  for (const t of crate.filter((x) => x.stationCrateId === undefined)) {
     totalDurationSec += t.buffer?.duration ?? 45;
   }
   const mins = (totalDurationSec / 60).toFixed(1);
@@ -2939,6 +3072,7 @@ async function triggerPrimaryAction() {
       if (!sessionStartedAtMs) sessionStartedAtMs = Date.now();
       logTrackToSetlist(slots[mixer.active], "Set Opener", "Master Lock");
       void syncWakeLock();
+      mirror({ type: "transport.play" });
       toast("Party Started - Auto-DJ, Beat Grid, Auto-Gain & Club Limiter Active");
       void fill();
     } else {
@@ -2948,7 +3082,7 @@ async function triggerPrimaryAction() {
   }
   const { preset, autoReason } = resolveActiveTransitionPreset();
   const incomingMeta = slots[mixer.idle];
-  const r = mixer.next(preset);
+  const r = boothNext(preset);
   if (!r.ok) return toast(r.reason);
   freePending = true;
   logTrackToSetlist(incomingMeta, preset.name, r.harmonicLabel);
@@ -2973,10 +3107,12 @@ $("playPauseToggle").addEventListener("click", async () => {
   await mixer.ctx.resume();
   if (mixer.playing) {
     mixer.pause();
+    mirror({ type: "transport.pause" });
     void syncWakeLock();
     toast("Playback Paused");
   } else if (mixer.play()) {
     if (!sessionStartedAtMs) sessionStartedAtMs = Date.now();
+    mirror({ type: "transport.play" });
     void syncWakeLock();
     toast("Playback Resumed");
   }
@@ -2999,7 +3135,7 @@ window.addEventListener("keydown", e => {
     const pat = SCRATCH_PATTERNS[idx];
     if (pat) {
       void mixer.ctx.resume().then(() => {
-        const res = mixer.triggerAutoscratch(pat.id);
+        const res = boothAutoscratch(pat.id);
         if (res.ok) toast(`Autoscratch: ${res.message}`);
       });
     }
@@ -3018,6 +3154,7 @@ waveCanvas.addEventListener("click", async e => {
   if (!d.buffer) return;
   const targetSec = xRatio * d.buffer.duration;
   mixer.seekDeck(targetDeck, targetSec);
+  mirror({ type: "cue.seek", slot: targetDeck, seconds: targetSec });
   toast(`Deck ${targetDeck === 0 ? "A" : "B"} seeked to ${fmt(targetSec)}`);
 });
 
@@ -3466,29 +3603,31 @@ function drawScratchScope(telemetry: ReturnType<typeof mixer.scratchTelemetry>) 
 }
 
 // 12. Online Radio Station Autonomous Broadcast & Webhook Hub
-function toggleRadioBroadcast(forceState?: boolean) {
-  const isLive = radio.toggleOnAir(forceState);
-  const badge = $("radioOnAirBadge");
-  const onAirBtn = $("radioMasterOnAirBtn");
-  const topbarBtn = $("radioBroadcastBtn");
-  const topbarLabel = $("radioBroadcastLabel");
-
-  if (badge) badge.classList.toggle("live", isLive);
-  if ($("radioOnAirText")) $("radioOnAirText").textContent = isLive ? "RADIO: ON AIR (LIVE)" : "RADIO: STANDBY";
-  if (onAirBtn) {
-    onAirBtn.classList.toggle("live", isLive);
-    onAirBtn.innerHTML = isLive ? "<span>🔴 TRANSMITTING (ON AIR)</span>" : "<span>📻 GO ON AIR (TRANSMIT)</span>";
+/**
+ * Bring the station up — or say plainly why it cannot be.
+ *
+ * This used to flip a local boolean and toast "RADIO Broadcast LIVE" while
+ * nothing at all left the browser: the badge, the uptime, the webhook payload
+ * and the failover gate all read from one boolean that the stream never saw.
+ * ON AIR is now engine state, so this button starts the engine instead of
+ * performing a broadcast.
+ */
+function toggleRadioBroadcast() {
+  const mode = controlBus.mode();
+  if (mode.kind === "on-air") {
+    toast("Already on air — the engine is feeding the stream.");
+    return;
   }
-  if (topbarBtn) {
-    topbarBtn.classList.toggle("active", isLive);
-    topbarBtn.setAttribute("aria-pressed", String(isLive));
+  if (!mode.drivesEngine) {
+    toast(`Engine unreachable. ${mode.detail}`);
+    return;
   }
-  if (topbarLabel) {
-    topbarLabel.textContent = isLive ? "ON AIR: LIVE" : "ON AIR: STANDBY";
-  }
-
-  toast(isLive ? "📻 Radio Broadcast LIVE — Master Feed Streaming On Air" : "Radio Broadcast in Standby");
-  void syncRadioStateToServer();
+  void (async () => {
+    const started = await controlBus.send({ type: "autopilot.set", enabled: true });
+    if (!started.ok) return;
+    const played = await controlBus.send({ type: "transport.play" });
+    toast(played.ok ? "Engine started — taking the station up" : `Engine refused to start: ${played.error}`);
+  })();
 }
 
 function renderSweeperButtons() {
@@ -3505,10 +3644,25 @@ function renderSweeperButtons() {
       await mixer.ctx.resume();
       btn.classList.add("playing");
       const ok = radio.triggerJingle(s.id);
-      if (ok) {
-        toast(`🎙️ Radio Sweeper Injected: ${s.name} (-7.5dB music ducking active)`);
-        renderSweeperButtons();
+      if (!ok) {
+        setTimeout(() => btn.classList.remove("playing"), (s.durationSec + 0.3) * 1000);
+        return;
       }
+      renderSweeperButtons();
+      // Also sent to the engine. This used to be the one station function the
+      // contract described but nothing could perform: `imaging.play` always
+      // answered "no imaging library is configured", and the booth-only
+      // sweeper was indistinguishable, on screen, from a real station ident.
+      //
+      // The toast waits for the engine's verdict. Announcing first produced a
+      // success toast followed by a refusal toast for the same button press,
+      // and the success one was the one the operator acted on.
+      const result = await controlBus.send({ type: "imaging.play", jingleId: s.id });
+      toast(
+        result.ok
+          ? `🎙️ Station Sweeper On Air: ${s.name}`
+          : `🎙️ Booth preview only — ${s.name} did not reach the engine (${result.error ?? "refused"})`,
+      );
       setTimeout(() => btn.classList.remove("playing"), (s.durationSec + 0.3) * 1000);
     };
     container.appendChild(btn);
@@ -3518,54 +3672,119 @@ function renderSweeperButtons() {
   }
 }
 
+/**
+ * Listener requests, read from the engine.
+ *
+ * This panel used to read `radio.songRequests` — an in-memory list on the
+ * console's own `RadioBroadcastEngine` — and offered a "+ Simulate Request"
+ * button to populate it with invented listeners ("Lucas (Berlin)", "Drop some
+ * heavy bass!"). Meanwhile the station site kept a real `TrackRequest` table
+ * that nothing read, and `cue.request` always failed. Three disconnected
+ * universes; an operator looking at this table could not tell a real shout from
+ * a fabricated one.
+ *
+ * Now it reads ingest's `/requests`, which reads the station database, and the
+ * Queue button issues a real `cue.request`. Unavailable is rendered differently
+ * from empty, because to a DJ waiting on a listener those are not the same
+ * thing.
+ */
+type ListenerRequest = {
+  id: string;
+  title: string;
+  artist: string;
+  listenerName: string;
+  note: string | null;
+  createdAt: string;
+};
+
+let listenerRequests: ListenerRequest[] = [];
+let listenerRequestsReason: string | null = "not loaded yet";
+
+async function refreshListenerRequests(): Promise<void> {
+  try {
+    const res = await fetch("/ingest/requests", { cache: "no-store" });
+    if (!res.ok) {
+      listenerRequests = [];
+      listenerRequestsReason = `ingest answered ${res.status}`;
+      renderRadioRequests();
+      return;
+    }
+    const body = (await res.json()) as {
+      requests?: ListenerRequest[];
+      reason?: string | null;
+    };
+    listenerRequests = Array.isArray(body.requests) ? body.requests : [];
+    listenerRequestsReason = body.reason ?? null;
+  } catch {
+    listenerRequests = [];
+    listenerRequestsReason = "ingest is not reachable";
+  }
+  renderRadioRequests();
+}
+
 function renderRadioRequests() {
   const tbody = $("radioRequestsTableBody");
   if (!tbody) return;
-  if (!radio.songRequests.length) {
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: #64748b; padding: 12px;">No incoming listener requests. Submit via <code>POST /api/radio/request</code> or click "+ Simulate Request" above.</td></tr>`;
-    if ($("requestCountBadge")) $("requestCountBadge").textContent = "0";
+  if ($("requestCountBadge")) {
+    $("requestCountBadge").textContent = String(listenerRequests.length);
+  }
+
+  if (listenerRequestsReason && !listenerRequests.length) {
+    tbody.innerHTML =
+      `<tr><td colspan="5" style="text-align:center;color:#fbbf24;padding:12px;">` +
+      `Request line unavailable — ${listenerRequestsReason}. Requests are read from the ` +
+      `station database by ingest, so the station site must be running and ` +
+      `<code>NCSOUND_STATION_DB</code> must point at it.` +
+      `</td></tr>`;
     return;
   }
-  if ($("requestCountBadge")) $("requestCountBadge").textContent = String(radio.songRequests.length);
-  tbody.innerHTML = "";
-  radio.songRequests.forEach(req => {
-    const tr = document.createElement("tr");
-    const statusColor = req.status === "queued" ? "#34d399" : req.status === "played" ? "#94a3b8" : "#fbbf24";
-    tr.innerHTML = `
-      <td>${req.timeFormatted}</td>
-      <td><strong>${req.requester}</strong></td>
-      <td>${req.query}${req.message ? ` <em style="color:#94a3b8;">("${req.message}")</em>` : ""}</td>
-      <td style="color: ${statusColor}; font-weight: 700;">${req.status.toUpperCase()}</td>
-      <td>
-        ${req.status === "pending" ? `<button type="button" class="btn-micro" data-req-act="queue" data-req-id="${req.id}" title="Accept & queue track">+ Queue</button>` : ""}
-        <button type="button" class="btn-micro" data-req-act="del" data-req-id="${req.id}" title="Remove request">✕</button>
-      </td>
-    `;
-    tbody.appendChild(tr);
-  });
+  if (!listenerRequests.length) {
+    tbody.innerHTML =
+      `<tr><td colspan="5" style="text-align:center;color:#64748b;padding:12px;">` +
+      `No listener requests. Listeners shout from the station site's request line.` +
+      `</td></tr>`;
+    return;
+  }
 
-  tbody.querySelectorAll<HTMLButtonElement>("button[data-req-act]").forEach(btn => {
+  tbody.innerHTML = "";
+  for (const req of listenerRequests) {
+    const tr = document.createElement("tr");
+    const when = new Date(req.createdAt);
+    const ago = Number.isNaN(when.getTime())
+      ? "—"
+      : `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`;
+    tr.innerHTML =
+      `<td>${ago}</td>` +
+      `<td><strong></strong></td>` +
+      `<td><span></span><em style="color:#94a3b8;"></em></td>` +
+      `<td style="color:#fbbf24;font-weight:700;">PENDING</td>` +
+      `<td><button type="button" class="btn-micro" data-req-act="queue" data-req-id="${req.id}" ` +
+      `title="Send to the engine as a cue request">+ Queue</button></td>`;
+    // textContent, not innerHTML: listener names and notes are user input.
+    tr.children[1].querySelector("strong")!.textContent = req.listenerName;
+    const cell = tr.children[2];
+    cell.querySelector("span")!.textContent = `${req.title} — ${req.artist}`;
+    const note = cell.querySelector("em")!;
+    if (req.note) note.textContent = ` "${req.note}"`;
+    tbody.appendChild(tr);
+  }
+
+  tbody.querySelectorAll<HTMLButtonElement>("button[data-req-act='queue']").forEach((btn) => {
     btn.onclick = () => {
-      const act = btn.dataset.reqAct;
       const id = btn.dataset.reqId;
       if (!id) return;
-      if (act === "queue") {
-        const reqItem = radio.songRequests.find(r => r.id === id);
-        if (reqItem) {
-          radio.updateRequestStatus(id, "queued");
-          const qLower = reqItem.query.toLowerCase();
-          const match = crate.find(t => t.name.toLowerCase().includes(qLower) || t.artist.toLowerCase().includes(qLower)) || crate[Math.floor(Math.random() * crate.length)];
-          if (match) {
-            queue.push(match);
-            renderQueue();
-            toast(`📥 Listener Request Queued: "${match.name}" for ${reqItem.requester}`);
-          }
-          renderRadioRequests();
+      btn.disabled = true;
+      // A real command: the engine resolves the request to a crate track and
+      // cues it. If the track is not in the crate the dispatcher answers
+      // NO_SUCH_REQUEST and the refusal toast says so — previously this button
+      // pushed a random crate track and called it a request.
+      void controlBus.send({ type: "cue.request", requestId: id }).then((res) => {
+        btn.disabled = false;
+        if (res.ok) {
+          toast(`📥 Queued request ${id.slice(0, 8)} to the engine`);
+          void refreshListenerRequests();
         }
-      } else if (act === "del") {
-        radio.songRequests = radio.songRequests.filter(r => r.id !== id);
-        renderRadioRequests();
-      }
+      });
     };
   });
 }
@@ -3626,20 +3845,52 @@ async function syncRadioStateToServer() {
 function applyBroadcastStatus(s: BroadcastStatus) {
   radio.config.listeners = s.listeners;
 
+  // Station identity and bitrate come from what is actually being published,
+  // not from the console's own defaults. These used to be invented — a station
+  // name, a domain that resolves to nothing, and 320 kbps against a real 128
+  // mount — and they leaked into outbound webhooks and the embed widget.
+  if (s.connected) {
+    const primary = s.mounts[0];
+    if (primary?.bitrateKbps) radio.config.bitrateKbps = primary.bitrateKbps;
+    if (primary?.mount) radio.config.mountPoint = primary.mount;
+  }
+  // Freshness from HTTP feeds the mode badge even before any command is sent.
+  controlBus.observeStation({ reachable: s.connected, onAir: s.streamOnAir });
+  // The engine's single on-air verdict. The badge and the station site both read
+  // this rather than deriving their own — they used to, and they disagreed the
+  // moment the operator took the station off air.
+  controlBus.observeBroadcast(s.broadcast);
+
   const fmt = (n: number | null) => (n == null ? "--" : String(n));
   const set = (id: string, text: string) => {
     const el = $(id);
     if (el) el.textContent = text;
   };
+  const hms = (secs: number) => {
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const sec = secs % 60;
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+  };
 
-  // These three badges exist in index.html next to the broadcast heading.
+  // These badges exist in index.html next to the broadcast heading.
   set("radioListenersBadge", `LISTENERS: ${fmt(s.listeners)}`);
   set(
     "radioStreamBadge",
-    s.streamOnAir === null
-      ? "STREAM: unknown"
-      : `STREAM: ${s.streamOnAir ? "ON AIR" : "OFF AIR"}${s.icecastVersion ? ` (${s.icecastVersion})` : ""}`,
+    s.stationOnAir === false
+      ? "STREAM: OFF AIR (silenced by operator)"
+      : s.streamOnAir === null
+        ? "STREAM: unknown"
+        : `STREAM: ${s.streamOnAir ? "ON AIR" : "OFF AIR"}${s.icecastVersion ? ` (${s.icecastVersion})` : ""}`,
   );
+  set(
+    "radioEngineBadge",
+    s.connected
+      ? `ENGINE: ${s.engineState.toUpperCase()}${s.engineError ? ` — ${s.engineError}` : ""}`
+      : "ENGINE: unreachable",
+  );
+  set("radioCrateBadge", s.connected ? `CRATE: ${s.crateSize} TRACKS` : "CRATE: --");
+  set("radioUptimeBadge", s.uptimeSec == null ? "UPTIME: --" : `UPTIME: ${hms(s.uptimeSec)}`);
 
   // The console runs its own local graph. Flag it when the broadcast feed is
   // not on air so nobody reads local meters as the broadcast signal.
@@ -3647,6 +3898,73 @@ function applyBroadcastStatus(s: BroadcastStatus) {
     "broadcast-offline",
     !s.connected || s.streamOnAir !== true,
   );
+
+  // The control board reads from the same poll rather than opening its own.
+  void refreshControlBoard();
+}
+
+/**
+ * Connect every console control to the engine and make ON AIR mean it.
+ *
+ * Two things happen here that could not happen before:
+ *   1. the badge, the top-bar label and the mode class on <body> are all
+ *      derived from the engine rather than from a local boolean, and
+ *   2. a refusal reaches the operator as a toast, so "I pressed it and
+ *      nothing happened" is no longer the only feedback available.
+ */
+function initControl(): void {
+  controlBus.onRefusal = (message) => toast(message);
+
+  const renderMode = (mode: ConsoleMode) => {
+    // Local payloads, uptime and the failover gate read radio.isOnAir; keep
+    // them aligned with the engine so an outbound webhook cannot claim a
+    // broadcast that is not happening.
+    const onAir = mode.kind === "on-air";
+    if (radio.isOnAir !== onAir) {
+      radio.toggleOnAir(onAir);
+      // The now-playing payload embeds `onAir`, so an operator's webhook has
+      // to be re-sent when the station actually goes up or down.
+      void syncRadioStateToServer();
+    }
+
+    const badge = $("radioOnAirBadge");
+    if (badge) {
+      badge.classList.toggle("live", mode.kind === "on-air");
+      badge.dataset.mode = mode.kind;
+      badge.title = mode.detail;
+    }
+    const text = $("radioOnAirText");
+    if (text) text.textContent = mode.kind === "on-air" ? "RADIO: ON AIR (ENGINE)" : mode.label;
+    const topbarLabel = $("radioBroadcastLabel");
+    if (topbarLabel) topbarLabel.textContent = mode.kind === "on-air" ? "ON AIR: LIVE" : mode.label;
+
+    const topbarBtn = $("radioBroadcastBtn");
+    if (topbarBtn) {
+      topbarBtn.classList.toggle("active", mode.kind === "on-air");
+      topbarBtn.setAttribute("aria-pressed", String(mode.kind === "on-air"));
+      topbarBtn.title = mode.detail;
+    }
+
+    const onAirBtn = $("radioMasterOnAirBtn");
+    if (onAirBtn) {
+      onAirBtn.classList.toggle("live", mode.kind === "on-air");
+      onAirBtn.innerHTML = mode.drivesEngine
+        ? mode.kind === "on-air"
+          ? "<span>🔴 TRANSMITTING (ON AIR)</span>"
+          : "<span>📻 START ENGINE (GO ON AIR)</span>"
+        : "<span>⚠ ENGINE UNREACHABLE</span>";
+      onAirBtn.title = mode.detail;
+    }
+
+    document.body.dataset.consoleMode = mode.kind;
+    document.body.classList.toggle("console-rehearsal", !mode.drivesEngine);
+    // `broadcast-offline` stays with applyBroadcastStatus, which owns the
+    // Icecast measurement; two writers would fight every poll interval.
+  };
+
+  controlBus.onModeChange(renderMode);
+  renderMode(controlBus.mode());
+  controlBus.start();
 }
 
 function onTrackTransitionTriggered(incomingTrack?: { id: string; name: string; artist: string; genre: string; analysis: TrackAnalysis }) {
@@ -3690,9 +4008,639 @@ function onTrackTransitionTriggered(incomingTrack?: { id: string; name: string; 
   void syncRadioStateToServer();
 }
 
+/**
+ * The CONTROL BOARD.
+ *
+ * Everything here drives the engine over the control link. The two destructive
+ * actions — PANIC and STOP — arm before they fire: this file had no `confirm`
+ * anywhere in 1300 lines of operating UI, and LibreTime asks before cancelling
+ * a running show. A control that silences a live station on a stray touch is
+ * worse than no control at all.
+ *
+ * PANIC and STOP are deliberately different. `mix.panic` is a DJ panic *mix*
+ * (one deck keeps playing) and is not an off-air switch; `transport.stop`
+ * stops the engine and drops Liquidsoap to silence, which is.
+ */
+type ArmedAction = { command: DjCommand; label: string } | null;
+let armedAction: ArmedAction = null;
+
+function armAction(action: NonNullable<ArmedAction>): void {
+  armedAction = action;
+  const bar = $("cbConfirmBar");
+  const text = $("cbConfirmText");
+  if (bar) bar.hidden = false;
+  if (text) {
+    text.textContent =
+      action.command.type === "mix.panic"
+        ? "Panic mix — one deck keeps playing. This is NOT an off-air switch."
+        : "Stop the engine and switch the output to silence. Listeners will hear nothing.";
+  }
+}
+
+function disarmAction(): void {
+  armedAction = null;
+  const bar = $("cbConfirmBar");
+  if (bar) bar.hidden = true;
+}
+
+/** Fire an armed action. Separate from arming so the confirm cannot be bypassed. */
+function runArmed(): void {
+  const action = armedAction;
+  disarmAction();
+  if (!action) return;
+  void controlBus.send(action.command).then((res) => {
+    if (!res.ok) return; // the refusal handler already reported it
+    if (action.command.type === "mix.panic") {
+      toast("Panic mix applied — one deck is still audible.");
+    } else {
+      toast("Engine stopped and the station is off air.");
+    }
+    void refreshControlBoard();
+  });
+}
+
+function hms(totalSec: number | null): string {
+  if (totalSec == null) return "--:--:--";
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = Math.floor(totalSec % 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+/** Write a value, distinguishing "not measured" from a real zero. */
+function setReadout(id: string, value: string | number | null | undefined, suffix = ""): void {
+  const el = $(id);
+  if (!el) return;
+  const unknown = value == null || value === "";
+  el.textContent = unknown ? "--" : `${value}${suffix}`;
+  el.classList.toggle("unknown", unknown);
+}
+
+async function refreshControlBoard(): Promise<void> {
+  const status = broadcastLink.status;
+
+  // ---- engine + stream ----
+  setReadout("cbEngineBadge", status.connected ? status.engineState.toUpperCase() : null);
+  setReadout("cbUptimeBadge", status.uptimeSec == null ? null : hms(status.uptimeSec));
+  setReadout("cbCrateBadge", status.connected ? status.crateSize : null, status.connected ? " TRACKS" : "");
+  setReadout(
+    "cbMountsBadge",
+    status.mounts.length
+      ? status.mounts.map((m) => `${m.mount} ${m.listeners}@${m.bitrateKbps}k`).join("  ")
+      : null,
+  );
+  // The same verdict the station site shows, with the engine's own reason for
+  // it. "Off air" and "the engine stopped" are different faults.
+  setReadout("cbBroadcast", status.broadcast.onAir ? "ON AIR" : "OFF AIR");
+  const why = $("cbBroadcastReason");
+  if (why) {
+    why.textContent = status.broadcast.onAir
+      ? "engine playing · output live · Icecast source connected"
+      : status.broadcast.reason || "not broadcasting";
+    why.classList.toggle("ok", status.broadcast.onAir);
+  }
+
+  const rows = $("cbEngineRows");
+  if (rows) {
+    const state = status.connected ? status.engineState : null;
+    const harborConnected = status.connected ? true : null;
+
+    /**
+     * What listeners are actually receiving.
+     *
+     * Every other row here describes the engine's intentions or the mount's
+     * bookkeeping. None of them can tell you the station is silent, which is
+     * exactly what went unnoticed for five hours: the engine reported itself
+     * playing, the mount reported a connected source, and the output was -91 dBFS.
+     */
+    const wd = status.watchdog;
+    const delivery = !wd
+      ? { text: "--", cls: "unknown" }
+      : !wd.enabled
+        ? { text: "watchdog off", cls: "unknown" }
+        : !wd.last
+          ? { text: "measuring...", cls: "unknown" }
+          : wd.last.verdict === "audible"
+            ? { text: `${wd.last.meanDb?.toFixed(1)} dBFS`, cls: "" }
+            : wd.last.verdict === "silent"
+              ? { text: `SILENT ${wd.last.meanDb?.toFixed(0)} dBFS`, cls: "bad" }
+              : { text: "unreadable", cls: "unknown" };
+
+    rows.innerHTML =
+      `<div class="cb-row"><span>state</span><b class="${state ? "" : "unknown"}">${state ?? "--"}</b></div>` +
+      `<div class="cb-row"><span>icecast</span><b class="${status.icecastReachable == null ? "unknown" : ""}">` +
+      `${status.icecastReachable == null ? "--" : status.icecastReachable ? `reachable${status.icecastVersion ? ` (${status.icecastVersion})` : ""}` : "unreachable"}</b></div>` +
+      `<div class="cb-row"><span>mount connected</span><b class="${harborConnected ? "" : "unknown"}">${harborConnected ? "yes" : "--"}</b></div>` +
+      `<div class="cb-row"><span>to listeners</span><b class="${delivery.cls}">${delivery.text}</b></div>` +
+      `<div class="cb-row"><span>listeners now</span><b class="${status.listeners == null ? "unknown" : ""}">${status.listeners ?? "--"}</b></div>` +
+      `<div class="cb-row"><span>peak 24h</span><b class="${status.peakListeners24h == null ? "unknown" : ""}">${status.peakListeners24h ?? "--"}</b></div>` +
+      `<div class="cb-row"><span>station output</span><b class="${status.stationOnAir == null ? "unknown" : ""}">` +
+      `${status.stationOnAir == null ? "--" : status.stationOnAir ? "ON AIR" : "OFF AIR (silent)"}</b></div>`;
+  }
+
+  /**
+   * The watchdog's own reasoning, and the last thing it did.
+   *
+   * Shown because a DJ who sees the station recover by itself needs to know that
+   * it happened and why — an unexplained recovery during a set is worse than a
+   * visible fault.
+   */
+  const wdNote = $("cbWatchdogNote");
+  if (wdNote) {
+    const wd = status.watchdog;
+    let msg = "";
+    if (wd?.lastRecovery) {
+      msg = `${wd.lastRecovery.ok ? "auto-recovered" : "AUTO-RECOVERY FAILED"}: ${wd.lastRecovery.detail}`;
+    } else if (wd?.holdingBecause) {
+      msg = wd.holdingBecause;
+    }
+    wdNote.textContent = msg;
+    wdNote.hidden = !msg;
+  }
+
+  const errBox = $("cbEngineError");
+  if (errBox) {
+    const msg = status.connected ? status.engineError : status.error;
+    errBox.hidden = !msg;
+    errBox.textContent = msg ?? "";
+  }
+
+  // ---- autopilot: read from the engine, not from local console state ----
+  setReadout("cbAutopilotState", status.connected ? status.engineState : null);
+  setReadout("cbEnergyTarget", null);
+  setReadout("cbEnergyOverridden", null);
+  setReadout("cbVibeTemplate", null);
+
+  // ---- imaging ----
+  setReadout("cbImagingLib", status.connected ? "ingest /imaging" : null);
+  setReadout(
+    "cbImagingOut",
+    status.connected && status.stationOnAir != null
+      ? status.stationOnAir
+        ? "ON AIR"
+        : "OFF AIR (silent)"
+      : null,
+  );
+  const note = $("cbImagingNote");
+  if (note) {
+    note.textContent = status.stationOnAir === false
+      ? "Output is silenced — imaging will play but nobody hears it."
+      : "";
+  }
+
+  // ---- live queue, straight from the engine ----
+  // Throttled: the broadcast poll runs every 4s and this is a command, not a
+  // read, so hammering it would be a pointless round trip every tick.
+  const now = Date.now();
+  if (now - lastQueueReadMs > 15_000) {
+    lastQueueReadMs = now;
+    await refreshEngineQueue();
+  }
+}
+async function refreshEngineQueue(): Promise<void> {
+  const list = $("cbQueueList");
+  if (!list) return;
+  try {
+    const res = await controlBus.send({ type: "query.queue" });
+    if (!res.ok) {
+      list.innerHTML = `<li class="cb-empty">queue unavailable — ${res.error ?? res.code}</li>`;
+      return;
+    }
+    const entries = Array.isArray(res.result) ? (res.result as TrackDTO[]) : [];
+    if (!entries.length) {
+      list.innerHTML = `<li class="cb-empty">nothing queued on the engine</li>`;
+      return;
+    }
+    list.innerHTML = "";
+    for (const e of entries.slice(0, 8)) {
+      const li = document.createElement("li");
+      // Track metadata is engine-sourced but treat it as untrusted text anyway.
+      li.textContent = `${e.title} — ${e.artist}${e.bpm ? ` (${e.bpm} BPM)` : ""}`;
+      list.appendChild(li);
+    }
+  } catch {
+    list.innerHTML = `<li class="cb-empty">queue unavailable</li>`;
+  }
+}
+
+function initControlBoard(): void {
+  const send = (command: DjCommand) => void controlBus.send(command).then(() => refreshControlBoard());
+
+  $("cbPlayBtn")?.addEventListener("click", () => send({ type: "transport.play" }));
+  $("cbPauseBtn")?.addEventListener("click", () => send({ type: "transport.pause" }));
+  $("cbNextBtn")?.addEventListener("click", () =>
+    send({ type: "mix.mixNext", presetId: selectedPresetId, bars: selectedTransitionBars }),
+  );
+  $("cbSkipBtn")?.addEventListener("click", () => send({ type: "mix.skip" }));
+  $("cbOnAirBtn")?.addEventListener("click", () => send({ type: "transport.onAir", enabled: true }));
+  $("cbOffAirBtn")?.addEventListener("click", () => send({ type: "transport.offAir" }));
+  $("cbAutopilotToggle")?.addEventListener("click", () => send({ type: "autopilot.set", enabled: !autoPilotEnabled }));
+  $("cbResequenceBtn")?.addEventListener("click", () => send({ type: "autopilot.resequence" }));
+
+  // Destructive: arm first.
+  $("cbPanicBtn")?.addEventListener("click", () =>
+    armAction({ command: { type: "mix.panic" }, label: "panic" }),
+  );
+  $("cbStopBtn")?.addEventListener("click", () =>
+    armAction({ command: { type: "transport.stop" }, label: "stop" }),
+  );
+  $("cbConfirmGo")?.addEventListener("click", runArmed);
+  $("cbConfirmCancel")?.addEventListener("click", disarmAction);
+  // Disarm on Escape so a keyboard user is never trapped in a confirm state.
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && armedAction) disarmAction();
+  });
+
+  const energy = $<HTMLInputElement>("cbEnergySlider");
+  energy?.addEventListener("input", () => {
+    const out = $("cbEnergyOut");
+    if (out) out.textContent = (Number(energy.value) / 100).toFixed(2);
+  });
+  energy?.addEventListener("change", () => {
+    const value = Number(energy.value) / 100;
+    setReadout("cbEnergyOut", value.toFixed(2));
+    send({ type: "autopilot.setEnergyTarget", energy: value });
+  });
+
+  void refreshControlBoard();
+  // Reuses the broadcast poll rather than adding a second timer: applyBroadcastStatus
+  // calls refreshControlBoard, so the board tracks the same 4s cadence.
+}
+
+/** Last engine-queue read, so the 4s broadcast poll does not also issue a command. */
+let lastQueueReadMs = 0;
+
+/**
+ * STATION OPS panel.
+ *
+ * Reads the station site's own records through `/station` rather than opening a
+ * second connection to the database, and reuses that site's PIN contract. Every
+ * getter resolves to a discriminated result, so a failure cannot be rendered as
+ * data — an empty review queue and an unreachable station must not look alike.
+ */
+let stationOps: StationOps | null = null;
+
+function renderOpsStats(result: Awaited<ReturnType<StationOps["stats"]>>): void {
+  const rows = $("opsStatsRows");
+  if (!rows) return;
+  if (!result.ok) {
+    rows.innerHTML =
+      `<div class="cb-row"><span>stats</span><b class="unknown">unavailable — ${escapeHtml(result.reason)}</b></div>`;
+    return;
+  }
+  const s = result.data;
+  const n = (v: number | null) => (v == null ? "--" : v.toLocaleString("en-US"));
+  rows.innerHTML =
+    `<div class="cb-row"><span>listeners now</span><b class="${s.listeners.current == null ? "unknown" : ""}">${n(s.listeners.current)}</b></div>` +
+    `<div class="cb-row"><span>peak 24h</span><b class="${s.listeners.peak24h == null ? "unknown" : ""}">${n(s.listeners.peak24h)}</b></div>` +
+    `<div class="cb-row"><span>tracks cleared</span><b>${s.library.cleared} / ${s.library.tracks}</b></div>` +
+    `<div class="cb-row"><span>awaiting rights</span><b class="${s.library.pendingRights ? "" : "unknown"}">${s.library.pendingRights}</b></div>` +
+    `<div class="cb-row"><span>submissions pending</span><b class="${s.submissions.pending ? "" : "unknown"}">${s.submissions.pending}</b></div>` +
+    `<div class="cb-row"><span>ad plays (7d)</span><b>${s.adplays.last7Days}</b></div>` +
+    `<div class="cb-row"><span>sponsors active</span><b>${s.sponsors.active}</b></div>`;
+}
+
+function renderOpsSubmissions(result: Awaited<ReturnType<StationOps["submissions"]>>): void {
+  const host = $("opsSubmissions");
+  if (!host) return;
+  if (!result.ok) {
+    host.innerHTML = `<p class="cb-note mono">unavailable — ${escapeHtml(result.reason)}</p>`;
+    return;
+  }
+  // Only the actionable queue; decided rows belong in the site's own history.
+  const open = result.data.filter((s) => s.status === "PENDING" || s.status === "IN_REVIEW");
+  if (!open.length) {
+    host.innerHTML = `<p class="cb-empty mono" style="opacity:0.5;font-style:italic;margin:0;">no submissions awaiting review</p>`;
+    return;
+  }
+  host.innerHTML = "";
+  for (const s of open) {
+    const row = document.createElement("div");
+    row.className = "ops-row";
+    const main = document.createElement("div");
+    main.className = "ops-row-main";
+    const title = document.createElement("span");
+    title.className = "ops-row-title";
+    // Listener-submitted text: never interpolated as HTML.
+    title.textContent = `${s.trackTitle} — ${s.artistName}`;
+    const sub = document.createElement("span");
+    sub.className = "ops-row-sub";
+    sub.textContent = [s.genre, s.city, s.explicit ? "EXPLICIT" : null, s.notes]
+      .filter(Boolean)
+      .join(" · ") || "no further detail";
+    main.append(title, sub);
+
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.gap = "6px";
+    actions.style.flexShrink = "0";
+
+    const badge = document.createElement("span");
+    badge.className = `ops-badge ${s.status.toLowerCase()}`;
+    badge.textContent = s.status === "IN_REVIEW" ? "IN REVIEW" : "PENDING";
+    actions.append(badge);
+
+    for (const [label, status] of [
+      ["✓ CLEAR", "APPROVED"],
+      ["✕ DECLINE", "DECLINED"],
+    ] as const) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "hw-btn";
+      btn.textContent = label;
+      btn.onclick = () => void decide(s.id, status);
+      actions.append(btn);
+    }
+
+    row.append(main, actions);
+    host.append(row);
+  }
+}
+
+function renderOpsRights(result: Awaited<ReturnType<StationOps["rights"]>>): void {
+  const host = $("opsRights");
+  if (!host) return;
+  if (!result.ok) {
+    host.innerHTML = `<p class="cb-note mono">unavailable — ${escapeHtml(result.reason)}</p>`;
+    return;
+  }
+  const open = result.data.filter((r) => r.status === "PENDING" || r.status === "IN_REVIEW");
+  if (!open.length) {
+    host.innerHTML = `<p class="cb-empty mono" style="opacity:0.5;font-style:italic;margin:0;">nothing awaiting a rights decision</p>`;
+    return;
+  }
+  host.innerHTML = "";
+  for (const r of open.slice(0, 12)) {
+    const row = document.createElement("div");
+    row.className = "ops-row";
+    const main = document.createElement("div");
+    main.className = "ops-row-main";
+    const title = document.createElement("span");
+    title.className = "ops-row-title";
+    title.textContent = `${r.trackTitle} — ${r.artistName}`;
+    const sub = document.createElement("span");
+    sub.className = "ops-row-sub";
+    sub.textContent = `sample: ${r.sampleStatus} · source: ${r.source}`;
+    main.append(title, sub);
+
+    const actions = document.createElement("div");
+    actions.style.display = "flex";
+    actions.style.gap = "6px";
+    actions.style.flexShrink = "0";
+    const badge = document.createElement("span");
+    badge.className = `ops-badge ${r.status.toLowerCase()}`;
+    badge.textContent = r.status === "IN_REVIEW" ? "IN REVIEW" : "PENDING";
+    actions.append(badge);
+
+    for (const [label, status] of [
+      ["✓ CLEAR", "CLEARED"],
+      ["✕ BLOCK", "BLOCKED"],
+    ] as const) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "hw-btn";
+      btn.textContent = label;
+      btn.onclick = () => void decideRights(r.id, status);
+      actions.append(btn);
+    }
+
+    row.append(main, actions);
+    host.append(row);
+  }
+}
+
+/** Listener/artist supplied text must never reach innerHTML. */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function decide(id: string, status: SubmissionStatus): Promise<void> {
+  if (!stationOps) return;
+  const note = $("opsActionNote");
+  const res = await stationOps.review(id, status);
+  if (!res.ok) {
+    if (note) note.textContent = `review failed — ${res.reason}`;
+    return;
+  }
+  if (note) note.textContent = `marked ${status.toLowerCase()}`;
+  await refreshStationOps();
+}
+
+async function decideRights(id: string, status: "CLEARED" | "BLOCKED"): Promise<void> {
+  if (!stationOps) return;
+  const note = $("opsActionNote");
+  const res = await stationOps.setRightsStatus(id, status);
+  if (!res.ok) {
+    if (note) note.textContent = `rights update failed — ${res.reason}`;
+    return;
+  }
+  if (note) note.textContent = `rights marked ${status.toLowerCase()}`;
+  await refreshStationOps();
+}
+
+async function refreshStationOps(): Promise<void> {
+  if (!stationOps?.unlocked) return;
+  // Re-read after every write rather than trusting the optimistic state.
+  const [stats, submissions, rights] = await Promise.all([
+    stationOps.stats(),
+    stationOps.submissions(),
+    stationOps.rights(),
+  ]);
+  renderOpsStats(stats);
+  renderOpsSubmissions(submissions);
+  renderOpsRights(rights);
+}
+
+function renderOpsGate(): void {
+  const unlocked = stationOps?.unlocked === true;
+  const locked = $("opsLocked");
+  const open = $("opsUnlocked");
+  if (locked) locked.hidden = unlocked;
+  if (open) open.hidden = !unlocked;
+  if (!unlocked && $("opsPinInput")) ($("opsPinInput") as HTMLInputElement).value = "";
+}
+
+function initStationOps(): void {
+  stationOps = new StationOps(renderOpsGate);
+  renderOpsGate();
+
+  const pinInput = $<HTMLInputElement>("opsPinInput");
+  $("opsUnlockBtn")?.addEventListener("click", () => void doUnlock());
+  pinInput?.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") void doUnlock();
+  });
+
+  $("opsLockBtn")?.addEventListener("click", () => {
+    stationOps?.lock();
+    toast("Control room locked.");
+  });
+
+  $("opsRefreshBtn")?.addEventListener("click", () => void refreshStationOps());
+
+  $("opsAdSyncBtn")?.addEventListener("click", () => void doAdSync());
+}
+
+async function doUnlock(): Promise<void> {
+  if (!stationOps) return;
+  const input = $<HTMLInputElement>("opsPinInput");
+  const pin = input?.value.trim() ?? "";
+  const note = $("opsAuthNote");
+  if (!pin) {
+    if (note) note.textContent = "Enter the station PIN.";
+    return;
+  }
+  const res = await stationOps.unlock(pin);
+  if (!res.ok) {
+    if (note) note.textContent = res.error ?? "unlock failed";
+    return;
+  }
+  if (note) {
+    // Surfaced only after a correct PIN, so this never tells an unauthenticated
+    // caller whether the credential has been changed from the default.
+    note.textContent = res.configured === false
+      ? "Unlocked — but the station is still using the built-in bootstrap PIN."
+      : "";
+  }
+  await refreshStationOps();
+}
+
+async function doAdSync(): Promise<void> {
+  if (!stationOps) return;
+  const note = $("opsActionNote");
+  const btn = $<HTMLButtonElement>("opsAdSyncBtn");
+  if (btn) btn.disabled = true;
+  const res = await stationOps.adSync();
+  if (btn) btn.disabled = false;
+  if (!res.ok) {
+    if (note) note.textContent = `ad sync failed — ${res.reason}`;
+    return;
+  }
+  if (note) {
+    note.textContent =
+      res.inserted > 0
+        ? `ad sync recorded ${res.inserted} new play${res.inserted === 1 ? "" : "s"}`
+        : "ad sync ran — nothing new to record";
+  }
+  await refreshStationOps();
+}
+
+/**
+ * STATION LIBRARY — the engine's crate, read live.
+ *
+ * This is the same list the station site mirrors via `POST /api/library/sync`,
+ * so the DJ prepares a set from tracks that can actually air. The booth crate
+ * (`crate[]`) is listed separately and marked, because its synthesised
+ * placeholders exist only for rehearsal.
+ */
+let engineCrate: CrateSource = emptyCrateSource();
+
+function renderStationLibrary(): void {
+  const list = $("libList");
+  if (!list) return;
+  const setBadge = (id: string, text: string) => {
+    const el = $(id);
+    if (el) el.textContent = text;
+  };
+
+  if (engineCrate.error && !engineCrate.tracks.length) {
+    setBadge("libCountBadge", "--");
+    setBadge("libSourceBadge", "engine unreachable");
+    list.innerHTML =
+      `<p class="cb-empty">Engine library unavailable — ${escapeHtml(engineCrate.error)}. ` +
+      `The station site will show nothing requestable either until this is fixed.</p>`;
+    setTxt("libNote", "");
+    return;
+  }
+
+  setBadge("libCountBadge", `${engineCrate.tracks.length} TRACKS`);
+  setBadge(
+    "libSourceBadge",
+    `source: engine crate${engineCrate.loadedAt ? ` · read ${engineCrate.loadedAt.slice(11, 19)}` : ""}`,
+  );
+  setTxt(
+    "libNote",
+    "These are the tracks the station broadcasts. The booth crate below is synthesised " +
+      "placeholder audio for rehearsal — listeners never hear it.",
+  );
+
+  list.innerHTML = "";
+  for (const t of engineCrate.tracks) {
+    const row = document.createElement("div");
+    row.className = "lib-item";
+    const name = document.createElement("span");
+    name.className = "t";
+    name.textContent = `${t.title} — ${t.artist}`;
+    const meta = document.createElement("span");
+    meta.className = "m";
+    meta.textContent = [formatDuration(t.durationSec), t.bpm ? `${Math.round(t.bpm)}bpm` : null, t.key]
+      .filter(Boolean)
+      .join(" · ");
+    row.append(name, meta);
+    list.append(row);
+  }
+
+  // Booth-only tracks, appended and visibly marked.
+  // Only genuinely booth-only tracks appear here; station music is listed above.
+  const boothHeader = document.createElement("div");
+  boothHeader.className = "lib-item booth";
+  const bh = document.createElement("span");
+  bh.className = "t";
+  bh.textContent = "Booth-only (uploaded here, not station music)";
+  const bm = document.createElement("span");
+  bm.className = "m";
+  bm.textContent = String(crate.filter((x) => x.stationCrateId === undefined).length);
+  boothHeader.append(bh, bm);
+  list.append(boothHeader);
+
+  for (const t of crate.filter((x) => x.stationCrateId === undefined)) {
+    const row = document.createElement("div");
+    row.className = "lib-item booth";
+    const name = document.createElement("span");
+    name.className = "t";
+    name.textContent = `${t.name} — ${t.artist}`;
+    const meta = document.createElement("span");
+    meta.className = "m";
+    meta.textContent = `${Math.round(t.analysis.bpm)}bpm · ${t.genre}`;
+    row.append(name, meta);
+    list.append(row);
+  }
+}
+
+async function refreshStationLibrary(): Promise<void> {
+  engineCrate = await fetchEngineCrate();
+  renderStationLibrary();
+}
+
+function initStationLibrary(): void {
+  void refreshStationLibrary();
+  $("libRefreshBtn")?.addEventListener("click", () => void refreshStationLibrary());
+  // The crate changes when the engine rescans its library directory.
+  setInterval(() => void refreshStationLibrary(), 60_000);
+}
+
 function initRadioStation() {
   $("radioBroadcastBtn")?.addEventListener("click", () => toggleRadioBroadcast());
   $("radioMasterOnAirBtn")?.addEventListener("click", () => toggleRadioBroadcast());
+
+  // Off air without stopping the engine. This is the control that actually
+  // silences the station: `transport.stop` leaves Liquidsoap falling back to
+  // the library playlist, so "stop" was never an off-air switch.
+  $("radioOffAirBtn")?.addEventListener("click", () => {
+    const offAir = broadcastLink.status.stationOnAir === false;
+    const command = offAir
+      ? ({ type: "transport.onAir", enabled: true } as const)
+      : ({ type: "transport.offAir" } as const);
+    void controlBus.send(command).then((res) => {
+      if (res.ok) {
+        toast(offAir ? "Station back on air." : "Station off air — listeners hear silence.");
+      }
+      // A refusal is already reported by the refusal handler.
+    });
+  });
 
   const dspBtn = $<HTMLButtonElement>("radioDspToggleBtn");
   dspBtn?.addEventListener("click", () => {
@@ -3745,7 +4693,14 @@ function initRadioStation() {
   $("triggerRandomJingleBtn")?.addEventListener("click", async () => {
     await mixer.ctx.resume();
     const ok = radio.triggerJingle();
-    if (ok) toast("⚡ Dropped Random Station Sweeper (-7.5dB ducking active)");
+    if (ok) {
+      // Mirror a real sweeper id rather than a fixed one: pinning this to a
+      // single ident would make "random" on the engine play the same sting
+      // every time, which is worse than not mirroring at all.
+      const pool = radio.sweepers.map((s) => s.id);
+      if (pool.length) mirror({ type: "imaging.play", jingleId: pool[Math.floor(Math.random() * pool.length)] });
+      toast("⚡ Dropped Random Station Sweeper (-7.5dB ducking active)");
+    }
   });
 
   $<HTMLInputElement>("webhookUrlInput")?.addEventListener("input", e => {
@@ -3764,15 +4719,22 @@ function initRadioStation() {
     if (!radio.config.webhookUrl) {
       return toast("Please enter an Outbound Webhook URL first");
     }
-    toast("Sending test now-playing payload to radio webhook...");
     const activeTrack = slots[mixer.active] ?? slots[0];
+    if (!activeTrack) {
+      // This used to substitute an invented track — "Midnight Warehouse" by
+      // "Studio Syndicate" — and POST it to whatever URL the operator had typed.
+      // A test payload should say it is a test, not impersonate a real spin to
+      // a third party.
+      return toast("Nothing is cued — load a track, or point the webhook at a station you control.");
+    }
+    toast("Sending test now-playing payload to radio webhook...");
     const payload = radio.buildNowPlayingPayload(
       {
-        id: activeTrack?.id || "test-1",
-        name: activeTrack?.name || "Midnight Warehouse",
-        artist: activeTrack?.artist || "Studio Syndicate",
-        genre: activeTrack?.genre || "Peak Time Techno",
-        analysis: activeTrack?.analysis || { bpm: 124, key: "8A" },
+        id: activeTrack.id,
+        name: activeTrack.name,
+        artist: activeTrack.artist,
+        genre: activeTrack.genre,
+        analysis: activeTrack.analysis,
         duration: 180,
       },
       30,
@@ -3801,23 +4763,18 @@ function initRadioStation() {
   });
 
   $("clearRequestsBtn")?.addEventListener("click", () => {
-    radio.songRequests = [];
-    renderRadioRequests();
-    toast("Listener requests cleared");
+    // Requests live in the station database now, so there is nothing local to
+    // clear. Clearing the view without clearing the source would be a lie, and
+    // the requests would reappear on the next poll.
+    toast("Requests are cleared from the station site, not here — refresh to see the current queue.");
+    void refreshListenerRequests();
   });
 
-  $("simulateRequestBtn")?.addEventListener("click", () => {
-    const sampleRequesters = ["Lucas (Berlin)", "Elena (London)", "Carlos (Miami)", "Yuki (Tokyo)", "Sam (Montreal)"];
-    const sampleMessages = ["Drop some heavy bass!", "Great set, keep it rolling!", "Can we hear some underground acid?", "Love from the rooftop party!"];
-    const randomTrack = crate[Math.floor(Math.random() * crate.length)];
-    const req = radio.submitSongRequest({
-      query: randomTrack?.name || "Acid Warehouse 303",
-      requester: sampleRequesters[Math.floor(Math.random() * sampleRequesters.length)],
-      message: sampleMessages[Math.floor(Math.random() * sampleMessages.length)],
-    });
-    renderRadioRequests();
-    toast(`New Listener Request Ingested from ${req.requester}`);
-  });
+  // Was "+ Simulate Request", which pushed invented listeners ("Lucas
+  // (Berlin)", "Drop some heavy bass!") into the queue. An operator could not
+  // tell a real shout from a fabricated one, which is the whole reason the
+  // request panel now reads the station database.
+  $("simulateRequestBtn")?.addEventListener("click", () => void refreshListenerRequests());
 
   $("copyEmbedBtn")?.addEventListener("click", () => {
     const html = radio.generateEmbedWidgetHtml();
@@ -3829,11 +4786,19 @@ function initRadioStation() {
   });
 
   $("copyNowPlayingApiBtn")?.addEventListener("click", () => {
-    const apiUrl = `${window.location.origin}/api/radio/nowplaying`;
+    /**
+     * Was `${origin}/api/radio/nowplaying`, an endpoint that was deleted when the
+     * mock data went. Copying it handed out a URL that 404s.
+     *
+     * The live equivalent is the engine's own status document, reached through
+     * this app's `/ingest` proxy — the same payload the booth and the station
+     * site both read.
+     */
+    const apiUrl = `${window.location.origin}/ingest/status`;
     void navigator.clipboard.writeText(apiUrl).then(() => {
-      toast(`📋 Now-Playing JSON API URL copied: ${apiUrl}`);
+      toast(`📋 Engine status URL copied: ${apiUrl}`);
     }).catch(() => {
-      toast(`API: ${apiUrl}`);
+      toast(`URL: ${apiUrl}`);
     });
   });
 
@@ -3854,8 +4819,8 @@ function initRadioStation() {
 
   $("openObsOverlayBtn")?.addEventListener("click", () => {
     const overlayUrl = `${window.location.origin}${window.location.pathname}#obs-overlay`;
-    window.open(overlayUrl, "OBS_Ticker_Overlay", "width=800,height=160,resizable=yes,scrollbars=no");
-    toast("📹 Opened OBS Live Ticker Overlay Window (Add as Browser Source in OBS)");
+    window.open(overlayUrl, "OBS_Ticker_Overlay", "width=900,height=260,resizable=yes,scrollbars=no");
+    toast("Overlay opened. In OBS: Add > Browser, paste that URL, set Width 900 / Height 260.");
   });
 
   $("toggleObsToneBtn")?.addEventListener("click", async () => {
@@ -3885,6 +4850,10 @@ function initRadioStation() {
 
   renderSweeperButtons();
   renderRadioRequests();
+  // The request queue lives in the station database and changes when a listener
+  // shouts, so it needs polling rather than a one-shot read at boot.
+  void refreshListenerRequests();
+  setInterval(() => void refreshListenerRequests(), 10_000);
 
   // No sample requests are seeded here. This used to push two fictional
   // requests ("Alex (Berlin)", "Maya (Tokyo)") into the queue on every boot,
@@ -3960,76 +4929,119 @@ async function loadPersistedUserCrateTracks() {
   }
 }
 
-function bootstrapStudioCrate() {
-  for (const spec of BUILTIN_TRACK_SPECS) {
-    const buf = synthesizeStudioTrack(mixer.ctx, spec);
-    const tempSlot = crate.length < 2 ? (crate.length as 0 | 1) : 1;
-    const analysis = mixer.loadBuffer(tempSlot, buf);
-    const acousticMeta = categorizeTrackAcoustics(analysis, {
-      genre: spec.genre,
-      bpm: spec.bpm,
-      key: spec.camelot,
-    });
-    analysis.categorization = acousticMeta;
-
-    const item: CrateTrack = {
-      id: spec.id,
-      name: spec.title,
-      artist: spec.artist,
-      genre: acousticMeta.genre,
-      tags: acousticMeta.tags,
-      energyTier: acousticMeta.energyTier,
-      buffer: buf,
-      analysis,
-      dateAddedMs: Date.now(),
-    };
-    crate.push(item);
+/**
+ * Replace the synthesised crate with the station's real library.
+ *
+ * `BUILTIN_TRACK_SPECS` is four invented tracks — "Midnight Warehouse" by
+ * "Sublevel 808" and friends — synthesised so a fresh checkout had *something*
+ * to play. It was still the default months later, so the DJ was building sets
+ * from music the station does not own while the site listed the engine's real
+ * 66-track library. The engine keeps its synth crate as a last-resort fallback
+ * when there is no library directory at all; the booth does not need it.
+ *
+ * Audio is NOT loaded here: 66 tracks is ~1.8 GB of PCM. `ensureCrateAudio`
+ * fetches a track when it is actually cued, which takes about a second.
+ */
+async function bootstrapStationCrate(): Promise<void> {
+  const source = await fetchEngineCrate();
+  if (!source.tracks.length) {
+    const why = source.error ?? "the engine reported an empty crate";
+    toast(`Station library unavailable (${why}) — the booth has no station music.`);
+    renderStationLibrary();
+    return;
   }
 
-  // Auto-sequence the entire built-in crate by the active Party Template energy curve on startup
+  // Drop the synthesised placeholders; keep anything the DJ dropped in.
+  const localUploads = crate.filter((t) => Boolean(t.file) || !t.buffer);
+  crate.length = 0;
+
+  for (const t of source.tracks) {
+    // Analysis the engine already computed, so BPM/key/energy are the same
+    // numbers the engine sequences with rather than a second guess.
+    const analysis = {
+      bpm: t.bpm ?? 124,
+      key: t.key ?? "8A",
+      duration: t.durationSec,
+      cuePoints: { intro: 0, drop: 0, breakdown: 0, outro: 0 },
+      energy: t.bpm ? Math.min(1, Math.max(0, (t.bpm - 80) / 80)) : 0.5,
+      waveform: null,
+    } as unknown as TrackAnalysis;
+    const acoustic = categorizeTrackAcoustics(analysis, { genre: "Hip-Hop" });
+    analysis.categorization = acoustic;
+
+    crate.push({
+      id: `station:${t.id}`,
+      stationCrateId: t.id,
+      name: t.title,
+      artist: t.artist,
+      genre: acoustic.genre,
+      tags: acoustic.tags,
+      energyTier: acoustic.energyTier,
+      analysis,
+      dateAddedMs: Date.now(),
+    });
+  }
+  for (const local of localUploads) crate.push(local);
+
+  renderCrateCards();
+  renderCrateList();
+  updateCrateStatsReadout();
+  renderStationLibrary();
+  toast(`Station library loaded — ${source.tracks.length} tracks from the engine.`);
+}
+
+/**
+ * Boot the booth from the station's library.
+ *
+ * This used to loop over `BUILTIN_TRACK_SPECS` and synthesise four tracks —
+ * "Midnight Warehouse" by "Sublevel 808" and friends — preloading them into
+ * both decks. They were invented so a fresh checkout had something to play, and
+ * they were still the default long after the station site was listing the
+ * engine's real 66-track library. The DJ was working from a catalogue that did
+ * not exist.
+ *
+ * The synth crate is not demoted, it is gone from the console. The engine keeps
+ * its own copy purely as a fallback for when there is no library directory at
+ * all. Here, the controller reflects the radio: every track in the crate, the
+ * queue and the decks comes from the engine.
+ *
+ * Audio is fetched per track as it is cued (`ensureCrateAudio`), so the decks
+ * stay visibly empty — "Load audio below to start" — until real station audio
+ * has actually arrived, rather than showing a placeholder that looks loaded.
+ */
+async function bootstrapStudioCrate(): Promise<void> {
+  setTxt("libCountBadge", "loading…");
+  setTxt("libSourceBadge", "engine crate");
+  setTxt("libNote", "Loading the station library from the engine…");
+
+  await bootstrapStationCrate();
+
+  // Sequence the station library by the active Party Template energy curve, so
+  // the booth's queue is ordered the way the engine would order it.
   const tpl = getActiveTemplate();
   const sequenced = sequenceCrateForParty(
     { bpm: crate[0]?.analysis.bpm ?? 124, key: crate[0]?.analysis.key ?? "8A" },
     crate.slice(1),
     tpl.energyCurve,
-    0
+    0,
   );
   const deckATrack = crate[0];
   const deckBTrack = sequenced[0] ?? crate[1];
-  const remainingQueue = sequenced.slice(1);
 
-  if (deckATrack?.buffer) {
-    const a0 = mixer.loadBuffer(0, deckATrack.buffer, deckATrack.analysis);
-    slots[0] = {
-      id: deckATrack.id,
-      name: deckATrack.name,
-      artist: deckATrack.artist,
-      genre: deckATrack.genre,
-      analysis: a0,
-    };
-    updateDeckStaticLabels(0);
-  }
-  if (deckBTrack?.buffer) {
-    const a1 = mixer.loadBuffer(1, deckBTrack.buffer, deckBTrack.analysis);
-    slots[1] = {
-      id: deckBTrack.id,
-      name: deckBTrack.name,
-      artist: deckBTrack.artist,
-      genre: deckBTrack.genre,
-      analysis: a1,
-    };
-    mixer.syncDeck(1);
-    syncPitchSlidersFromDecks();
-    updateDeckStaticLabels(1);
-  }
-  queue.push(...remainingQueue);
+  queue.push(...sequenced.slice(1));
   renderCrateCards();
   renderQueue();
   updateCrateStatsReadout();
   updateRamAndWakeBadge();
   void loadPersistedUserCrateTracks();
 
-  // Sync persisted booth toggle UI states & pre-stage the 90s Scratch Agent scope
+  // Cue both decks from station audio. Failure is non-fatal: the DJ can still
+  // pick from the crate by hand, and the reason is already on screen.
+  if (deckATrack) await loadTrackIntoDeck(0, deckATrack);
+  if (deckBTrack) await loadTrackIntoDeck(1, deckBTrack);
+  syncPitchSlidersFromDecks();
+
+  // Persisted booth toggle UI states & pre-stage the 90s Scratch Agent scope
   autoPilotBtn.setAttribute("aria-pressed", String(autoPilotEnabled));
   autoPilotBtn.innerHTML = `<span class="switch-led"></span><span>Auto-DJ: ${autoPilotEnabled ? "On" : "Off"}</span>`;
   autoScratchToggle.classList.toggle("active", autoScratchDrops);
@@ -4038,16 +5050,29 @@ function bootstrapStudioCrate() {
   autoGainToggle.classList.toggle("active", mixer.autoGainEnabled);
   autoGainToggle.setAttribute("aria-pressed", String(mixer.autoGainEnabled));
   autoGainToggle.textContent = `AUTO-GAIN: ${mixer.autoGainEnabled ? "ON" : "OFF"}`;
-  document.querySelectorAll<HTMLButtonElement>("[data-cf-curve]").forEach(b => {
+  document.querySelectorAll<HTMLButtonElement>("[data-cf-curve]").forEach((b) => {
     b.classList.toggle("active", b.dataset.cfCurve === mixer.crossfaderCurve);
   });
-  document.querySelectorAll<HTMLButtonElement>("[data-marathon-mins]").forEach(b => {
+  document.querySelectorAll<HTMLButtonElement>("[data-marathon-mins]").forEach((b) => {
     b.classList.toggle("active", parseInt(b.dataset.marathonMins || "240", 10) === marathonDurationMins);
   });
   void autoStageScratchRoutine();
+  initControl();
+  initControlBoard();
+  initStationOps();
+  initStationLibrary();
   initRadioStation();
 }
-bootstrapStudioCrate();
+
+// An OBS Browser Source points at this URL with #obs-overlay. When it is
+// requested we bring up only the overlay, so the source captures a transparent
+// now-playing ticker rather than the entire 1300-line console UI.
+if (isOverlayRequested()) {
+  const overlay = new ObsOverlay(() => broadcastLink.status, () => engineCrate);
+  overlay.start();
+} else {
+  void bootstrapStudioCrate();
+}
 
 // 12. Main 60fps UI & Physics Loop
 function tick(nowPerf = performance.now()) {
@@ -4286,7 +5311,7 @@ function tick(nowPerf = performance.now()) {
 
     if (info.elapsed >= activeCueOutro || info.remaining <= 10) {
       const { preset, autoReason } = resolveActiveTransitionPreset();
-      const r = mixer.next(preset);
+      const r = boothNext(preset);
       if (r.ok) {
         freePending = true;
         logTrackToSetlist(nextSlot, preset.name, r.harmonicLabel);

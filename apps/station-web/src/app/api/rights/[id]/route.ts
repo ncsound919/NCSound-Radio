@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { toRightsDTO } from '@/lib/broadcast'
-import { requireOpsPin } from '@/lib/ops-auth'
+import { requireAdmin } from '@/lib/admin-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,7 +22,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const denied = await requireOpsPin(request)
+    const denied = await requireAdmin(request)
     if (denied) return denied
 
     const { id } = await params

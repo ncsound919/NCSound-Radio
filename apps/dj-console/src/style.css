@@ -1,27 +1,62 @@
 :root {
-  --desk-bg: #090b0f;
-  --chassis: #13161f;
-  --chassis-raised: #1a1e29;
-  --keycap-top: #232836;
-  --keycap-bot: #171b24;
-  --oled-bg: #07090d;
-  --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.15);
+  /* ---- Surfaces: one cool blue-black family, four steps -------------
+     These replace 21 separate near-blacks. Panels now read as one object
+     instead of a stack of slightly different blacks. */
+  --desk-bg: #0a0c11;        /* app background, behind everything */
+  --chassis: #12151d;        /* panel body */
+  --chassis-raised: #1a1e29; /* control surface: keycaps, buttons, fader tracks */
+  --keycap-top: #242938;     /* raised cap, lit from above */
+  --keycap-bot: #171b26;     /* the same cap in shadow, for a gradient bottom */
+  --oled-bg: #07090d;        /* screens: waveform well, spectrum, scope */
+  --hairline: color-mix(in srgb, var(--ink) 7%, transparent);
+  --border-subtle: color-mix(in srgb, var(--ink) 8%, transparent);
+  --border-strong: color-mix(in srgb, var(--ink) 16%, transparent);
 
-  --ink: #f1f5f9;
+  /* ---- Ink: cool greys, tinted with the surface hue ----------------- */
+  --ink: #eef1f6;
+  --ink-dim: #cbd5e1;
   --muted: #94a3b8;
-  --dim: #64748b;
+  --dim: #6b7484;
+  --faint: #454d5c;
 
-  /* Single Primary Hardware Accent (Color Consistency Lock: Warm Amber) */
-  --accent: #f59e0b;
-  --accent-bright: #fbbf24;
-  --accent-surface: rgba(245, 158, 11, 0.14);
-  --accent-border: rgba(245, 158, 11, 0.48);
+  /* ---- Signal: each colour has exactly one job ---------------------
+     Previously twelve hues all meant "active", which is why nothing on
+     this console read as clearly on or clearly off.
+       live    the deck that is playing right now
+       armed   cued and waiting to mix in
+       ok      healthy / connected
+       danger  record armed, destructive
+       scratch the scratch-agent and pad colours                        */
+  --live: #38bdf8;
+  --live-dim: #93c5fd;
+  --live-deep: #0b4a6f;
+  --armed: #f59e0b;
+  --armed-hot: #fbbf24;
+  --armed-deep: #78350f;
+  --ok: #34d399;
+  --ok-dim: #047857;
+  --danger: #ef4444;
+  --danger-dim: #f87171;
+  --danger-deep: #7f1d1d;
+  --scratch: #c084fc;
+
+  /* The historical accent token now means "live". Every existing --accent
+     usage was the accent role; it just changes hue, so meaning is preserved. */
+  --accent: #38bdf8;
+  --accent-bright: #93c5fd;
+  --accent-surface: color-mix(in srgb, var(--live) 14%, transparent);
+  --accent-border: color-mix(in srgb, var(--live) 48%, transparent);
+
+  --radius-sm: 3px;
+  --radius: 5px;
+  --radius-lg: 8px;
 
   --font-display: "Bricolage Grotesque", system-ui, sans-serif;
   --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", monospace;
-  color-scheme: dark;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Every numeric readout on a console should line up in a column. */
+  --tabular: tabular-nums;
 }
 
 * {
@@ -71,12 +106,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: linear-gradient(180deg, #1b202c 0%, #131720 100%);
+  background: linear-gradient(180deg, var(--chassis-raised) 0%, var(--chassis-raised) 100%);
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    0 6px 16px rgba(0, 0, 0, 0.45);
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 12%, transparent),
+    0 6px 16px color-mix(in srgb, var(--shadow) 45%, transparent);
 }
 
 .brand-wordmark {
@@ -93,7 +128,7 @@ body {
 .mode-switch-group {
   display: inline-flex;
   align-items: center;
-  background: rgba(0, 0, 0, 0.45);
+  background: color-mix(in srgb, var(--shadow) 45%, transparent);
   border: 1px solid var(--border-strong);
   border-radius: 8px;
   padding: 3px;
@@ -120,28 +155,28 @@ body {
 
 .mode-switch-btn:hover {
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
 }
 
 .mode-switch-btn.active {
-  background: linear-gradient(180deg, #2b3242 0%, #1c2230 100%);
+  background: linear-gradient(180deg, var(--keycap-top) 0%, var(--chassis-raised) 100%);
   color: var(--accent-bright);
-  border-color: rgba(245, 158, 11, 0.45);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  border-color: color-mix(in srgb, var(--armed) 45%, transparent);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow) 50%, transparent), inset 0 1px 0 color-mix(in srgb, var(--ink) 12%, transparent);
 }
 
 .mode-led {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #475569;
+  background: var(--dim);
   box-shadow: none;
   transition: all 120ms ease;
 }
 
 .mode-switch-btn.active .mode-led {
-  background: #fbbf24;
-  box-shadow: 0 0 8px #f59e0b;
+  background: var(--armed-hot);
+  box-shadow: 0 0 8px var(--armed);
 }
 
 /* ================= INTERFACE MODE VISIBILITY GATES ================= */
@@ -174,7 +209,7 @@ body.mode-simple .deck-bay {
   justify-content: space-between;
   padding: 18px;
   border-radius: 12px;
-  background: linear-gradient(180deg, #181c28 0%, #11141d 100%);
+  background: linear-gradient(180deg, var(--chassis-raised) 0%, var(--chassis) 100%);
   border: 1px solid var(--border-subtle);
   min-height: 270px;
 }
@@ -192,9 +227,9 @@ body.mode-simple .simple-vinyl-disc {
   width: 104px;
   height: 104px;
   border-radius: 50%;
-  background: radial-gradient(circle, #252a38 0%, #151821 55%, #080a0e 100%);
-  border: 3px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65), inset 0 0 12px rgba(0, 0, 0, 0.85);
+  background: radial-gradient(circle, var(--keycap-top) 0%, var(--chassis-raised) 55%, var(--desk-bg) 100%);
+  border: 3px solid color-mix(in srgb, var(--ink) 8%, transparent);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow) 65%, transparent), inset 0 0 12px color-mix(in srgb, var(--shadow) 85%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -210,13 +245,13 @@ body.mode-simple .simple-disc-center {
   width: 36px;
   height: 36px;
   border-radius: 50%;
-  background: #f59e0b;
-  border: 2px solid #000;
-  box-shadow: inset 0 0 4px rgba(0, 0, 0, 0.5);
+  background: var(--armed);
+  border: 2px solid var(--oled-bg);
+  box-shadow: inset 0 0 4px color-mix(in srgb, var(--shadow) 50%, transparent);
 }
 
 body.mode-simple .deck-bay.deck-b .simple-disc-center {
-  background: #94a3b8;
+  background: var(--muted);
 }
 
 body.mode-simple .simple-deck-status {
@@ -226,7 +261,7 @@ body.mode-simple .simple-deck-status {
   letter-spacing: 0.06em;
   padding: 4px 12px;
   border-radius: 4px;
-  background: rgba(0, 0, 0, 0.4);
+  background: color-mix(in srgb, var(--shadow) 40%, transparent);
   border: 1px solid var(--border-subtle);
 }
 
@@ -273,8 +308,8 @@ body.mode-simple .simple-mode-banner {
   justify-content: space-between;
   width: 100%;
   padding: 8px 12px;
-  background: rgba(245, 158, 11, 0.08);
-  border: 1px solid rgba(245, 158, 11, 0.22);
+  background: color-mix(in srgb, var(--armed) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--armed) 22%, transparent);
   border-radius: 6px;
   font-size: 0.72rem;
   color: var(--muted);
@@ -299,7 +334,7 @@ body.mode-simple .simple-mode-banner {
 
 .topnav a:hover {
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
 .top-actions {
@@ -329,13 +364,13 @@ body.mode-simple .simple-mode-banner {
   color: var(--ink);
   border: 1px solid var(--border-strong);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    0 2px 0 #07090d;
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 12%, transparent),
+    0 2px 0 var(--oled-bg);
 }
 
 .hw-switch-btn:active {
   transform: translateY(1px);
-  box-shadow: 0 1px 0 #07090d;
+  box-shadow: 0 1px 0 var(--oled-bg);
 }
 
 .switch-led {
@@ -356,16 +391,16 @@ body.mode-simple .simple-mode-banner {
 
 .hw-btn-amber {
   background: linear-gradient(180deg, var(--accent-bright) 0%, var(--accent) 100%);
-  color: #090b0f;
+  color: var(--desk-bg);
   border: 1px solid var(--accent-bright);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.45),
-    0 2px 0 #78350f;
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 45%, transparent),
+    0 2px 0 var(--armed-deep);
 }
 
 .hw-btn-amber:active {
   transform: translateY(1px);
-  box-shadow: 0 1px 0 #78350f;
+  box-shadow: 0 1px 0 var(--armed-deep);
 }
 
 /* ================= UNIFIED HARDWARE CONSOLE CHASSIS ================= */
@@ -373,13 +408,13 @@ body.mode-simple .simple-mode-banner {
   max-width: 1380px;
   margin: 8px auto 0;
   padding: 14px;
-  background: linear-gradient(180deg, #171b24 0%, #10131a 100%);
+  background: linear-gradient(180deg, var(--chassis-raised) 0%, var(--chassis) 100%);
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    0 16px 40px rgba(0, 0, 0, 0.65),
-    0 4px 0 #06070a;
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 12%, transparent),
+    0 16px 40px color-mix(in srgb, var(--shadow) 65%, transparent),
+    0 4px 0 var(--oled-bg);
   display: grid;
   gap: 12px;
 }
@@ -387,17 +422,17 @@ body.mode-simple .simple-mode-banner {
 /* ================= RECESSED OLED MASTER DISPLAY ================= */
 .oled-bezel {
   padding: 5px;
-  background: #0a0c11;
+  background: var(--desk-bg);
   border-radius: 8px;
   border: 1px solid var(--border-subtle);
   box-shadow:
-    inset 0 2px 6px rgba(0, 0, 0, 0.85),
-    0 1px 0 rgba(255, 255, 255, 0.07);
+    inset 0 2px 6px color-mix(in srgb, var(--shadow) 85%, transparent),
+    0 1px 0 color-mix(in srgb, var(--ink) 7%, transparent);
 }
 
 .oled-screen {
   background: var(--oled-bg);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
   border-radius: 6px;
   padding: 8px 12px;
   display: grid;
@@ -444,7 +479,7 @@ body.mode-simple .simple-mode-banner {
   font-size: 0.66rem;
   font-weight: 700;
   background: var(--accent);
-  color: #090b0f;
+  color: var(--desk-bg);
   flex-shrink: 0;
 }
 
@@ -458,7 +493,7 @@ body.mode-simple .simple-mode-banner {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: rgba(255, 255, 255, 0.03);
+  background: color-mix(in srgb, var(--ink) 3%, transparent);
   padding: 3px 10px;
   border-radius: 6px;
   border: 1px solid var(--border-subtle);
@@ -515,7 +550,7 @@ body.mode-simple .simple-mode-banner {
   position: relative;
   width: 100%;
   height: 112px;
-  background: #05070a;
+  background: var(--oled-bg);
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   overflow: hidden;
@@ -541,7 +576,7 @@ body.mode-simple .simple-mode-banner {
 .oled-glass-glare {
   position: absolute;
   inset: 0;
-  background: linear-gradient(165deg, rgba(255, 255, 255, 0.03) 0%, transparent 42%);
+  background: linear-gradient(165deg, color-mix(in srgb, var(--ink) 3%, transparent) 0%, transparent 42%);
   pointer-events: none;
 }
 
@@ -565,7 +600,7 @@ body.mode-simple .simple-mode-banner {
   flex: 1;
   max-width: 220px;
   height: 4px;
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
   border-radius: 2px;
   overflow: hidden;
 }
@@ -594,7 +629,7 @@ body.mode-simple .simple-mode-banner {
 /* Left & Right Deck Bays */
 .deck-bay {
   min-width: 0;
-  background: linear-gradient(180deg, #1a1e29 0%, #141720 100%);
+  background: linear-gradient(180deg, var(--chassis-raised) 0%, var(--chassis-raised) 100%);
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
   padding: 12px;
@@ -603,8 +638,8 @@ body.mode-simple .simple-mode-banner {
   justify-content: space-between;
   gap: 10px;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    0 6px 14px rgba(0, 0, 0, 0.4);
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 10%, transparent),
+    0 6px 14px color-mix(in srgb, var(--shadow) 40%, transparent);
 }
 
 .bay-lcd-strip {
@@ -616,7 +651,7 @@ body.mode-simple .simple-mode-banner {
   background: var(--oled-bg);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.85);
+  box-shadow: inset 0 2px 5px color-mix(in srgb, var(--shadow) 85%, transparent);
   position: relative;
   overflow: hidden;
 }
@@ -701,10 +736,10 @@ body.mode-simple .simple-mode-banner {
   justify-content: center;
   gap: 12px;
   padding: 8px;
-  background: #0b0d13;
+  background: var(--desk-bg);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  box-shadow: inset 0 3px 10px rgba(0, 0, 0, 0.85);
+  box-shadow: inset 0 3px 10px color-mix(in srgb, var(--shadow) 85%, transparent);
 }
 
 .platter-interactive {
@@ -727,16 +762,16 @@ body.mode-simple .simple-mode-banner {
   border-radius: 50%;
   background: conic-gradient(
     from 0deg,
-    #252a36,
-    #151821,
-    #2b3140,
-    #141720,
-    #252a36
+    var(--keycap-top),
+    var(--chassis-raised),
+    var(--keycap-top),
+    var(--chassis-raised),
+    var(--keycap-top)
   );
   padding: 4px;
   box-shadow:
-    0 6px 16px rgba(0, 0, 0, 0.8),
-    inset 0 1px 1px rgba(255, 255, 255, 0.2);
+    0 6px 16px color-mix(in srgb, var(--shadow) 80%, transparent),
+    inset 0 1px 1px color-mix(in srgb, var(--ink) 20%, transparent);
 }
 
 .platter-svg {
@@ -746,8 +781,8 @@ body.mode-simple .simple-mode-banner {
 }
 
 .platter-rim {
-  fill: #080a0e;
-  stroke: rgba(255, 255, 255, 0.14);
+  fill: var(--desk-bg);
+  stroke: color-mix(in srgb, var(--ink) 14%, transparent);
   stroke-width: 2;
 }
 
@@ -761,7 +796,7 @@ body.mode-simple .simple-mode-banner {
 
 .vinyl-groove {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.06);
+  stroke: color-mix(in srgb, var(--ink) 6%, transparent);
   stroke-width: 1;
 }
 
@@ -770,23 +805,23 @@ body.mode-simple .simple-mode-banner {
 }
 
 .vinyl-label-b {
-  fill: #cbd5e1;
+  fill: var(--ink-dim);
 }
 
 .vinyl-marker {
-  stroke: #ffffff;
+  stroke: var(--ink);
   stroke-width: 3.5;
   stroke-linecap: round;
 }
 
 .spindle-cap {
-  fill: #cbd5e1;
-  stroke: #080a0e;
+  fill: var(--ink-dim);
+  stroke: var(--desk-bg);
   stroke-width: 1.5;
 }
 
 .spindle-hole {
-  fill: #080a0e;
+  fill: var(--desk-bg);
 }
 
 .platter-oled-badge {
@@ -797,7 +832,7 @@ body.mode-simple .simple-mode-banner {
   font-size: 0.65rem;
   font-weight: 700;
   color: var(--ink);
-  background: rgba(7, 9, 13, 0.92);
+  background: color-mix(in srgb, var(--oled-bg) 92%, transparent);
   padding: 2px 7px;
   border-radius: 4px;
   border: 1px solid var(--border-strong);
@@ -822,7 +857,7 @@ body.mode-simple .simple-mode-banner {
   padding: 2px;
   display: flex;
   align-items: flex-end;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.9);
+  box-shadow: inset 0 2px 4px color-mix(in srgb, var(--shadow) 90%, transparent);
   overflow: hidden;
 }
 
@@ -874,8 +909,8 @@ body.mode-simple .simple-mode-banner {
   cursor: pointer;
   user-select: none;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.14),
-    0 3px 0 #07090d;
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 14%, transparent),
+    0 3px 0 var(--oled-bg);
   transition: transform 70ms ease, box-shadow 70ms ease, border-color 100ms ease;
 }
 
@@ -906,7 +941,7 @@ body.mode-simple .simple-mode-banner {
 
 .mpc-pad:active {
   transform: translateY(2px);
-  box-shadow: 0 1px 0 #07090d;
+  box-shadow: 0 1px 0 var(--oled-bg);
 }
 
 .loop-key-row {
@@ -924,7 +959,7 @@ body.mode-simple .simple-mode-banner {
   display: grid;
   gap: 6px;
   padding: 7px 8px;
-  background: rgba(7, 9, 13, 0.55);
+  background: color-mix(in srgb, var(--oled-bg) 55%, transparent);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
 }
@@ -937,9 +972,9 @@ body.mode-simple .simple-mode-banner {
 
 .deck-play-btn.active {
   background: linear-gradient(180deg, var(--accent-bright) 0%, var(--accent) 100%);
-  color: #090b0f;
+  color: var(--desk-bg);
   border-color: var(--accent-bright);
-  box-shadow: 0 2px 0 #78350f;
+  box-shadow: 0 2px 0 var(--armed-deep);
 }
 
 .deck-sync-btn.active {
@@ -982,16 +1017,16 @@ body.mode-simple .simple-mode-banner {
   font-size: 0.6rem;
   font-weight: 800;
   border-radius: 4px;
-  color: #94a3b8;
-  background: #141722;
-  border: 1px solid #2b3347;
+  color: var(--muted);
+  background: var(--chassis-raised);
+  border: 1px solid var(--keycap-top);
 }
 
 .key-lock-btn.active {
-  background: rgba(56, 189, 248, 0.2);
-  border-color: #38bdf8;
-  color: #38bdf8;
-  box-shadow: 0 0 8px rgba(56, 189, 248, 0.35);
+  background: color-mix(in srgb, var(--live) 20%, transparent);
+  border-color: var(--live);
+  color: var(--live);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--live) 35%, transparent);
 }
 
 .key-match-btn {
@@ -999,14 +1034,14 @@ body.mode-simple .simple-mode-banner {
   font-size: 0.6rem;
   font-weight: 800;
   border-radius: 4px;
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.1);
-  border: 1px solid rgba(251, 191, 36, 0.3);
+  color: var(--armed-hot);
+  background: color-mix(in srgb, var(--armed-hot) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--armed-hot) 30%, transparent);
 }
 
 .key-match-btn:hover {
-  background: rgba(251, 191, 36, 0.25);
-  border-color: #fbbf24;
+  background: color-mix(in srgb, var(--armed-hot) 25%, transparent);
+  border-color: var(--armed-hot);
 }
 
 .pitch-readout {
@@ -1029,26 +1064,26 @@ body.mode-simple .simple-mode-banner {
   user-select: none;
   white-space: nowrap;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    0 2px 0 #07090d;
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 12%, transparent),
+    0 2px 0 var(--oled-bg);
   transition: transform 70ms ease, box-shadow 70ms ease, color 100ms ease;
 }
 
 .hw-key:hover {
   color: var(--ink);
-  border-color: rgba(255, 255, 255, 0.25);
+  border-color: color-mix(in srgb, var(--ink) 25%, transparent);
 }
 
 .hw-key:active {
   transform: translateY(1px);
-  box-shadow: 0 1px 0 #07090d;
+  box-shadow: 0 1px 0 var(--oled-bg);
 }
 
 .loop-btn.active {
   background: linear-gradient(180deg, var(--accent-bright) 0%, var(--accent) 100%);
-  color: #090b0f;
+  color: var(--desk-bg);
   border-color: var(--accent-bright);
-  box-shadow: 0 2px 0 #78350f;
+  box-shadow: 0 2px 0 var(--armed-deep);
 }
 
 /* ================= CENTER BAY: SMART MIXER & FITTED AUTOSCRATCH MATRIX ================= */
@@ -1065,15 +1100,15 @@ body.mode-simple .simple-mode-banner {
 .fader-and-tone-module {
   min-width: 0;
   width: 100%;
-  background: linear-gradient(180deg, #1a1e29 0%, #141720 100%);
+  background: linear-gradient(180deg, var(--chassis-raised) 0%, var(--chassis-raised) 100%);
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
   padding: 10px 12px;
   display: grid;
   gap: 8px;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.1),
-    0 6px 14px rgba(0, 0, 0, 0.4);
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 10%, transparent),
+    0 6px 14px color-mix(in srgb, var(--shadow) 40%, transparent);
 }
 
 /* 1. Smart Core Split: Dome on Left, OLED + Transport on Right */
@@ -1106,7 +1141,7 @@ body.mode-simple .simple-mode-banner {
 }
 
 .ring-track {
-  stroke: rgba(255, 255, 255, 0.08);
+  stroke: color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .ring-fill {
@@ -1122,23 +1157,23 @@ body.mode-simple .simple-mode-banner {
   height: 100%;
   border-radius: 50%;
   border: 2px solid var(--accent-bright);
-  background: radial-gradient(circle at 35% 30%, #fcd34d 0%, var(--accent) 60%, #b45309 100%);
-  color: #090b0f;
+  background: radial-gradient(circle at 35% 30%, var(--armed-hot) 0%, var(--accent) 60%, var(--armed-deep) 100%);
+  color: var(--desk-bg);
   cursor: pointer;
   display: grid;
   place-items: center;
   box-shadow:
-    inset 0 2px 3px rgba(255, 255, 255, 0.6),
-    0 4px 0 #78350f,
-    0 8px 16px rgba(0, 0, 0, 0.65);
+    inset 0 2px 3px color-mix(in srgb, var(--ink) 60%, transparent),
+    0 4px 0 var(--armed-deep),
+    0 8px 16px color-mix(in srgb, var(--shadow) 65%, transparent);
   transition: transform 75ms ease, box-shadow 75ms ease;
 }
 
 .pad:active:not(:disabled) {
   transform: translateY(3px);
   box-shadow:
-    inset 0 2px 3px rgba(255, 255, 255, 0.4),
-    0 1px 0 #78350f;
+    inset 0 2px 3px color-mix(in srgb, var(--ink) 40%, transparent),
+    0 1px 0 var(--armed-deep);
 }
 
 .pad:disabled {
@@ -1167,7 +1202,7 @@ body.mode-simple .simple-mode-banner {
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   padding: 6px 10px;
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.85);
+  box-shadow: inset 0 2px 5px color-mix(in srgb, var(--shadow) 85%, transparent);
   display: grid;
   gap: 1px;
 }
@@ -1265,8 +1300,8 @@ body.mode-simple .simple-mode-banner {
   background: linear-gradient(180deg, var(--keycap-top) 0%, var(--keycap-bot) 100%);
   border: 1px solid var(--border-strong);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    0 2px 0 #07090d;
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 12%, transparent),
+    0 2px 0 var(--oled-bg);
   font-size: 0.68rem;
   font-weight: 700;
   color: var(--muted);
@@ -1292,7 +1327,7 @@ body.mode-simple .simple-mode-banner {
   background: var(--accent-surface);
   border-color: var(--accent);
   color: var(--accent-bright);
-  box-shadow: 0 1px 0 #07090d;
+  box-shadow: 0 1px 0 var(--oled-bg);
 }
 
 #blend input:checked + span small {
@@ -1360,7 +1395,7 @@ body.mode-simple .simple-mode-banner {
   justify-content: space-between;
   gap: 6px;
   padding: 5px 8px;
-  background: rgba(7, 9, 13, 0.65);
+  background: color-mix(in srgb, var(--oled-bg) 65%, transparent);
   border: 1px solid var(--border-subtle);
   border-radius: 7px;
   font-size: 0.6rem;
@@ -1416,7 +1451,7 @@ body.mode-simple .simple-mode-banner {
   display: grid;
   gap: 6px;
   padding: 7px 8px;
-  background: rgba(7, 9, 13, 0.55);
+  background: color-mix(in srgb, var(--oled-bg) 55%, transparent);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
 }
@@ -1461,7 +1496,7 @@ body.mode-simple .simple-mode-banner {
 .sentence-box input {
   flex: 1;
   min-width: 0;
-  background: #121620;
+  background: var(--chassis);
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
   padding: 3px 6px;
@@ -1484,7 +1519,7 @@ body.mode-simple .simple-mode-banner {
 .word-pill-btn {
   padding: 1px 5px;
   border-radius: 3px;
-  background: #171b26;
+  background: var(--chassis-raised);
   border: 1px solid var(--border-subtle);
   color: var(--muted);
   font-family: var(--font-mono);
@@ -1561,7 +1596,7 @@ body.mode-simple .simple-mode-banner {
   flex-direction: column;
   align-items: flex-start;
   justify-content: space-between;
-  background: linear-gradient(180deg, #252b3b 0%, #181c26 100%);
+  background: linear-gradient(180deg, var(--keycap-top) 0%, var(--chassis-raised) 100%);
   border: 1px solid var(--border-strong);
   border-top: 2px solid var(--accent-border);
   border-radius: 6px;
@@ -1571,8 +1606,8 @@ body.mode-simple .simple-mode-banner {
   user-select: none;
   overflow: hidden;
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.12),
-    0 3px 0 #07090d;
+    inset 0 1px 0 color-mix(in srgb, var(--ink) 12%, transparent),
+    0 3px 0 var(--oled-bg);
   transition: transform 65ms ease, box-shadow 65ms ease, border-color 100ms ease, background-color 100ms ease;
 }
 
@@ -1586,7 +1621,7 @@ body.mode-simple .simple-mode-banner {
   background: var(--accent-surface);
   border-color: var(--accent-bright);
   border-top: 2px solid var(--accent-bright);
-  box-shadow: 0 1px 0 #07090d;
+  box-shadow: 0 1px 0 var(--oled-bg);
 }
 
 .scratch-pad-top {
@@ -1623,7 +1658,7 @@ body.mode-simple .simple-mode-banner {
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   padding: 5px 8px;
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.85);
+  box-shadow: inset 0 2px 5px color-mix(in srgb, var(--shadow) 85%, transparent);
   display: grid;
   gap: 4px;
 }
@@ -1650,7 +1685,7 @@ body.mode-simple .simple-mode-banner {
   border-radius: 4px;
   font-size: 0.58rem;
   font-weight: 700;
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
   border: 1px solid var(--border-subtle);
   color: var(--muted);
 }
@@ -1662,9 +1697,9 @@ body.mode-simple .simple-mode-banner {
 }
 
 .critic-badge.warn {
-  background: rgba(239, 68, 68, 0.14);
-  border-color: rgba(239, 68, 68, 0.4);
-  color: #fca5a5;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  color: var(--danger-dim);
 }
 
 #activeScratchName {
@@ -1708,7 +1743,7 @@ body.mode-simple .simple-mode-banner {
 }
 
 .critic-check-chip.ok {
-  border-color: rgba(245, 158, 11, 0.35);
+  border-color: color-mix(in srgb, var(--armed) 35%, transparent);
   color: var(--ink);
 }
 
@@ -1717,8 +1752,8 @@ body.mode-simple .simple-mode-banner {
 }
 
 .critic-check-chip.fail {
-  border-color: rgba(239, 68, 68, 0.45);
-  color: #fca5a5;
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger-dim);
 }
 
 .agent-events-strip {
@@ -1734,7 +1769,7 @@ body.mode-simple .simple-mode-banner {
 .event-chip {
   padding: 2px 5px;
   border-radius: 4px;
-  background: #141822;
+  background: var(--chassis-raised);
   border: 1px solid var(--border-subtle);
   color: var(--ink);
   white-space: nowrap;
@@ -1786,7 +1821,7 @@ body.mode-simple .simple-mode-banner {
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   padding: 6px 12px;
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.85);
+  box-shadow: inset 0 2px 5px color-mix(in srgb, var(--shadow) 85%, transparent);
 }
 
 .cf-end-label {
@@ -1801,8 +1836,8 @@ body.mode-simple .simple-mode-banner {
   align-items: center;
   background: repeating-linear-gradient(
     90deg,
-    rgba(255, 255, 255, 0.08) 0px,
-    rgba(255, 255, 255, 0.08) 1px,
+    color-mix(in srgb, var(--ink) 8%, transparent) 0px,
+    color-mix(in srgb, var(--ink) 8%, transparent) 1px,
     transparent 1px,
     transparent 10%
   );
@@ -1816,7 +1851,7 @@ body.mode-simple .simple-mode-banner {
 }
 
 .tone-drawer {
-  background: #0d1017;
+  background: var(--chassis);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   padding: 6px 10px;
@@ -1889,9 +1924,9 @@ body.mode-simple .simple-mode-banner {
 }
 
 .eq-kill-btn.active {
-  background: rgba(244, 63, 94, 0.22);
-  border-color: #fb7185;
-  color: #fda4af;
+  background: color-mix(in srgb, var(--danger) 22%, transparent);
+  border-color: var(--danger-dim);
+  color: var(--danger-dim);
 }
 
 .channel-faders-bar {
@@ -1900,7 +1935,7 @@ body.mode-simple .simple-mode-banner {
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
-  background: rgba(7, 9, 13, 0.52);
+  background: color-mix(in srgb, var(--oled-bg) 52%, transparent);
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   font-size: 0.62rem;
@@ -1927,8 +1962,8 @@ body.mode-simple .simple-mode-banner {
 }
 
 .rec-switch-btn[aria-pressed="true"] .rec-led {
-  background: #f43f5e;
-  box-shadow: 0 0 8px #f43f5e;
+  background: var(--danger-dim);
+  box-shadow: 0 0 8px var(--danger-dim);
 }
 
 .crate-filter-bar {
@@ -1938,7 +1973,7 @@ body.mode-simple .simple-mode-banner {
   justify-content: space-between;
   gap: 8px;
   padding: 7px 10px;
-  background: rgba(7, 9, 13, 0.45);
+  background: color-mix(in srgb, var(--oled-bg) 45%, transparent);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
 }
@@ -1999,7 +2034,7 @@ body.mode-simple .simple-mode-banner {
 
 /* ================= HARDWARE TRACK CRATE (2-COL CARTRIDGE GRID) ================= */
 .crate-bay {
-  background: linear-gradient(180deg, #181c26 0%, #12151d 100%);
+  background: linear-gradient(180deg, var(--chassis-raised) 0%, var(--chassis) 100%);
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
   padding: 12px 14px;
@@ -2065,7 +2100,7 @@ body.mode-simple .simple-mode-banner {
   grid-template-columns: minmax(280px, 1.1fr) minmax(300px, 1fr);
   gap: 12px;
   padding: 9px 11px;
-  background: rgba(7, 9, 13, 0.55);
+  background: color-mix(in srgb, var(--oled-bg) 55%, transparent);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   align-items: center;
@@ -2082,7 +2117,7 @@ body.mode-simple .simple-mode-banner {
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   padding: 5px 8px;
-  box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.85);
+  box-shadow: inset 0 2px 5px color-mix(in srgb, var(--shadow) 85%, transparent);
   display: grid;
   gap: 4px;
 }
@@ -2176,7 +2211,7 @@ body.mode-simple .simple-mode-banner {
   font-weight: 700;
   cursor: pointer;
   white-space: nowrap;
-  box-shadow: 0 2px 0 #07090d;
+  box-shadow: 0 2px 0 var(--oled-bg);
 }
 
 .template-btn.active {
@@ -2199,29 +2234,29 @@ body.mode-simple .simple-mode-banner {
   font-weight: 700;
   white-space: nowrap;
   letter-spacing: 0.03em;
-  background: rgba(13, 17, 24, 0.9);
+  background: color-mix(in srgb, var(--chassis) 90%, transparent);
   border: 1px solid var(--border-subtle);
   color: var(--muted);
   transition: all 100ms ease;
 }
 
 .oled-phase-badge.in-pocket {
-  background: rgba(16, 185, 129, 0.16);
-  border-color: rgba(16, 185, 129, 0.45);
-  color: #6ee7b7;
-  box-shadow: 0 0 6px rgba(16, 185, 129, 0.25);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  color: var(--ok);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--ok) 25%, transparent);
 }
 
 .oled-phase-badge.drag {
-  background: rgba(245, 158, 11, 0.15);
-  border-color: rgba(245, 158, 11, 0.4);
-  color: #fcd34d;
+  background: color-mix(in srgb, var(--armed) 15%, transparent);
+  border-color: color-mix(in srgb, var(--armed) 40%, transparent);
+  color: var(--armed-hot);
 }
 
 .oled-phase-badge.lead {
-  background: rgba(59, 130, 246, 0.15);
-  border-color: rgba(59, 130, 246, 0.4);
-  color: #93c5fd;
+  background: color-mix(in srgb, var(--live) 15%, transparent);
+  border-color: color-mix(in srgb, var(--live) 40%, transparent);
+  color: var(--live-dim);
 }
 
 .oled-palign-btn {
@@ -2230,16 +2265,16 @@ body.mode-simple .simple-mode-banner {
   font-family: var(--font-mono);
   font-size: 0.58rem;
   font-weight: 700;
-  background: linear-gradient(180deg, #2b3345 0%, #171d2b 100%);
+  background: linear-gradient(180deg, var(--keycap-top) 0%, var(--chassis-raised) 100%);
   border: 1px solid var(--accent-border);
   color: var(--accent-bright);
   cursor: pointer;
-  box-shadow: 0 1px 0 #07090d;
+  box-shadow: 0 1px 0 var(--oled-bg);
 }
 
 .oled-palign-btn:hover {
   background: var(--accent);
-  color: #0d1118;
+  color: var(--chassis);
 }
 
 .tempo-mult-cluster {
@@ -2253,15 +2288,15 @@ body.mode-simple .simple-mode-banner {
   border-radius: 3px;
   font-size: 0.58rem;
   font-weight: 700;
-  background: rgba(245, 158, 11, 0.12);
-  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: color-mix(in srgb, var(--armed) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--armed) 35%, transparent);
   color: var(--accent-bright);
   cursor: pointer;
 }
 
 .mult-btn:hover {
   background: var(--accent);
-  color: #0d1118;
+  color: var(--chassis);
 }
 
 /* ================= DECK PITCH RANGE & PITCHED KEY READOUT ================= */
@@ -2278,7 +2313,7 @@ body.mode-simple .simple-mode-banner {
   display: inline-flex;
   align-items: center;
   gap: 2px;
-  background: #0a0d13;
+  background: var(--desk-bg);
   padding: 2px;
   border-radius: 4px;
   border: 1px solid var(--border-subtle);
@@ -2313,26 +2348,26 @@ body.mode-simple .simple-mode-banner {
   border-radius: 4px;
   font-size: 0.62rem;
   font-weight: 700;
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
   border: 1px solid var(--border-subtle);
   color: var(--ink);
 }
 
 .pitched-key-badge.shifted {
-  background: rgba(245, 158, 11, 0.14);
-  border-color: rgba(245, 158, 11, 0.4);
+  background: color-mix(in srgb, var(--armed) 14%, transparent);
+  border-color: color-mix(in srgb, var(--armed) 40%, transparent);
   color: var(--accent-bright);
 }
 
 .palign-btn {
-  background: linear-gradient(180deg, #2b3345 0%, #171d2b 100%);
+  background: linear-gradient(180deg, var(--keycap-top) 0%, var(--chassis-raised) 100%);
   border-color: var(--accent-border);
   color: var(--accent-bright);
 }
 
 .palign-btn:hover {
   border-color: var(--accent);
-  color: #fff;
+  color: var(--ink);
 }
 
 /* ================= CRATE UPLOAD BAR & FILE CONTROLS ================= */
@@ -2349,7 +2384,7 @@ body.mode-simple .simple-mode-banner {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: linear-gradient(180deg, #242938 0%, #161a24 100%);
+  background: linear-gradient(180deg, var(--keycap-top) 0%, var(--chassis-raised) 100%);
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   color: var(--ink);
@@ -2359,7 +2394,7 @@ body.mode-simple .simple-mode-banner {
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
-  box-shadow: 0 2px 0 #07090d;
+  box-shadow: 0 2px 0 var(--oled-bg);
   transition: all 80ms ease;
 }
 
@@ -2375,7 +2410,7 @@ body.mode-simple .simple-mode-banner {
 
 .upload-hw-btn.log-toggle-btn {
   margin-left: auto;
-  background: linear-gradient(180deg, #1e2434 0%, #121622 100%);
+  background: linear-gradient(180deg, var(--chassis-raised) 0%, var(--chassis) 100%);
   border-color: var(--accent-border);
   color: var(--accent-bright);
 }
@@ -2398,11 +2433,11 @@ body.mode-simple .simple-mode-banner {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  background: #090c12;
+  background: var(--desk-bg);
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 3px 7px;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
+  box-shadow: inset 0 1px 3px color-mix(in srgb, var(--shadow) 60%, transparent);
 }
 
 .crate-select-group label {
@@ -2426,8 +2461,8 @@ body.mode-simple .simple-mode-banner {
 }
 
 .crate-select option {
-  background: #11141c;
-  color: #fff;
+  background: var(--chassis);
+  color: var(--ink);
 }
 
 .crate-search-box {
@@ -2440,7 +2475,7 @@ body.mode-simple .simple-mode-banner {
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   padding: 4px 8px;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.85);
+  box-shadow: inset 0 2px 4px color-mix(in srgb, var(--shadow) 85%, transparent);
   font-size: 0.64rem;
   gap: 6px;
 }
@@ -2462,7 +2497,7 @@ body.mode-simple .simple-mode-banner {
 }
 
 .crate-search-box input::placeholder {
-  color: rgba(255, 255, 255, 0.28);
+  color: color-mix(in srgb, var(--ink) 28%, transparent);
 }
 
 .crate-search-clear {
@@ -2504,14 +2539,14 @@ body.mode-simple .simple-mode-banner {
 .crate-stats-badge {
   padding: 2px 6px;
   border-radius: 4px;
-  background: #0a0d13;
+  background: var(--desk-bg);
   border: 1px solid var(--border-subtle);
   color: var(--muted);
   font-weight: 700;
 }
 
 .crate-query-hint {
-  color: rgba(255, 255, 255, 0.45);
+  color: color-mix(in srgb, var(--ink) 45%, transparent);
 }
 
 .crate-cache-actions {
@@ -2521,14 +2556,14 @@ body.mode-simple .simple-mode-banner {
 
 /* ================= METADATA IMPORT LOG PANEL ================= */
 .metadata-log-panel {
-  background: #080b10;
+  background: var(--desk-bg);
   border: 1px solid var(--accent-border);
   border-radius: 8px;
   padding: 10px 12px;
   margin-bottom: 10px;
   display: grid;
   gap: 8px;
-  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.85);
+  box-shadow: inset 0 2px 8px color-mix(in srgb, var(--shadow) 85%, transparent);
 }
 
 .metadata-log-header {
@@ -2552,7 +2587,7 @@ body.mode-simple .simple-mode-banner {
   overflow-x: auto;
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
-  background: #05070a;
+  background: var(--oled-bg);
 }
 
 .metadata-log-table {
@@ -2564,7 +2599,7 @@ body.mode-simple .simple-mode-banner {
 .metadata-log-table th {
   padding: 5px 8px;
   text-align: left;
-  background: #11141c;
+  background: var(--chassis);
   color: var(--muted);
   font-size: 0.6rem;
   font-weight: 700;
@@ -2577,7 +2612,7 @@ body.mode-simple .simple-mode-banner {
 
 .metadata-log-table td {
   padding: 4px 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 5%, transparent);
   white-space: nowrap;
 }
 
@@ -2590,18 +2625,18 @@ body.mode-simple .simple-mode-banner {
 .log-badge-ok {
   padding: 1px 5px;
   border-radius: 3px;
-  background: rgba(16, 185, 129, 0.18);
-  border: 1px solid rgba(16, 185, 129, 0.45);
-  color: #6ee7b7;
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent);
+  color: var(--ok);
   font-weight: 700;
 }
 
 .log-badge-err {
   padding: 1px 5px;
   border-radius: 3px;
-  background: rgba(239, 68, 68, 0.18);
-  border: 1px solid rgba(239, 68, 68, 0.45);
-  color: #fca5a5;
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger-dim);
   font-weight: 700;
 }
 
@@ -2625,7 +2660,7 @@ body.mode-simple .simple-mode-banner {
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
   overflow: hidden;
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.8);
+  box-shadow: inset 0 2px 6px color-mix(in srgb, var(--shadow) 80%, transparent);
 }
 
 .crate-table-scroll {
@@ -2644,7 +2679,7 @@ body.mode-simple .simple-mode-banner {
 .crate-table th {
   padding: 6px 8px;
   text-align: left;
-  background: #12151e;
+  background: var(--chassis);
   color: var(--muted);
   font-size: 0.63rem;
   font-weight: 700;
@@ -2663,7 +2698,7 @@ body.mode-simple .simple-mode-banner {
 
 .crate-table th.sortable:hover {
   color: var(--accent-bright);
-  background: #171c28;
+  background: var(--chassis-raised);
 }
 
 .crate-table th .sort-icon {
@@ -2674,23 +2709,23 @@ body.mode-simple .simple-mode-banner {
 }
 
 .crate-table tbody tr {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 4%, transparent);
   transition: background-color 70ms ease;
   cursor: pointer;
 }
 
 .crate-table tbody tr:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
 .crate-table tbody tr.row-playing-a {
-  background-color: rgba(245, 158, 11, 0.09);
-  border-left: 3px solid #f59e0b;
+  background-color: color-mix(in srgb, var(--armed) 9%, transparent);
+  border-left: 3px solid var(--armed);
 }
 
 .crate-table tbody tr.row-playing-b {
-  background-color: rgba(148, 163, 184, 0.09);
-  border-left: 3px solid #94a3b8;
+  background-color: color-mix(in srgb, var(--muted) 9%, transparent);
+  border-left: 3px solid var(--muted);
 }
 
 .crate-table td {
@@ -2725,29 +2760,29 @@ body.mode-simple .simple-mode-banner {
 }
 
 .btn-load-a {
-  background: rgba(245, 158, 11, 0.16);
-  border: 1px solid rgba(245, 158, 11, 0.45);
-  color: #fbbf24;
+  background: color-mix(in srgb, var(--armed) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--armed) 45%, transparent);
+  color: var(--armed-hot);
 }
 
 .btn-load-a:hover {
-  background: #f59e0b;
-  color: #000;
+  background: var(--armed);
+  color: var(--oled-bg);
 }
 
 .btn-load-b {
-  background: rgba(148, 163, 184, 0.16);
-  border: 1px solid rgba(148, 163, 184, 0.45);
-  color: #e2e8f0;
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--muted) 45%, transparent);
+  color: var(--ink-dim);
 }
 
 .btn-load-b:hover {
-  background: #cbd5e1;
-  color: #000;
+  background: var(--ink-dim);
+  color: var(--oled-bg);
 }
 
 .btn-load-q {
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
   border: 1px solid var(--border-subtle);
   color: var(--muted);
 }
@@ -2792,8 +2827,8 @@ body.mode-simple .simple-mode-banner {
   margin-right: 4px;
 }
 
-.badge-a { background: #f59e0b; color: #000; }
-.badge-b { background: #94a3b8; color: #000; }
+.badge-a { background: var(--armed); color: var(--oled-bg); }
+.badge-b { background: var(--muted); color: var(--oled-bg); }
 
 /* BPM & Delta */
 .th-bpm { width: 95px; }
@@ -2808,8 +2843,8 @@ body.mode-simple .simple-mode-banner {
   font-weight: 600;
 }
 
-.bpm-delta-exact { color: #6ee7b7; }
-.bpm-delta-close { color: #fcd34d; }
+.bpm-delta-exact { color: var(--ok); }
+.bpm-delta-close { color: var(--armed-hot); }
 .bpm-delta-wide { color: var(--dim); }
 
 /* Key & Harmonic Relationship */
@@ -2820,9 +2855,9 @@ body.mode-simple .simple-mode-banner {
   border-radius: 4px;
   font-weight: 700;
   font-size: 0.64rem;
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
   border: 1px solid var(--border-subtle);
-  color: #fff;
+  color: var(--ink);
 }
 
 .harmonic-tag {
@@ -2831,9 +2866,9 @@ body.mode-simple .simple-mode-banner {
   margin-left: 4px;
 }
 
-.harm-perfect { color: #6ee7b7; }
-.harm-harmonic { color: #93c5fd; }
-.harm-boost { color: #fcd34d; }
+.harm-perfect { color: var(--ok); }
+.harm-harmonic { color: var(--live-dim); }
+.harm-boost { color: var(--armed-hot); }
 .harm-clash { color: var(--dim); }
 
 /* Match Details Column */
@@ -2847,20 +2882,20 @@ body.mode-simple .simple-mode-banner {
 }
 
 .match-score-pill.score-high {
-  background: rgba(16, 185, 129, 0.18);
-  border: 1px solid rgba(16, 185, 129, 0.45);
-  color: #6ee7b7;
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent);
+  color: var(--ok);
 }
 
 .match-score-pill.score-med {
-  background: rgba(245, 158, 11, 0.16);
-  border: 1px solid rgba(245, 158, 11, 0.45);
-  color: #fcd34d;
+  background: color-mix(in srgb, var(--armed) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--armed) 45%, transparent);
+  color: var(--armed-hot);
 }
 
 .match-score-pill.score-low {
-  background: rgba(148, 163, 184, 0.14);
-  border: 1px solid rgba(148, 163, 184, 0.3);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--muted) 30%, transparent);
   color: var(--muted);
 }
 
@@ -2886,7 +2921,7 @@ body.mode-simple .simple-mode-banner {
 .energy-micro-track {
   width: 32px;
   height: 4px;
-  background: rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
   border-radius: 2px;
   overflow: hidden;
 }
@@ -2935,27 +2970,27 @@ body.mode-simple .simple-mode-banner {
 }
 
 .tier-badge.tier-warmup {
-  background: rgba(20, 184, 166, 0.16);
-  border: 1px solid rgba(20, 184, 166, 0.45);
-  color: #5eead4;
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent);
+  color: var(--ok);
 }
 
 .tier-badge.tier-groove {
-  background: rgba(16, 185, 129, 0.16);
-  border: 1px solid rgba(16, 185, 129, 0.45);
-  color: #6ee7b7;
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent);
+  color: var(--ok);
 }
 
 .tier-badge.tier-peak-time {
-  background: rgba(245, 158, 11, 0.16);
-  border: 1px solid rgba(245, 158, 11, 0.45);
-  color: #fcd34d;
+  background: color-mix(in srgb, var(--armed) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--armed) 45%, transparent);
+  color: var(--armed-hot);
 }
 
 .tier-badge.tier-anthem {
-  background: rgba(168, 85, 247, 0.18);
-  border: 1px solid rgba(168, 85, 247, 0.45);
-  color: #d8b4fe;
+  background: color-mix(in srgb, var(--scratch) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--scratch) 45%, transparent);
+  color: var(--scratch);
 }
 
 .genre-badge {
@@ -2964,7 +2999,7 @@ body.mode-simple .simple-mode-banner {
   font-family: var(--font-mono);
   font-size: 0.56rem;
   font-weight: 600;
-  background: #141924;
+  background: var(--chassis-raised);
   border: 1px solid var(--border-subtle);
   color: var(--ink);
 }
@@ -2974,8 +3009,8 @@ body.mode-simple .simple-mode-banner {
   border-radius: 3px;
   font-family: var(--font-mono);
   font-size: 0.54rem;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
   color: var(--muted);
 }
 
@@ -2991,9 +3026,9 @@ body.mode-simple .simple-mode-banner {
 }
 
 .btn-delete-track:hover {
-  color: #f87171;
-  background: rgba(239, 68, 68, 0.12);
-  border-color: rgba(239, 68, 68, 0.3);
+  color: var(--danger-dim);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
 }
 
 /* Sidebar Drop Card */
@@ -3005,7 +3040,7 @@ body.mode-simple .simple-mode-banner {
   padding: 12px 8px;
   border: 1px dashed var(--accent-border);
   border-radius: 8px;
-  background: rgba(245, 158, 11, 0.04);
+  background: color-mix(in srgb, var(--armed) 4%, transparent);
   cursor: pointer;
   text-align: center;
   transition: all 120ms ease;
@@ -3014,7 +3049,7 @@ body.mode-simple .simple-mode-banner {
 
 .sidebar-drop-card:hover,
 .sidebar-drop-card.over {
-  background: rgba(245, 158, 11, 0.12);
+  background: color-mix(in srgb, var(--armed) 12%, transparent);
   border-color: var(--accent);
 }
 
@@ -3041,7 +3076,7 @@ body.mode-simple .simple-mode-banner {
   border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
-  box-shadow: 0 2px 0 #07090d;
+  box-shadow: 0 2px 0 var(--oled-bg);
 }
 
 .btn-micro:hover {
@@ -3117,7 +3152,7 @@ body.mode-simple .simple-mode-banner {
   justify-content: space-between;
   gap: 8px;
   padding: 5px 8px;
-  background: #0d1017;
+  background: var(--chassis);
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   font-family: var(--font-mono);
@@ -3152,7 +3187,7 @@ body.mode-simple .simple-mode-banner {
   padding: 8px;
   display: grid;
   gap: 8px;
-  background: rgba(7, 9, 13, 0.72);
+  background: color-mix(in srgb, var(--oled-bg) 72%, transparent);
   border-top: 1px solid var(--border-subtle);
 }
 
@@ -3177,7 +3212,7 @@ body.mode-simple .simple-mode-banner {
   color: var(--ink);
   font-weight: 700;
   padding: 2px 6px;
-  background: #0d1118;
+  background: var(--chassis);
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
 }
@@ -3186,8 +3221,8 @@ body.mode-simple .simple-mode-banner {
   color: var(--accent-bright);
   font-weight: 700;
   padding: 2px 6px;
-  background: rgba(245, 158, 11, 0.1);
-  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: color-mix(in srgb, var(--armed) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--armed) 35%, transparent);
   border-radius: 4px;
 }
 
@@ -3212,7 +3247,7 @@ body.mode-simple .simple-mode-banner {
   justify-content: space-between;
   gap: 6px;
   padding: 5px 7px;
-  background: #0d1017;
+  background: var(--chassis);
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   color: var(--ink);
@@ -3227,7 +3262,7 @@ body.mode-simple .simple-mode-banner {
 
 .midi-map-row.learning {
   border-color: var(--accent-bright);
-  background: rgba(245, 158, 11, 0.16);
+  background: color-mix(in srgb, var(--armed) 16%, transparent);
   color: var(--accent-bright);
 }
 
@@ -3242,7 +3277,7 @@ body.mode-simple .simple-mode-banner {
   flex-shrink: 0;
   padding: 1px 5px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.06);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
   color: var(--accent-bright);
   font-weight: 700;
 }
@@ -3263,7 +3298,7 @@ body.mode-simple .simple-mode-banner {
   border-radius: 12px;
   padding: 16px;
   margin-top: 14px;
-  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: 0 10px 32px color-mix(in srgb, var(--shadow) 50%, transparent), inset 0 1px 0 color-mix(in srgb, var(--ink) 4%, transparent);
 }
 
 .radio-header-row {
@@ -3298,9 +3333,9 @@ body.mode-simple .simple-mode-banner {
   gap: 6px;
   padding: 4px 10px;
   border-radius: 6px;
-  background: #141720;
-  border: 1px solid #2d3345;
-  color: #94a3b8;
+  background: var(--chassis-raised);
+  border: 1px solid var(--keycap-top);
+  color: var(--muted);
   font-size: 0.68rem;
   font-weight: 800;
   letter-spacing: 0.04em;
@@ -3308,32 +3343,32 @@ body.mode-simple .simple-mode-banner {
 }
 
 .on-air-status-badge.live {
-  background: rgba(239, 68, 68, 0.16);
-  border-color: #ef4444;
-  color: #fca5a5;
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  border-color: var(--danger);
+  color: var(--danger-dim);
 }
 
 .on-air-pulse-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: #64748b;
+  background: var(--dim);
   display: inline-block;
 }
 
 .on-air-status-badge.live .on-air-pulse-dot {
-  background: #ef4444;
-  box-shadow: 0 0 10px #ef4444, 0 0 18px rgba(239, 68, 68, 0.6);
+  background: var(--danger);
+  box-shadow: 0 0 10px var(--danger), 0 0 18px color-mix(in srgb, var(--danger) 60%, transparent);
   animation: onAirPulse 1.2s infinite alternate ease-in-out;
 }
 
 .switch-led.on-air-led {
-  background: #64748b;
+  background: var(--dim);
 }
 
 .broadcast-switch-btn.active .switch-led.on-air-led {
-  background: #ef4444;
-  box-shadow: 0 0 10px #ef4444;
+  background: var(--danger);
+  box-shadow: 0 0 10px var(--danger);
   animation: onAirPulse 1.2s infinite alternate ease-in-out;
 }
 
@@ -3346,9 +3381,9 @@ body.mode-simple .simple-mode-banner {
   padding: 3px 8px;
   font-size: 0.63rem;
   font-weight: 700;
-  color: #38bdf8;
-  background: rgba(56, 189, 248, 0.1);
-  border: 1px solid rgba(56, 189, 248, 0.25);
+  color: var(--live);
+  background: color-mix(in srgb, var(--live) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--live) 25%, transparent);
   border-radius: 5px;
 }
 
@@ -3363,22 +3398,22 @@ body.mode-simple .simple-mode-banner {
   align-items: center;
   justify-content: center;
   padding: 6px 14px;
-  background: linear-gradient(180deg, #dc2626 0%, #991b1b 100%);
-  color: #fff;
+  background: linear-gradient(180deg, var(--danger) 0%, var(--danger-deep) 100%);
+  color: var(--ink);
   font-family: var(--font-mono);
   font-size: 0.72rem;
   font-weight: 800;
-  border: 1px solid #ef4444;
+  border: 1px solid var(--danger);
   border-radius: 7px;
   cursor: pointer;
-  box-shadow: 0 2px 0 #7f1d1d, 0 0 12px rgba(239, 68, 68, 0.3);
-  text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+  box-shadow: 0 2px 0 var(--danger-deep), 0 0 12px color-mix(in srgb, var(--danger) 30%, transparent);
+  text-shadow: 0 1px 2px color-mix(in srgb, var(--shadow) 50%, transparent);
   transition: all 0.15s ease;
 }
 
 .hw-btn-red:hover {
   filter: brightness(1.15);
-  box-shadow: 0 2px 0 #7f1d1d, 0 0 16px rgba(239, 68, 68, 0.5);
+  box-shadow: 0 2px 0 var(--danger-deep), 0 0 16px color-mix(in srgb, var(--danger) 50%, transparent);
 }
 
 .hw-btn-red:active {
@@ -3387,9 +3422,9 @@ body.mode-simple .simple-mode-banner {
 }
 
 .hw-btn-red.live {
-  background: linear-gradient(180deg, #10b981 0%, #047857 100%);
-  border-color: #34d399;
-  box-shadow: 0 2px 0 #064e3b, 0 0 12px rgba(16, 185, 129, 0.3);
+  background: linear-gradient(180deg, var(--ok) 0%, var(--ok-dim) 100%);
+  border-color: var(--ok);
+  box-shadow: 0 2px 0 var(--ok-dim), 0 0 12px color-mix(in srgb, var(--ok) 30%, transparent);
 }
 
 .radio-identity-bar {
@@ -3423,7 +3458,7 @@ body.mode-simple .simple-mode-banner {
 
 .radio-input-group input,
 .radio-ctrl-row input {
-  background: #090c12;
+  background: var(--desk-bg);
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   padding: 5px 8px;
@@ -3446,8 +3481,8 @@ body.mode-simple .simple-mode-banner {
 }
 
 .radio-card {
-  background: #0e1219;
-  border: 1px solid #1f2533;
+  background: var(--chassis);
+  border: 1px solid var(--chassis-raised);
   border-radius: 9px;
   padding: 12px;
   display: flex;
@@ -3460,7 +3495,7 @@ body.mode-simple .simple-mode-banner {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 5%, transparent);
   padding-bottom: 8px;
   font-size: 0.74rem;
   color: var(--ink);
@@ -3471,26 +3506,26 @@ body.mode-simple .simple-mode-banner {
   font-size: 0.6rem;
   font-weight: 800;
   border-radius: 4px;
-  background: #191e2b;
-  border: 1px solid #2e384d;
-  color: #94a3b8;
+  background: var(--chassis-raised);
+  border: 1px solid var(--keycap-top);
+  color: var(--muted);
 }
 
 .radio-pill.active {
-  background: rgba(16, 185, 129, 0.15);
-  border-color: #10b981;
-  color: #34d399;
+  background: color-mix(in srgb, var(--ok) 15%, transparent);
+  border-color: var(--ok);
+  color: var(--ok);
 }
 
 .radio-card-desc {
   font-size: 0.68rem;
-  color: #94a3b8;
+  color: var(--muted);
   line-height: 1.4;
   margin: 0 0 8px 0;
 }
 
 .radio-card-desc strong {
-  color: #f1f5f9;
+  color: var(--ink);
 }
 
 .radio-ctrl-row {
@@ -3524,9 +3559,9 @@ body.mode-simple .simple-mode-banner {
   font-family: var(--font-mono);
   font-size: 0.63rem;
   font-weight: 700;
-  background: linear-gradient(180deg, #181d28 0%, #10141d 100%);
-  color: #e2e8f0;
-  border: 1px solid #2b3447;
+  background: linear-gradient(180deg, var(--chassis-raised) 0%, var(--chassis) 100%);
+  color: var(--ink-dim);
+  border: 1px solid var(--keycap-top);
   border-radius: 6px;
   cursor: pointer;
   text-align: left;
@@ -3537,15 +3572,15 @@ body.mode-simple .simple-mode-banner {
 }
 
 .sweeper-btn:hover {
-  border-color: #38bdf8;
-  color: #38bdf8;
+  border-color: var(--live);
+  color: var(--live);
 }
 
 .sweeper-btn:active,
 .sweeper-btn.playing {
-  background: rgba(56, 189, 248, 0.2);
-  border-color: #38bdf8;
-  box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
+  background: color-mix(in srgb, var(--live) 20%, transparent);
+  border-color: var(--live);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--live) 40%, transparent);
 }
 
 .custom-jingle-row {
@@ -3566,8 +3601,8 @@ body.mode-simple .simple-mode-banner {
 .radio-api-details {
   margin-top: 8px;
   padding: 8px;
-  background: #080b10;
-  border: 1px solid #1a202c;
+  background: var(--desk-bg);
+  border: 1px solid var(--chassis-raised);
   border-radius: 6px;
   font-size: 0.63rem;
 }
@@ -3575,7 +3610,7 @@ body.mode-simple .simple-mode-banner {
 .radio-api-details summary {
   cursor: pointer;
   font-weight: 700;
-  color: #38bdf8;
+  color: var(--live);
 }
 
 .api-endpoints-list {
@@ -3592,23 +3627,23 @@ body.mode-simple .simple-mode-banner {
   gap: 8px;
   font-size: 0.6rem;
   padding: 2px 4px;
-  background: rgba(255, 255, 255, 0.02);
+  background: color-mix(in srgb, var(--ink) 2%, transparent);
   border-radius: 4px;
 }
 
 .api-endpoint-item code {
-  color: #fbbf24;
+  color: var(--armed-hot);
   font-weight: 700;
 }
 
 .api-endpoint-item span {
-  color: #94a3b8;
+  color: var(--muted);
 }
 
 .requests-table-wrap {
   max-height: 140px;
   overflow-y: auto;
-  border: 1px solid #1f2533;
+  border: 1px solid var(--chassis-raised);
   border-radius: 6px;
   margin-top: 6px;
 }
@@ -3622,20 +3657,20 @@ body.mode-simple .simple-mode-banner {
 .radio-requests-table th,
 .radio-requests-table td {
   padding: 4px 6px;
-  border-bottom: 1px solid #181d28;
+  border-bottom: 1px solid var(--chassis-raised);
   text-align: left;
 }
 
 .radio-requests-table th {
-  background: #080b10;
+  background: var(--desk-bg);
   color: var(--muted);
   position: sticky;
   top: 0;
 }
 
 .embed-preview-card {
-  background: #07090e;
-  border: 1px solid #282e3d;
+  background: var(--oled-bg);
+  border: 1px solid var(--keycap-top);
   border-radius: 8px;
   padding: 10px;
   display: flex;
@@ -3650,14 +3685,14 @@ body.mode-simple .simple-mode-banner {
 }
 
 .embed-live-tag {
-  color: #ef4444;
+  color: var(--danger);
   font-weight: 800;
   font-size: 0.62rem;
   letter-spacing: 0.05em;
 }
 
 .embed-stream-meta {
-  color: #94a3b8;
+  color: var(--muted);
   font-size: 0.6rem;
 }
 
@@ -3668,12 +3703,12 @@ body.mode-simple .simple-mode-banner {
 }
 
 .embed-track-info strong {
-  color: #f1f5f9;
+  color: var(--ink);
   font-size: 0.76rem;
 }
 
 .embed-track-info span {
-  color: #94a3b8;
+  color: var(--muted);
   font-size: 0.66rem;
 }
 
@@ -3690,8 +3725,8 @@ body.mode-simple .simple-mode-banner {
   gap: 8px;
   margin-top: 8px;
   padding: 6px 8px;
-  background: #070a0f;
-  border: 1px solid #1a202c;
+  background: var(--oled-bg);
+  border: 1px solid var(--chassis-raised);
   border-radius: 6px;
   font-size: 0.63rem;
 }
@@ -3701,20 +3736,20 @@ body.mode-simple .simple-mode-banner {
   align-items: center;
   gap: 6px;
   font-weight: 700;
-  color: #34d399;
+  color: var(--ok);
 }
 
 .watchdog-led {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #10b981;
-  box-shadow: 0 0 6px #10b981;
+  background: var(--ok);
+  box-shadow: 0 0 6px var(--ok);
 }
 
 .watchdog-led.dead {
-  background: #ef4444;
-  box-shadow: 0 0 8px #ef4444;
+  background: var(--danger);
+  box-shadow: 0 0 8px var(--danger);
   animation: onAirPulse 0.5s infinite;
 }
 
@@ -3733,7 +3768,7 @@ body.mode-simple .simple-mode-banner {
   display: flex;
   align-items: center;
   gap: 5px;
-  background: rgba(13, 17, 24, 0.85);
+  background: color-mix(in srgb, var(--chassis) 85%, transparent);
   padding: 2px 6px;
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
@@ -3746,11 +3781,11 @@ body.mode-simple .simple-mode-banner {
 }
 
 .oled-key-select {
-  background: #090c12;
+  background: var(--desk-bg);
   color: var(--accent-bright);
   font-weight: 700;
   font-size: 0.65rem;
-  border: 1px solid rgba(245, 158, 11, 0.4);
+  border: 1px solid color-mix(in srgb, var(--armed) 40%, transparent);
   border-radius: 3px;
   padding: 1px 4px;
   cursor: pointer;
@@ -3795,12 +3830,12 @@ body.mode-simple .simple-mode-banner {
 
 /* Akai MPD226 Performance Surface Overlay */
 .mpd226-hardware-surface {
-  background: #080a0f;
+  background: var(--desk-bg);
   border: 1px solid var(--accent-dim);
   border-radius: 8px;
   padding: 10px;
   margin-bottom: 10px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.6);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--shadow) 60%, transparent);
 }
 
 .mpd226-header {
@@ -3813,9 +3848,9 @@ body.mode-simple .simple-mode-banner {
 }
 
 .mpd226-asio-tag {
-  background: rgba(34, 197, 94, 0.12);
-  color: #34d399;
-  border: 1px solid rgba(34, 197, 94, 0.3);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  color: var(--ok);
+  border: 1px solid color-mix(in srgb, var(--ok) 30%, transparent);
   border-radius: 3px;
   padding: 1px 6px;
   font-size: 0.58rem;
@@ -3840,7 +3875,7 @@ body.mode-simple .simple-mode-banner {
   display: flex;
   justify-content: space-around;
   gap: 6px;
-  background: #0d1118;
+  background: var(--chassis);
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   padding: 6px 4px;
@@ -3863,7 +3898,7 @@ body.mode-simple .simple-mode-banner {
 .mpd226-fader-track {
   width: 8px;
   height: 48px;
-  background: #05070a;
+  background: var(--oled-bg);
   border: 1px solid var(--border-subtle);
   border-radius: 3px;
   position: relative;
@@ -3872,13 +3907,13 @@ body.mode-simple .simple-mode-banner {
 .mpd226-fader-cap {
   width: 14px;
   height: 8px;
-  background: linear-gradient(to bottom, #d1d5db, #64748b);
-  border: 1px solid #1e293b;
+  background: linear-gradient(to bottom, var(--ink-dim), var(--dim));
+  border: 1px solid var(--chassis-raised);
   border-radius: 2px;
   position: absolute;
   left: -4px;
   bottom: 50%;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.8);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--shadow) 80%, transparent);
   transition: bottom 0.08s ease-out;
 }
 
@@ -3886,10 +3921,10 @@ body.mode-simple .simple-mode-banner {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #334155, #0f172a);
+  background: radial-gradient(circle at 35% 35%, var(--dim), var(--chassis));
   border: 1px solid var(--border-subtle);
   position: relative;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  box-shadow: 0 2px 4px color-mix(in srgb, var(--shadow) 50%, transparent);
   transition: transform 0.08s ease-out;
 }
 
@@ -3911,8 +3946,8 @@ body.mode-simple .simple-mode-banner {
 
 .mpd226-pad-item {
   aspect-ratio: 1 / 1;
-  background: #11151f;
-  border: 1px solid rgba(255,255,255,0.12);
+  background: var(--chassis);
+  border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent);
   border-radius: 5px;
   display: flex;
   flex-direction: column;
@@ -3940,18 +3975,18 @@ body.mode-simple .simple-mode-banner {
 .mpd226-pad-tag {
   font-size: 0.55rem;
   font-weight: 700;
-  color: #f8fafc;
+  color: var(--ink);
 }
 
 /* OBS Studio Ticker Preview */
 .obs-ticker-preview-box {
-  background: #030508;
-  border: 1px solid rgba(245, 158, 11, 0.4);
+  background: var(--oled-bg);
+  border: 1px solid color-mix(in srgb, var(--armed) 40%, transparent);
   border-radius: 8px;
   padding: 8px 10px;
   margin-top: 6px;
   margin-bottom: 8px;
-  box-shadow: inset 0 0 12px rgba(0,0,0,0.8);
+  box-shadow: inset 0 0 12px color-mix(in srgb, var(--shadow) 80%, transparent);
 }
 
 .obs-preview-top {
@@ -3969,8 +4004,8 @@ body.mode-simple .simple-mode-banner {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #ef4444;
-  box-shadow: 0 0 6px #ef4444;
+  background: var(--danger);
+  box-shadow: 0 0 6px var(--danger);
   animation: onAirPulse 1s infinite;
 }
 
@@ -4033,7 +4068,7 @@ body.mode-simple .simple-mode-banner {
 }
 
 .turntable-well.playing .platter-interactive {
-  box-shadow: 0 0 16px rgba(245, 158, 11, 0.25);
+  box-shadow: 0 0 16px color-mix(in srgb, var(--armed) 25%, transparent);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -4053,7 +4088,7 @@ body.mode-simple .simple-mode-banner {
   border-radius: 10px;
   padding: 12px;
   margin-top: 10px;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.05), 0 6px 20px rgba(0,0,0,0.4);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 5%, transparent), 0 6px 20px color-mix(in srgb, var(--shadow) 40%, transparent);
 }
 
 .pad-matrix-header {
@@ -4068,7 +4103,7 @@ body.mode-simple .simple-mode-banner {
 .pad-mode-bank {
   display: flex;
   gap: 4px;
-  background: #080a0f;
+  background: var(--desk-bg);
   border: 1px solid var(--border-subtle);
   border-radius: 6px;
   padding: 3px;
@@ -4091,13 +4126,13 @@ body.mode-simple .simple-mode-banner {
 
 .pad-mode-btn:hover {
   color: var(--ink);
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in srgb, var(--ink) 5%, transparent);
 }
 
 .pad-mode-btn.active {
-  background: #182030;
-  color: #ffffff;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+  background: var(--chassis-raised);
+  color: var(--ink);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--shadow) 50%, transparent);
 }
 
 .mode-dot {
@@ -4105,17 +4140,17 @@ body.mode-simple .simple-mode-banner {
   height: 6px;
   border-radius: 50%;
 }
-.mode-dot.amber { background: #f59e0b; box-shadow: 0 0 6px #f59e0b; }
-.mode-dot.cyan { background: #38bdf8; box-shadow: 0 0 6px #38bdf8; }
-.mode-dot.green { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
-.mode-dot.purple { background: #c084fc; box-shadow: 0 0 6px #c084fc; }
+.mode-dot.amber { background: var(--armed); box-shadow: 0 0 6px var(--armed); }
+.mode-dot.cyan { background: var(--live); box-shadow: 0 0 6px var(--live); }
+.mode-dot.green { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.mode-dot.purple { background: var(--scratch); box-shadow: 0 0 6px var(--scratch); }
 
 .pad-mpd-tag {
   font-size: 0.6rem;
   font-weight: 700;
   color: var(--accent-bright);
-  background: rgba(245, 158, 11, 0.12);
-  border: 1px solid rgba(245, 158, 11, 0.35);
+  background: color-mix(in srgb, var(--armed) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--armed) 35%, transparent);
   border-radius: 4px;
   padding: 2px 8px;
 }
@@ -4133,8 +4168,8 @@ body.mode-simple .simple-mode-banner {
 }
 
 .matrix-pad-16 {
-  background: radial-gradient(circle at 50% 30%, #1e2636, #0d121c);
-  border: 1.5px solid rgba(255, 255, 255, 0.12);
+  background: radial-gradient(circle at 50% 30%, var(--chassis-raised), var(--chassis));
+  border: 1.5px solid color-mix(in srgb, var(--ink) 12%, transparent);
   border-radius: 7px;
   padding: 8px 6px;
   min-height: 52px;
@@ -4145,20 +4180,20 @@ body.mode-simple .simple-mode-banner {
   gap: 3px;
   cursor: pointer;
   user-select: none;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 3px 8px rgba(0,0,0,0.5);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--ink) 10%, transparent), 0 3px 8px color-mix(in srgb, var(--shadow) 50%, transparent);
   transition: background 0.08s, border-color 0.08s, box-shadow 0.08s, transform 0.05s;
 }
 
 .matrix-pad-16:hover {
-  border-color: rgba(255, 255, 255, 0.35);
+  border-color: color-mix(in srgb, var(--ink) 35%, transparent);
 }
 
 .matrix-pad-16:active,
 .matrix-pad-16.hit {
   transform: scale(0.96);
-  background: var(--pad-accent-color, #f59e0b) !important;
-  border-color: #ffffff !important;
-  box-shadow: 0 0 16px var(--pad-accent-color, #f59e0b) !important;
+  background: var(--pad-accent-color, var(--armed)) !important;
+  border-color: var(--ink) !important;
+  box-shadow: 0 0 16px var(--pad-accent-color, var(--armed)) !important;
 }
 
 .pad-num-badge {
@@ -4171,7 +4206,7 @@ body.mode-simple .simple-mode-banner {
 .pad-action-title {
   font-size: 0.65rem;
   font-weight: 800;
-  color: #f8fafc;
+  color: var(--ink);
   text-align: center;
   line-height: 1.1;
   white-space: nowrap;
@@ -4180,3 +4215,180 @@ body.mode-simple .simple-mode-banner {
   max-width: 100%;
 }
 
+
+/* ================= CONTROL BOARD =================
+   Engine-facing controls. Kept visually quieter than the broadcast header on
+   purpose: the red actions here can silence a live station, so they must not
+   compete with the ON AIR indicator for attention. */
+#control-board-bay {
+  border-top: 1px solid var(--line, #1f2937);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.cb-card {
+  border: 1px solid var(--line, #1f2937);
+  border-radius: 10px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cb-card-title {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+
+.cb-rows { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.cb-row { display: flex; justify-content: space-between; gap: 12px; }
+.cb-row > span { opacity: 0.6; }
+/* An unmeasured value is a dash, never a zero. */
+.cb-row > b { font-variant-numeric: tabular-nums; }
+.cb-row > b.unknown { opacity: 0.45; font-weight: 400; }
+    /* A measured fault. Reserved for values that were actually observed to be
+       wrong — silence on the mount, not "we could not check". */
+    .cb-row > b.bad { color: #f87171; font-weight: 700; }
+    .cb-row > b.good { color: #4ade80; }
+
+.cb-note { font-size: 11px; color: #fbbf24; }
+.cb-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.cb-slider { display: flex; flex-direction: column; gap: 4px; font-size: 11px; }
+.cb-slider > input { width: 100%; }
+
+.cb-queue { margin: 0; padding-left: 18px; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
+.cb-queue .cb-empty { list-style: none; margin-left: -18px; opacity: 0.5; font-style: italic; }
+
+/* Station ops panel: PIN gate + station-database driven rows. */
+.cb-input {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--line, #1f2937);
+  border-radius: 6px;
+  color: inherit;
+  padding: 6px 8px;
+  font-size: 12px;
+  min-width: 140px;
+}
+.cb-input:focus { outline: 1px solid #38bdf8; }
+
+.ops-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  font-size: 11px;
+}
+.ops-row:last-child { border-bottom: none; }
+.ops-row-main { min-width: 0; }
+.ops-row-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ops-row-sub { display: block; opacity: 0.6; font-size: 10px; }
+
+.ops-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.ops-badge.pending { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+.ops-badge.in_review { background: rgba(56, 189, 248, 0.15); color: #38bdf8; }
+.ops-badge.cleared, .ops-badge.approved { background: rgba(52, 211, 153, 0.15); color: #34d399; }
+.ops-badge.declined, .ops-badge.blocked, .ops-badge.uncleared {
+  background: rgba(239, 68, 68, 0.15); color: #f87171;
+}
+
+/* Station library: the engine crate, shared with the station site. */
+.cb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 6px;
+  font-size: 11px;
+}
+.cb-grid .cb-empty { list-style: none; margin: 0; opacity: 0.5; font-style: italic; }
+.lib-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.15);
+  border-radius: 6px;
+}
+.lib-item .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-item .m { opacity: 0.55; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+/* Booth-only tracks are not station music and must not look like it. */
+.lib-item.booth { border-style: dashed; opacity: 0.75; }
+
+/* ================= OBS OVERLAY =================
+   A Browser Source target. Transparent background so it composites over a
+   scene, and driven entirely by the engine's broadcast state — the overlay
+   shows what listeners hear, not what the booth happens to be playing. */
+#obsOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 24px;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  pointer-events: none;
+}
+#obsOverlay[hidden] { display: none; }
+/* In overlay mode the app chrome is removed so OBS captures only this. */
+body.obs-mode > main,
+body.obs-mode > header,
+body.obs-mode > div:not(#obsOverlay) { display: none !important; }
+
+.obs-ticker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: rgba(8, 10, 14, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  color: #e2e8f0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.obs-ticker-left, .obs-ticker-right { display: flex; align-items: center; gap: 10px; }
+.obs-live-dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: #64748b;
+}
+.obs-live-dot.on { background: #ef4444; box-shadow: 0 0 10px #ef4444; animation: obsPulse 1.6s infinite; }
+@keyframes obsPulse { 0%,100% { opacity: 1 } 50% { opacity: 0.45 } }
+.obs-station { text-transform: uppercase; }
+.obs-tag, .obs-listeners { opacity: 0.65; font-weight: 500; }
+.obs-state { font-size: 11px; opacity: 0.8; text-transform: uppercase; letter-spacing: 0.08em; }
+
+.obs-now {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 18px;
+  border-radius: 10px;
+  background: rgba(8, 10, 14, 0.82);
+  border-left: 4px solid #ef4444;
+  color: #f8fafc;
+}
+.obs-now-label {
+  font-size: 11px; font-weight: 800; letter-spacing: 0.14em;
+  color: #ef4444; writing-mode: vertical-rl; text-orientation: mixed;
+}
+.obs-now-text { flex: 1; min-width: 0; }
+.obs-now-title { font-size: 22px; font-weight: 700; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obs-now-artist { font-size: 14px; opacity: 0.7; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obs-now-next { display: flex; flex-direction: column; align-items: flex-end; font-size: 12px; opacity: 0.6; max-width: 30%; }
+.obs-next-label { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; }

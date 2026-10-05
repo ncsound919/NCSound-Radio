@@ -18,7 +18,7 @@
   3. The JSON status page lives at /status-json.xsl, NOT /admin/status-json.xsl.
      Anything under /admin/ is parsed as a source/admin command rather than
      served from adminroot, so /admin/status-json.xsl answers
-     "400 - Unrecognised command". curl -u admin:REDACTED
+     "400 - Unrecognised command". An authenticated curl of
      http://127.0.0.1:8010/status-json.xsl is the one to poll.
 
   4. Port 8010, not Icecast's default 8000: an unrelated Windows service
@@ -41,10 +41,24 @@
     <bind-address>127.0.0.1</bind-address>
   </listen-socket>
 
+  <!--
+    TEMPLATE. The two passwords below are __PLACEHOLDERS__ rendered by
+    infra/station-up.sh from infra/icecast/.env at copy time. Icecast's XML has no
+    environment substitution, so this file is the only place a password could leak
+    back into git, and it leaked: the admin and source passwords were both tracked
+    here and are still in history. Do not put a real value in this file.
+    (This comment previously contained a double hyphen and Icecast refused to parse
+    the file with "Double hyphen within comment". The warning at the top of this
+    file is not decorative.)
+
+    A leftover placeholder means the render did not run, and Icecast would accept
+    the placeholder text itself as the password. station-up.sh therefore checks
+    for an unrendered marker inside a password element and refuses to start.
+  -->
   <authentication>
-    <source-password>REDACTED</source-password>
+    <source-password>__ICECAST_SOURCE_PASSWORD__</source-password>
     <admin-user>admin</admin-user>
-    <admin-password>REDACTED</admin-password>
+    <admin-password>__ICECAST_ADMIN_PASSWORD__</admin-password>
   </authentication>
 
   <webroot>/usr/share/icecast2/web</webroot>

@@ -7,17 +7,22 @@ export const dynamic = 'force-dynamic'
 
 const DAY_MS = 86_400_000
 
-/** The 8-item pre-launch checklist from the station operations plan. */
-const CHECKLIST = [
-  'Supported OS confirmed and a KVM VPS chosen',
-  'Liquidsoap + Icecast installed, HTTPS working on desktop and mobile',
-  'Rights gate enforced: no track uploaded without a CLEARED record',
-  'Fallback playlist tested by stopping the main one',
-  'Backups restored once as a test',
-  'Dummy ad scheduled and its play captured in ad_plays',
-  'Uptime alert tested',
-  'Bandwidth projection done',
-] as const
+/**
+ * A readiness item that is either measured true, measured false, or unknown.
+ *
+ * `unknown` is not `false`. A check whose inputs are unavailable must not render
+ * as a confident tick or a confident cross — that is the same defect as the
+ * confident `0` this project has been removing.
+ */
+type ReadinessState = 'ok' | 'problem' | 'unknown'
+
+type ReadinessItem = {
+  id: string
+  label: string
+  state: ReadinessState
+  /** What was actually observed. Always populated, including when unknown. */
+  detail: string
+}
 
 /**
  * GET /api/stats — ops dashboard rollup: library + rights-gate counts,
@@ -73,6 +78,129 @@ export async function GET() {
     })
     const cleared = musicTracks.filter((t) => clearedIdSet.has(t.rightsId)).length
 
+    /**
+     * Readiness, measured.
+     *
+     * This replaces a hardcoded 8-item pre-launch checklist whose progress was
+     * stored in `localStorage` and drawn next to the label as though the station
+     * had measured itself. Two of those items ("uptime alert tested", "backups
+     * restored") cannot be measured from here at all, so they are not invented
+     * — they are simply absent. Every item below is derived from a value this
+     * request actually fetched.
+     */
+    const readiness: ReadinessItem[] = []
+    const push = (id: string, label: string, state: ReadinessState, detail: string) =>
+      readiness.push({ id, label, state, detail })
+
+    if (!live) {
+      push('engine', 'Engine reachable', 'unknown', 'ingest did not answer, so nothing can be measured')
+    } else {
+      // `live.engine`, not the later `engine` binding: readiness is computed
+      // before that alias exists.
+      // `live.engine.telemetry.decks`, not `live.engine.decks`: the decks live
+      // under telemetry. Reading the wrong path yields undefined, and `?? []`
+      // then turns "I could not find this" into "no deck is rolling" — a
+      // confident false alarm, which is the defect this panel exists to remove.
+      const deckTelemetry = live.engine.telemetry?.decks
+      if (!deckTelemetry) {
+        push('engine', 'Engine has audio cued', 'unknown', 'the engine reported no deck telemetry')
+      } else {
+        const rolling = deckTelemetry.some((d) => d.playing)
+        push(
+          'engine',
+          'Engine has audio cued',
+          rolling ? 'ok' : 'problem',
+          rolling
+            ? `deck rolling: ${deckTelemetry.find((d) => d.playing)?.trackId ?? 'unknown'}`
+            : 'no deck is rolling, so the station has nothing to broadcast',
+        )
+      }
+      push(
+        'sequencer',
+        'Sequencer running',
+        live.engine.autopilot.enabled ? 'ok' : 'problem',
+        live.engine.autopilot.enabled
+          ? `sequencing ${live.engine.autopilot.crateSize} crate tracks`
+          : 'autopilot is off, so the station stops dead at the end of this track',
+      )
+      push(
+        'library',
+        'Crate has playable audio',
+        live.engine.autopilot.crateSize > 0 ? 'ok' : 'problem',
+        `${live.engine.autopilot.crateSize} tracks in the engine crate`,
+      )
+    }
+
+    const rStream = live?.stream ?? null
+    if (!rStream) {
+      push('icecast', 'Icecast reachable', 'unknown', 'no stream status was returned')
+    } else {
+      push(
+        'icecast',
+        'Icecast reachable',
+        rStream.icecast.reachable ? 'ok' : 'problem',
+        rStream.icecast.reachable
+          ? `reporting version ${rStream.icecast.version ?? 'unknown'}`
+          : (rStream.icecast.error ?? 'unreachable'),
+      )
+      const connected = rStream.mounts.filter((m) => m.connected).length
+      push(
+        'mount',
+        'A mount has a connected source',
+        connected > 0 ? 'ok' : 'problem',
+        `${connected} of ${rStream.mounts.length} mounts connected`,
+      )
+    }
+
+    const b = live?.broadcast
+    push(
+      'broadcast',
+      'Output switched on air',
+      !b ? 'unknown' : b.components.outputLive ? 'ok' : 'problem',
+      !b
+        ? 'no broadcast verdict was returned'
+        : b.onAir
+          ? 'engine playing, output live, source connected'
+          : (b.reason || 'not broadcasting'),
+    )
+
+    /**
+     * The check that would have caught the five-hour outage: does the mount
+     * actually carry audio? Everything above can be healthy while this is
+     * silent.
+     */
+    const wd = live?.watchdog
+    if (!wd || !wd.last) {
+      push(
+        'delivery',
+        'Audio reaching listeners',
+        'unknown',
+        wd?.enabled === false
+          ? 'the delivery watchdog is disabled, so this is not being measured'
+          : 'the watchdog has not taken a measurement yet',
+      )
+    } else {
+      push(
+        'delivery',
+        'Audio reaching listeners',
+        wd.last.verdict === 'audible' ? 'ok' : wd.last.verdict === 'silent' ? 'problem' : 'unknown',
+        wd.last.verdict === 'audible'
+          ? `mount mean ${wd.last.meanDb?.toFixed(1)} dBFS at ${new Date(wd.last.measuredAt).toLocaleTimeString()}`
+          : wd.last.verdict === 'silent'
+            ? `mount silent at ${wd.last.meanDb?.toFixed(1)} dBFS${wd.holdingBecause ? ` — ${wd.holdingBecause}` : ''}`
+            : `could not read the mount: ${wd.last.error ?? 'unknown'}`,
+      )
+    }
+
+    push(
+      'rights',
+      'Every library track has a rights record',
+      tracks === 0 ? 'unknown' : cleared === tracks ? 'ok' : 'problem',
+      tracks === 0
+        ? 'no music tracks synced yet'
+        : `${cleared} of ${tracks} cleared${blocked > 0 ? `, ${blocked} blocked` : ''}`,
+    )
+
     const subMap = new Map(
       submissionGroups.map((g) => [g.status, g._count._all]),
     )
@@ -92,6 +220,15 @@ export async function GET() {
     const listeners =
       engine?.listeners ?? { current: null, peak24h: null, source: 'unavailable' as const }
     const streamOk = stream?.onAir === true
+
+    /**
+     * Pending submissions are deliberately NOT a readiness item.
+     *
+     * An earlier draft counted them, which made the panel permanently red on any
+     * station that was successfully receiving submissions — a working intake
+     * queue reported as a fault. The queue is surfaced where it belongs, in the
+     * review section; readiness describes whether the station can broadcast.
+     */
 
     // 128kbps ~= 0.058 GB per listener-hour; 0.15 = avg daily listening factor.
     const projectedGBDay =
@@ -153,7 +290,7 @@ export async function GET() {
         icecastReachable: stream?.icecast.reachable ?? false,
         daysSinceLaunch: Math.max(0, Math.floor((nowMs - LAUNCH_UTC_MS) / DAY_MS)),
       },
-      checklist: [...CHECKLIST],
+      readiness,
     })
   } catch (error) {
     console.error('[api/stats]', error)

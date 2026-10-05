@@ -96,6 +96,8 @@ export class Autopilot {
 
   crate: DecodedTrack[] = [];
   template: PartyTemplate | null = null;
+  /** Operator-pinned energy, or null to follow the template curve. */
+  private energyOverride: number | null = null;
   enabled = true;
 
   private playing: NowPlaying | null = null;
@@ -109,6 +111,11 @@ export class Autopilot {
   private lastRefusal: string | null = null;
   /** Guards the stop-recovery path against re-entering itself. */
   private recovering = false;
+  /**
+   * Consecutive ticks spent at the end of a track with a successor armed but no
+   * handover completed. Only used to throttle the stall diagnostic.
+   */
+  private stallTicks = 0;
 
   constructor(mixer: Mixer, opts: AutopilotOptions = {}) {
     this.mixer = mixer;
@@ -133,15 +140,49 @@ respectRotation: opts.respectRotation ?? true,
   }
 
   get energyTarget(): number {
+    // An operator pin wins over the template's curve. Without this the
+    // `autopilot.setEnergyTarget` command had nothing to write to: energy was a
+    // pure function of the curve and the elapsed time, so the command validated
+    // its input, reported `ok`, and changed nothing.
+    if (this.energyOverride !== null) return this.energyOverride;
     if (!this.template?.energyCurve?.length) return this.opts.defaultEnergy;
     const elapsedMin = (Date.now() - this.startedAtMs) / 60000;
     const progress = Math.min(1, elapsedMin / this.opts.durationMin);
     return interpolateEnergyCurve(this.template.energyCurve, progress);
   }
 
+  /** Pin the energy target, or pass null to hand control back to the curve. */
+  setEnergyTarget(energy: number | null): number {
+    this.energyOverride = energy === null ? null : Math.max(0, Math.min(1, energy));
+    return this.energyTarget;
+  }
+
+  get isEnergyOverridden(): boolean {
+    return this.energyOverride !== null;
+  }
+
   setTemplate(template: PartyTemplate | null): void {
     this.template = template;
     this.startedAtMs = Date.now();
+    // A new arc supersedes a manual pin. These are two dials for one thing, and
+    // leaving a stale override in place meant picking a vibe template appeared
+    // to do nothing until the pin was cleared by hand.
+    this.energyOverride = null;
+  }
+
+  /**
+   * Make the whole crate eligible again.
+   *
+   * Autopilot does not walk the crate in order — it scores every candidate
+   * against the current energy target on each transition (`pickNextMarathonTrack`)
+   * and only `history` prevents repeats. So "resequence" is really "stop
+   * excluding what has already played", which is what actually changes the next
+   * few tracks. Reordering the array would have been a no-op that looked like
+   * it worked.
+   */
+  resequence(): { crateSize: number } {
+    this.history = [];
+    return { crateSize: this.crate.length };
   }
 
   setCrate(tracks: DecodedTrack[]): void {
@@ -160,10 +201,18 @@ respectRotation: opts.respectRotation ?? true,
    * Async because a crate entry carries no PCM until it is materialised, so the
    * first deck load has to decode before it can hand a buffer to the mixer.
    */
-  async start(track?: DecodedTrack): Promise<boolean> {
+async start(track?: DecodedTrack): Promise<boolean> {
     const first = track ?? this.crate[0];
     if (!first) return false;
     if (this.mixer.playing && this.playing) return false;
+
+    /**
+     * Re-enable before anything else. stop() clears this flag and nothing else
+     * ever set it again, so a restarted autopilot scheduled its timer, called
+     * tick() every second, and returned immediately on `!this.enabled` - a
+     * station that looked started and never sequenced again, with no log.
+     */
+    this.enabled = true;
 
     await materialize(first, this.mixer.ctx, this.opts.decode);
     this.mixer.loadBuffer(0, first.buffer as AudioBuffer, first.analysis ?? undefined);
@@ -201,9 +250,25 @@ tick(): void {
       this.recoverFromStoppedMixer();
       return;
     }
-    const remaining = info.remaining;
+    const rawRemaining = info.remaining;
+    /**
+     * A non-finite remaining used to disable sequencing silently: every
+     * comparison below is `remaining <= cueAheadSec`, and NaN is false for all of
+     * them, so a deck with a bad rate or a NaN bpm left autopilot doing nothing
+     * for the rest of the process with no log at all. Treat it as the end of the
+     * track so it takes the arm-and-handover path and gets reported.
+     */
+    const remaining = Number.isFinite(rawRemaining) ? rawRemaining : 0;
+    if (!Number.isFinite(rawRemaining)) {
+      console.warn(
+        `[autopilot] info().remaining was ${String(rawRemaining)} (speed=${String(info.speed)}, ` +
+          `effBpm=${String(info.effBpm)}, elapsed=${String(info.elapsed)}); ` +
+          `treating the track as ended`,
+      );
+    }
 
 if (!this.playing.next) {
+      this.stallTicks = 0;
       if (remaining <= this.opts.cueAheadSec) void this.armNext();
       /**
        * The cue window has passed with nothing armed. On a healthy station that
@@ -221,13 +286,14 @@ if (!this.playing.next) {
       return;
     }
 
-if (remaining <= this.opts.cueAheadSec) {
+    if (remaining <= this.opts.cueAheadSec) {
       const plan = this.playing.plan;
       const incoming = this.playing.next;
       if (plan && incoming) {
         const res = this.mixer.next(plan.preset);
         if (res.ok) {
           this.lastRefusal = null;
+          this.stallTicks = 0;
           this.recentPresets.push(plan.preset.id);
           this.recentPresets = this.recentPresets.slice(-6);
           this.history.push(this.playing.track.id);
@@ -240,10 +306,11 @@ if (remaining <= this.opts.cueAheadSec) {
           this.onTrackChange?.(incoming, plan);
         } else {
           /**
-           * The handover was refused. Previously ignored, so tick() called next()
-           * every second, got the same refusal, and said nothing - the outgoing
-           * track ran to its end and the station went quiet with a full log.
-           * Report it once, not every tick, or it floods.
+           * The handover was refused, or threw inside the mixer. Previously
+           * ignored, so tick() called next() every second, got the same refusal,
+           * and said nothing - the outgoing track ran to its end and the station
+           * went quiet with a full log. Report it once, not every tick, or it
+           * floods.
            */
           if (this.lastRefusal !== res.reason) {
             this.lastRefusal = res.reason;
@@ -252,9 +319,59 @@ if (remaining <= this.opts.cueAheadSec) {
                 `(preset=${plan.preset.id}, remaining=${remaining.toFixed(1)}s)`,
             );
           }
+          this.reportStall(remaining, res.reason);
+        }
+      } else {
+        /**
+         * Armed but unplanned. Previously this branch did not exist, so a track
+         * with `next` set and `plan` null sat at its end with tick() taking no
+         * action at all and no log: the same silence as a refusal, with none of
+         * the refusal reporting.
+         */
+        this.stallTicks += 1;
+        if (this.stallTicks % 5 === 1) {
+          console.warn(
+            `[autopilot] "${incoming?.title ?? "a track"}" is armed but has no transition plan ` +
+              `(remaining=${remaining.toFixed(1)}s); the handover will never be attempted`,
+          );
         }
       }
     }
+  }
+
+  /**
+   * Periodic, single-line account of a handover that is not happening.
+   *
+   * This is the diagnostic that distinguishes the cases which all look identical
+   * from outside the engine: next() refused, next() threw half-way through, and
+   * the deck that is nominally active has run off the end of its buffer while
+   * `mixer.playing` still says the station is going.
+   */
+  private reportStall(remaining: number, reason: string | null): void {
+    this.stallTicks += 1;
+    if (this.stallTicks % 5 !== 1) return;
+
+    const s = this.mixer.traceDecks();
+    const last = this.mixer.handover[this.mixer.handover.length - 1];
+    const deck = (i: 0 | 1) =>
+      `d${i}{bpm=${s.decks[i].bpm ?? "-"} dur=${s.decks[i].duration ?? "-"} ` +
+      `off=${s.decks[i].offset} rolling=${s.decks[i].rolling} ` +
+      `endedAt=${s.decks[i].srcEndedAt} lvl=${s.decks[i].level} gain=${s.decks[i].outGain}}`;
+
+    console.warn(
+      `[autopilot] handover stalled ${this.stallTicks}s ` +
+        `(remaining=${remaining.toFixed(1)}s, reason=${reason ?? "n/a"}, ` +
+        `armed="${this.playing?.next?.title ?? "-"}")\n` +
+        `            ctx=${this.mixer.ctx.currentTime.toFixed(3)} active=${s.active} idle=${s.idle} ` +
+        `busy=${s.busy} busyUntil=${s.busyUntil} fadeStart=${s.fadeStart} anchor=${s.anchor} effBpm=${s.effBpm}\n` +
+        `            ${deck(s.active)}\n` +
+        `            ${deck(s.idle)}\n` +
+        `            last handover: ` +
+        (last
+          ? `#${last.seq} ${last.outcome}${last.reason ? ` (${last.reason})` : ""}` +
+            ` scheduled=${last.scheduling ? "yes" : "no"} toStarted=${last.scheduling?.toStarted ?? "-"}`
+          : "none attempted"),
+    );
   }
 
   /**
@@ -269,37 +386,68 @@ if (remaining <= this.opts.cueAheadSec) {
     if (this.recovering) return;
     this.recovering = true;
     try {
-      for (let i = 0; i < 2; i += 1) {
-        const deck = this.mixer.decks[i];
-        if (!deck.buffer) continue;
+      const current = this.playing?.track ?? null;
 
-        const finished = deck.rawOffset() >= deck.buffer.duration - 0.25;
-        deck.seek(0);
-        if (!this.mixer.playing) this.mixer.play();
-
-        console.warn(
-          `[autopilot] the mixer had stopped; ` +
-            (finished
-              ? `"${deck.analysis ? "a finished track" : "a track"}" had run to its end on deck ${i}, restarted it`
-              : `restarted deck ${i}`) +
-            ` so sequencing can resume`,
-        );
-
-        // If it had run out, clear any stale cue so the next tick arms afresh.
-        if (finished && this.playing) {
-          this.playing.next = null;
-          this.playing.plan = null;
+      /**
+       * Which deck to restart is decided by which deck holds *this* track, not by
+       * "deck 0 has a buffer".
+       *
+       * The old loop scanned deck 0 first and restarted whatever it found. After
+       * a handover deck 0 is the *outgoing* deck - it still holds the previous
+       * track, already finished, while the track autopilot believes is playing
+       * sits on the other one. So the loop rewound the stale deck and then called
+       * mixer.play(), which starts whatever deck the mixer considers current:
+       * two different tracks, and the one the station was reporting was not the
+       * one that came back.
+       */
+      const activeSlot = this.mixer.active as 0 | 1;
+      let slot: 0 | 1 | null = null;
+      if (current?.buffer) {
+        for (const i of [activeSlot, this.mixer.idle] as const) {
+          if (this.mixer.decks[i].buffer === current.buffer) {
+            slot = i;
+            break;
+          }
         }
-        return;
       }
 
-      // Nothing is loaded on either deck: begin again from the top of the crate.
-      const first = this.crate[0];
-      if (!first || !first.buffer) return;
-      console.warn("[autopilot] the mixer stopped with nothing loaded; restarting the crate");
-      this.mixer.loadBuffer(0, first.buffer, first.analysis ?? undefined);
-      this.mixer.play();
-      this.playing = { track: first, startedAtMs: Date.now(), next: null, plan: null };
+      if (slot === null) {
+        // The track we are meant to be playing is not on either deck any more.
+        const first = current?.buffer ? current : this.crate[0];
+        if (!first?.buffer) return;
+        console.warn(
+          `[autopilot] the mixer stopped and deck ${activeSlot} did not hold ` +
+            `"${first.title}"; reloading it`,
+        );
+        this.mixer.loadBuffer(activeSlot, first.buffer, first.analysis ?? undefined);
+        slot = activeSlot;
+        if (!this.playing) {
+          this.playing = { track: first, startedAtMs: Date.now(), next: null, plan: null };
+        }
+      } else if (slot !== activeSlot) {
+        // mixer.play() only ever starts the deck it considers current, so the
+        // deck we rewound has to become the current one or play() ignores it.
+        this.mixer.active = slot;
+      }
+
+      const deck = this.mixer.decks[slot];
+      const finished = !!deck.buffer && deck.rawOffset() >= deck.buffer.duration - 0.25;
+      deck.seek(0);
+      if (!this.mixer.playing) this.mixer.play();
+
+      console.warn(
+        `[autopilot] the mixer had stopped; ` +
+          (finished
+            ? `"${current?.title ?? "a finished track"}" had run to its end on deck ${slot}, restarted it`
+            : `restarted deck ${slot}`) +
+          ` so sequencing can resume`,
+      );
+
+      // If it had run out, clear any stale cue so the next tick arms afresh.
+      if (finished && this.playing) {
+        this.playing.next = null;
+        this.playing.plan = null;
+      }
     } finally {
       this.recovering = false;
     }
@@ -352,10 +500,17 @@ if (remaining <= this.opts.cueAheadSec) {
         return;
       }
 
-      const info = this.mixer.info();
-      // Never load onto the deck that is currently audible.
-      const audible = info?.deck ?? this.mixer.active;
-      const idleSlot = (audible === 0 ? 1 : 0) as 0 | 1;
+/**
+       * Never load onto the deck that is currently audible.
+       *
+       * This reads `mixer.active`, not `info().deck`. During a transition
+       * info() reports the *outgoing* deck until the fade begins, so arming from
+       * it would load onto the deck that is about to become active and overwrite
+       * the incoming track mid-handover. Only reachable with tracks short enough
+       * that the cue window overlaps the fade, but the correct source of truth is
+       * free here.
+       */
+      const idleSlot = (this.mixer.active === 0 ? 1 : 0) as 0 | 1;
 
       // Cue the next track by decoding it now, so the mix-in happens on the bar
       // line rather than after an ffmpeg round trip.

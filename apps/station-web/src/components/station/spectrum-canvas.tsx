@@ -31,11 +31,20 @@ const BAR_GAP = 2
 const EASE = 0.18
 
 export function SpectrumCanvas({
-  active,
+  onAir,
   className,
   bars = BARS,
 }: {
-  active: boolean
+  /**
+   * Whether the STATION is broadcasting.
+   *
+   * This used to be `isPlaying` from the player store — whether the audio was
+   * playing in this browser. Those differ: a listener can have the stream
+   * buffered and playing while the engine has stopped, and the station can be
+   * on air while this browser is muted. The canvas describes the broadcast, so
+   * it is told about the broadcast.
+   */
+  onAir: boolean
   className?: string
   bars?: number
 }) {
@@ -107,15 +116,21 @@ export function SpectrumCanvas({
         return avg * (0.75 + (i / bars) * 0.5)
       })
 
-    const idleLevels = (t: number) =>
-      Array.from({ length: bars }, (_, i) =>
-        reducedMotion ? 0.06 + 0.02 * Math.sin(i * 0.7) : 0.05 + 0.035 * (0.5 + 0.5 * Math.sin(t + i * 0.55)),
-      )
+    /**
+     * No measurement is not a low measurement.
+     *
+     * This used to synthesise a moving sine bank whenever audio was playing
+     * locally. It looked exactly like a live master-bus analyser and was
+     * labelled as one, which is the worst combination available: a fabricated
+     * signal with an authoritative caption. With no spectrum from the engine we
+     * draw a flat no-signal trace instead.
+     */
+    const noSignal = () => new Array(bars).fill(0.02)
 
     const loop = () => {
       raf = requestAnimationFrame(loop)
       const s = spectrumRef.current
-      const target = s ? levelsFrom(s) : active ? idleLevels(Date.now() / 900) : new Array(bars).fill(0.02)
+      const target = s ? levelsFrom(s) : noSignal()
       for (let i = 0; i < bars; i += 1) {
         shown[i] += ((target[i] ?? 0) - (shown[i] ?? 0)) * EASE
       }
@@ -124,7 +139,7 @@ export function SpectrumCanvas({
 
     if (reducedMotion) {
       const s = spectrumRef.current
-      paint(s ? levelsFrom(s) : idleLevels(0))
+      paint(s ? levelsFrom(s) : noSignal())
     } else {
       raf = requestAnimationFrame(loop)
     }
@@ -138,14 +153,21 @@ export function SpectrumCanvas({
       ro?.disconnect()
       void disposed
     }
-  }, [active, bars])
+  }, [onAir, bars])
 
   return (
     <canvas
       ref={canvasRef}
       role="img"
+      // Three distinct states, because they are three distinct claims. The old
+      // label said "live master-bus spectrum" whenever audio was playing in the
+      // browser, which is not the same thing as the station being on air.
       aria-label={
-        active ? 'Live master-bus spectrum of the station output' : 'Signal idle — station not on air'
+        spectrum && spectrum.length > 0
+          ? 'Live master-bus spectrum of the station output'
+          : onAir
+            ? 'Station is on air but the engine has published no spectrum yet'
+            : 'No signal — station is not on air'
       }
       className={cn('h-full w-full', className)}
     />

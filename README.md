@@ -11,7 +11,7 @@ packages/
   station-core/    The contract. Types + zod schemas every process agrees on.
   scratch-agent/   Deterministic scratch-routine synthesis.
   dj-engine/       Party DJ's engine, running headless. Owns the timeline.
-  ingest/          (planned) Control channel + Icecast stats reader.
+  ingest/          Control channel + Icecast stats reader. THE engine runner.
 apps/
   station-web/     Next.js 16 operator + listener site (Prisma/SQLite).
   dj-console/      Vite + TS DJ booth UI (browser-only bits: crate, MIDI).
@@ -26,17 +26,52 @@ infra/
   engine-up.sh     Start the headless engine (Windows side).
 ```
 
-## Running the engine
+## Running the station
 
-The engine is a normal Node/Bun process on the **Windows** side. Liquidsoap and
-Icecast run in WSL, and WSL2 forwards localhost, so the engine ingests over
-`127.0.0.1:8008`.
+Five processes. **Only the ingest service is the supported engine runner** —
+`packages/dj-engine/src/run.ts` still works and still plays audio, but it exposes
+no `/status`, so station-web and the DJ console both report `offline` while the
+stream is genuinely on air. Following the old instructions produced a station
+that sounded fine and looked broken.
+
+Liquidsoap and Icecast run in WSL; everything else runs on Windows. WSL2 forwards
+localhost, so the engine ingests over `127.0.0.1:8008`.
 
 ```sh
-wsl -u root sh infra/station-up.sh            # liquidsoap + icecast (WSL)
-sh infra/make-test-library.sh                 # optional: a real library to play
-LIBRARY_DIR=./library bun packages/dj-engine/src/run.ts
-wsl -u root sh infra/station-verify.sh        # prove the chain streams
+# 1. Icecast + Liquidsoap (WSL). Also validates ncsound.liq before starting it.
+wsl -u root sh infra/station-up.sh
+
+# 2. The engine + control plane. THIS is the runner to use.
+bun run --cwd packages/ingest start          # :8099 HTTP + WS
+
+# 3. Database (once, and after any schema change)
+cd apps/station-web && bun run db:generate && bun run db:push
+
+# 4 + 5. The two apps
+bun run --cwd apps/station-web dev           # :3100  operator + listener site
+bun run --cwd apps/dj-console dev            # :3102  DJ console (loopback only)
+```
+
+ingest environment:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `INGEST_TOKEN` | unset | Bearer token. Required before ingest will bind a non-loopback host. |
+| `NCSOUND_LIBRARY` | `C:/Users/User/Music/music` | The engine crate. |
+| `NCSOUND_JINGLES` | `<library>/../jingles` | Station imaging for `imaging.play`. |
+| `NCSOUND_STATION_DB` | unset | Station SQLite, for the listener request queue. Without it `/requests` reports *unavailable*, not *empty*. |
+| `LIQUIDSOAP_HOST` / `LIQUIDSOAP_PORT` | `127.0.0.1` / `1234` | The off-air switch. Telnet is unauthenticated - keep it on loopback. |
+| `NCSOUND_PUBLISH` | `1` | Set `0` for a second instance that does not contend for the Liquidsoap harbor. |
+
+Verify:
+| 2026-10-04 | [The booth prepared sets from four invented tracks, and the "OBS overlay" captured the whole console UI](2026-10-04-booth-crate-and-the-obs-overlay-that-was-not-one.md) | ncsound-radio | flaw | high | resolved |
+| 2026-10-04 | [The station site and the DJ console each decided "are we live?" differently, and the site lied to listeners](2026-10-04-two-surfaces-two-definitions-of-on-air.md) | ncsound-radio | flaw | critical | resolved |
+| 2026-10-04 | [A command answered "playing: true" while the station broadcast silence for five hours](2026-10-04-commands-that-report-success-while-doing-nothing.md) | ncsound-radio | flaw | critical | resolved |
+
+```sh
+infra/verify-ingest.ps1          # engine up, crate loaded, command plane answers
+infra/verify-station-web.ps1     # station site serving real data
+wsl -u root sh infra/station-verify.sh   # proves the chain actually streams
 ```
 
 Liquidsoap logs the moment the engine takes over:
@@ -46,8 +81,36 @@ Liquidsoap logs the moment the engine takes over:
 [switch:3] Switch to input.harbor with transition.
 ```
 
-Without `LIBRARY_DIR` the engine falls back to the built-in synthesised studio
-crate, so a fresh checkout still broadcasts.
+Without `NCSOUND_LIBRARY` the engine falls back to the built-in synthesised
+studio crate, so a fresh checkout still broadcasts.
+
+### Ports and who owns them
+
+| Port | Process | Notes |
+|---|---|---|
+| 8010 | Icecast (WSL) | `/live.mp3` 128k, `/mobile.mp3` 64k |
+| 8008 | Liquidsoap harbor (WSL) | where the engine pushes PCM |
+| 1234 | Liquidsoap telnet (WSL) | **unauthenticated** — loopback only |
+| 8099 | ingest | control plane; `listen()` refuses a non-loopback bind without `INGEST_TOKEN` |
+| 3100 | station-web | |
+| 3102 | dj-console | binds `127.0.0.1` by default |
+
+### Taking the station off air
+
+`transport.stop` stops the engine, which makes Liquidsoap fall back to the
+library playlist — a never-dead-air policy, not silence. To actually go silent:
+
+```sh
+# Either from the DJ console (GO OFF AIR) or the station site's TAKE OFF AIR,
+# or by hand over Liquidsoap's telnet:
+wsl -u root telnet 127.0.0.1 1234
+var.set on_air = false
+```
+
+The mount stays connected, so listeners stay connected and hear nothing rather
+than being dropped mid-track. Up to 12 seconds of already-ingested audio drains
+first (`input.harbor(buffer=12.)`). ingest remembers the operator's intent and
+re-asserts it after a Liquidsoap restart.
 
 ### The engine plays a set, not one loop
 
