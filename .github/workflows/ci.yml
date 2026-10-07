@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  push:
+    branches: [main, "station/**", "app/**"]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: typecheck (all packages)
+        run: bun run typecheck
+      - name: unit tests (all packages)
+        run: bun run test
+
+  # The browser check scripts (obs-check, r2-check, ui-audit, …) need a running
+  # dev server and, for OBS, a live OBS — so they stay a local/operator step, not
+  # a CI gate. See each package's scripts/ and docs/READINESS-CHECKLIST.md.

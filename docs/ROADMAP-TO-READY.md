@@ -69,7 +69,7 @@ Auth backend (schema, RLS, delete-account, request attribution) is **[done]**.
 | # | Step | Status |
 |---|---|---|
 | C1 | ingest: `Session` slot window (`notBefore`/`notAfter`), optional `producer` role, **audit log** | **[done 2026-10-07]** — window enforced at `/live/arm`; a slot end clamps `expiresAt` (the air drops then); JSONL audit of `session.issue/revoke` + `live.arm/kill` via `INGEST_AUDIT_FILE`. No `producer` role: guest + `canLive:false` covers it |
-| C2 | Host + guest console builds; host door adds `/requests`; guest door as today | **[ready]** (guest door exists) |
+| C2 | Host + guest console builds; host door adds `/requests`; guest door as today | **[done 2026-10-07]** — the guest door already proxies `/requests`; ingest's role-scoped reads (host includes `/requests`) do the scoping, so one door serves both invite roles |
 | C3 | Enable **Cloudflare Access**; OTP IdP; apps + policies on `host/guest/ingest.<domain>` | **[blocked]** — enable Access |
 | C4 | Host/guest doors served behind Access (Pages or a tunnel hostname) | **[todo]** |
 | C5 | Shows & slots roster in station-web that mints slot-bound sessions | **[todo]** |
@@ -105,9 +105,9 @@ input + OBS→Stream wiring.
 | E2 | Confirm no remaining ungated endpoints; keep CORS public-only | **[done]** |
 | E3 | Backups: DB snapshots, R2 lifecycle rules, ingest sessions file | **[todo]** |
 | E4 | Monitoring/alerting on the mount watchdog + Icecast | **[todo]** |
-| E5 | CI: one pipeline running typecheck + all tests + the check scripts | **[todo]** |
-| E6 | Secrets: rotate the OBS password and the Cloudflare Stream key (both surfaced in chat); delete `.history-backup-pre-scrub.bundle`; creds now at `~/.config/ncsound/supabase.txt` | **[todo]** |
-| E7 | Commit the working tree (very large, long uncommitted) | **[todo]** |
+| E5 | CI: one pipeline running typecheck + all tests + the check scripts | **[done 2026-10-07]** — `.github/workflows/ci.yml` runs `bun install` + `bun run typecheck` + `bun run test`; the browser check scripts stay local (they need a dev server / OBS) |
+| E6 | Secrets: rotate the OBS password and the Cloudflare Stream key (both surfaced in chat); delete `.history-backup-pre-scrub.bundle`; creds now at `~/.config/ncsound/supabase.txt` | **[partial 2026-10-07]** — bundle deleted; OBS password + Stream key rotation still open (operator action) |
+| E7 | Commit the working tree (very large, long uncommitted) | **[done 2026-10-07]** — baseline `883c3d7`; C1 merged to `main` `1b46a6e`. B's newer packages (`station-data`, `station-player`, `listener-app`) are still untracked — B commits those |
 
 ---
 
