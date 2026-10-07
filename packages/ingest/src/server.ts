@@ -32,7 +32,8 @@ import { CrateAudio } from "./crate-audio";
 import { MountWatchdog } from "./mount-watchdog";
 import { LiveBridge, LiveKeyStore, type LiveBridgeOptions } from "./live";
 import { rolePermits } from "./permissions";
-import { SessionStore, type Session, type SessionRole } from "./sessions";
+import { SessionStore, withinSlot, type Session, type SessionRole } from "./sessions";
+import { AuditLog } from "./audit";
 import { materialize, type DecodedTrack } from "@ncsound/dj-engine";
 import { IcecastPoller, ListenerHistory, listenerCountsFrom, type IcecastOptions } from "./icecast";
 
@@ -73,6 +74,8 @@ export type IngestOptions = {
   sessionsFile?: string;
   /** Inject a store (tests use a fake clock). Overrides `sessionsFile`. */
   sessionStore?: SessionStore;
+  /** Append-only audit trail path (default: INGEST_AUDIT_FILE; off when unset). */
+  auditFile?: string;
 };
 
 /** What a host/guest session may GET. Everything else is the owner's. */
@@ -207,6 +210,7 @@ export class IngestService {
   private liveArmedExpiresAt: string | null = null;
   /** Host/guest credentials. The master token is separate (`opts.token`). */
   readonly sessions: SessionStore;
+  readonly audit: AuditLog;
   /** Who the outstanding live key was issued to; only they may redeem it. */
   private liveKeyOwner: string | null = null;
   /** Who currently holds the encoder ("master" or a session id). */
@@ -277,6 +281,7 @@ equestIP member is not optional: without it the crate-audio route
 
     this.liveKeys = new LiveKeyStore({ ttlMs: opts.live?.keyTtlMs });
     this.sessions = opts.sessionStore ?? new SessionStore({ filePath: opts.sessionsFile ?? process.env.INGEST_SESSIONS_FILE });
+    this.audit = new AuditLog(opts.auditFile);
     // Events are pushed to every control socket, so the console learns that the
     // mount confirmed (or dropped) a live session without polling.
     this.live = new LiveBridge({ ...opts.live, onEvent: (e: LiveEvent) => this.broadcast(e) });
@@ -990,6 +995,19 @@ station,
         if (principal.kind === "session" && !principal.session.canLive) {
           return this.json({ ok: false, error: "this session may not go live" }, 403);
         }
+        // A slot-bound credential may only arm inside its window. The end of the
+        // slot is also the credential's expiry, so the air is dropped then too.
+        if (principal.kind === "session" && !withinSlot(principal.session)) {
+          return this.json(
+            {
+              ok: false,
+              error: "outside this session's scheduled slot",
+              notBefore: principal.session.notBefore,
+              notAfter: principal.session.notAfter,
+            },
+            403,
+          );
+        }
         // After a kill, the console's auto-rejoin would otherwise retake the air
         // within seconds. Refuse until the lock expires or /live/unlock.
         if (Date.now() < this.liveLockedUntilMs) {
@@ -1016,6 +1034,9 @@ station,
         const { key, expiresAt } = this.liveKeys.issue();
         this.liveKeyOwner = principalId(principal);
         this.liveArmedExpiresAt = expiresAt;
+        this.audit.record("live.arm", principalId(principal), principal.kind === "master" ? "owner" : principal.session.role, {
+          sessionId: principal.kind === "session" ? principal.session.id : "master",
+        });
         return this.json({ ok: true, key, expiresAt, live: this.live.snapshot });
       }
 
@@ -1040,6 +1061,7 @@ station,
         const killed = this.dropLive(reason);
         this.liveLockedUntilMs = lockSec > 0 ? Date.now() + lockSec * 1000 : 0;
         console.warn(`[ingest] live.kill killed=${killed} keyRevoked=${keyRevoked} lockSec=${lockSec} reason="${reason}"`);
+        this.audit.record("live.kill", principalId(principal), "owner", { killed, keyRevoked, lockSec, reason });
         return this.json({
           ok: true,
           killed,
@@ -1052,7 +1074,7 @@ station,
       // Mint a host/guest credential. The token is returned once and never again.
       if (path === "/sessions") {
         if (!this.opts.token) return this.json({ error: "sessions require INGEST_TOKEN to be set" }, 400);
-        let b: { role?: unknown; label?: unknown; ttlMin?: unknown; canLive?: unknown };
+        let b: { role?: unknown; label?: unknown; ttlMin?: unknown; canLive?: unknown; notBefore?: unknown; notAfter?: unknown };
         try {
           b = (await req.json()) as typeof b;
         } catch {
@@ -1063,13 +1085,33 @@ station,
         if (!label || label.length > 60) return this.json({ error: "label is required (1-60 chars)" }, 400);
         const ttlMin = typeof b.ttlMin === "number" && Number.isFinite(b.ttlMin) ? b.ttlMin : 240;
         if (ttlMin < 1 || ttlMin > 1440) return this.json({ error: "ttlMin must be 1-1440" }, 400);
+        // Optional slot window (ISO). A malformed value is a 400, not ignored.
+        const parseIso = (v: unknown, name: string): { ok: true; value?: string } | { ok: false; error: string } => {
+          if (v === undefined || v === null || v === "") return { ok: true };
+          if (typeof v !== "string" || !Number.isFinite(Date.parse(v))) return { ok: false, error: `${name} must be an ISO timestamp` };
+          return { ok: true, value: new Date(v).toISOString() };
+        };
+        const nb = parseIso(b.notBefore, "notBefore");
+        if (!nb.ok) return this.json({ error: nb.error }, 400);
+        const na = parseIso(b.notAfter, "notAfter");
+        if (!na.ok) return this.json({ error: na.error }, 400);
         const { session, token } = this.sessions.issue({
           role: b.role as SessionRole,
           label,
           ttlMs: ttlMin * 60_000,
           canLive: b.canLive === false ? false : true,
+          ...(nb.value ? { notBefore: nb.value } : {}),
+          ...(na.value ? { notAfter: na.value } : {}),
         });
-        console.warn(`[ingest] session.issue id=${session.id} role=${session.role} label="${session.label}" canLive=${session.canLive} expires=${session.expiresAt}`);
+        console.warn(`[ingest] session.issue id=${session.id} role=${session.role} label="${session.label}" canLive=${session.canLive} expires=${session.expiresAt} slot=${session.notBefore ?? "-"}..${session.notAfter ?? "-"}`);
+        this.audit.record("session.issue", principalId(principal), principal.kind === "master" ? "owner" : principal.session.role, {
+          id: session.id,
+          role: session.role,
+          label: session.label,
+          canLive: session.canLive,
+          notBefore: session.notBefore,
+          notAfter: session.notAfter,
+        });
         return this.json({ ok: true, session, token });
       }
 
@@ -1096,6 +1138,7 @@ station,
           }
         }
         console.warn(`[ingest] session.revoke id=${id} revoked=${revoked} killedLive=${killedLive}`);
+        if (revoked) this.audit.record("session.revoke", principalId(principal), "owner", { id, killedLive });
         return this.json({ ok: revoked, killedLive }, revoked ? 200 : 404);
       }
 

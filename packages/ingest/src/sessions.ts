@@ -24,10 +24,26 @@ export type Session = {
   label: string;
   /** May arm the encoder and stream audio to the station. */
   canLive: boolean;
+  /** Earliest time this credential may act (ISO), or null for "now". */
+  notBefore: string | null;
+  /** Latest time this credential may act (ISO), or null for "no slot end". */
+  notAfter: string | null;
   createdAt: string;
   expiresAt: string;
   revokedAt: string | null;
 };
+
+/**
+ * Is the session's scheduled slot open at `at` (ms)? Missing bounds are open.
+ * A `notAfter` is also baked into `expiresAt` at issue time, so the live-expiry
+ * machinery already drops the air at slot end; this additionally refuses an
+ * early arm before `notBefore`.
+ */
+export function withinSlot(s: Session, at = Date.now()): boolean {
+  if (s.notBefore && Number.isFinite(Date.parse(s.notBefore)) && at < Date.parse(s.notBefore)) return false;
+  if (s.notAfter && Number.isFinite(Date.parse(s.notAfter)) && at > Date.parse(s.notAfter)) return false;
+  return true;
+}
 
 type Stored = Session & { tokenHash: string };
 
@@ -47,17 +63,32 @@ export class SessionStore {
     this.load();
   }
 
-  issue(input: { role: SessionRole; label: string; ttlMs: number; canLive?: boolean }): { session: Session; token: string } {
+  issue(input: {
+    role: SessionRole;
+    label: string;
+    ttlMs: number;
+    canLive?: boolean;
+    /** Earliest time this credential may act (ISO); an earlier arm is refused. */
+    notBefore?: string;
+    /** Latest time this credential may act (ISO); the session also expires then. */
+    notAfter?: string;
+  }): { session: Session; token: string } {
     const ttl = Math.min(Math.max(input.ttlMs, 60_000), MAX_SESSION_TTL_MS);
     const token = `ncs_${randomBytes(24).toString("hex")}`;
     const at = this.now();
+    // A slot end also ends the credential: clamp expiresAt to notAfter so the
+    // existing "lapsed session loses the air" path enforces the slot's end.
+    const slotEnd = input.notAfter ? Date.parse(input.notAfter) : NaN;
+    const expires = Number.isFinite(slotEnd) ? Math.min(at + ttl, slotEnd) : at + ttl;
     const stored: Stored = {
       id: randomUUID(),
       role: input.role,
       label: input.label,
       canLive: input.canLive ?? true,
+      notBefore: input.notBefore ?? null,
+      notAfter: input.notAfter ?? null,
       createdAt: new Date(at).toISOString(),
-      expiresAt: new Date(at + ttl).toISOString(),
+      expiresAt: new Date(expires).toISOString(),
       revokedAt: null,
       tokenHash: hash(token),
     };

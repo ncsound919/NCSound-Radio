@@ -7,9 +7,14 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { IngestService } from "../src/server";
 import { rolePermits } from "../src/permissions";
-import { SessionStore } from "../src/sessions";
+import { SessionStore, withinSlot } from "../src/sessions";
+
+const AUDIT_PATH = join(mkdtempSync(join(tmpdir(), "ncsound-audit-")), "audit.jsonl");
 
 describe("SessionStore", () => {
   test("issues a token that verifies, and never stores it in the clear", () => {
@@ -39,6 +44,18 @@ describe("SessionStore", () => {
     const s = new SessionStore();
     const { session } = s.issue({ role: "guest", label: "x", ttlMs: 10 * 24 * 3_600_000 });
     expect(Date.parse(session.expiresAt) - Date.parse(session.createdAt)).toBeLessThanOrEqual(24 * 3_600_000);
+  });
+
+  test("a slot end clamps the expiry and withinSlot brackets the window", () => {
+    const t = Date.parse("2026-01-01T00:00:00Z");
+    const s = new SessionStore({ now: () => t });
+    const notBefore = new Date(t + 60_000).toISOString();
+    const notAfter = new Date(t + 120_000).toISOString();
+    const { session } = s.issue({ role: "host", label: "slot", ttlMs: 3_600_000, notBefore, notAfter });
+    expect(Date.parse(session.expiresAt)).toBe(t + 120_000); // clamped to the slot end
+    expect(withinSlot(session, t)).toBe(false); // before the window
+    expect(withinSlot(session, t + 90_000)).toBe(true); // inside
+    expect(withinSlot(session, t + 121_000)).toBe(false); // after
   });
 });
 
@@ -99,6 +116,7 @@ describe("multi-user over the service", () => {
       token: MASTER,
       engine: { publish: false },
       live: { harbor: { password: "pw" }, spawn: () => new FakeProc() as never },
+      auditFile: AUDIT_PATH,
     });
     service.listen();
     await service.engine.start();
@@ -176,6 +194,13 @@ describe("multi-user over the service", () => {
   test("a session without canLive cannot arm", async () => {
     const g = await mint("guest", "DJ Talk", { canLive: false });
     expect((await post("/live/arm", g.token)).status).toBe(403);
+  });
+
+  test("a session cannot arm before its slot opens", async () => {
+    const h = await mint("host", "Slot Later", { notBefore: new Date(Date.now() + 3_600_000).toISOString() });
+    const res = await post("/live/arm", h.token);
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error?: string }).error).toMatch(/slot/);
   });
 
   test("a live key belongs to the user who armed it", async () => {
@@ -258,6 +283,15 @@ describe("multi-user over the service", () => {
   test("the owner is unaffected", async () => {
     const res = await post("/", MASTER, cmd("query.status", { id: "console", role: "console", label: "dj console" }));
     expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
+  });
+
+  // Last: it leaves a live key armed, so it must not run before tests that arm.
+  test("minting and arming are written to the audit trail", async () => {
+    const h = await mint("host", "Audit Host");
+    await post("/live/arm", h.token);
+    const lines = readFileSync(AUDIT_PATH, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(lines.some((l) => l.action === "session.issue" && l.label === "Audit Host")).toBe(true);
+    expect(lines.some((l) => l.action === "live.arm")).toBe(true);
   });
 });
 

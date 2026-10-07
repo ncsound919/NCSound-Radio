@@ -4,7 +4,8 @@ Consolidated, dependency-ordered plan across every workstream. Companion to
 `MOBILE-LISTENER-APP-IMPLEMENTATION.md`, `HOSTS-AND-GUEST-SLOTS-PLAN.md`,
 `CLOUDFLARE-INTEGRATION.md`, `DATA-AND-DB-PLAN.md`, `REMOTE-LIVE.md`, and
 `infra/stream/README.md`. Status legend: **[done]** / **[ready]** (artifacts
-exist, needs running) / **[blocked]** (external input) / **[todo]**.
+exist, needs running) / **[partial]** (part done, part still open) /
+**[blocked]** (external input) / **[todo]**.
 
 ---
 
@@ -49,14 +50,14 @@ Strategy + build detail already written. Remaining:
 
 | # | Step | Status |
 |---|---|---|
-| B1 | `packages/station-client` typed fetch client (shared by app + web), validated with `station-core` | **[todo]** |
+| B1 | `packages/station-client` typed fetch client (shared by app + web), validated with `station-core` | **[done]** — opt-in zod validation via `@ncsound/station-core/http`; 8 tests |
 | B2 | Enable Supabase auth providers: **Apple + Google + email OTP** | **[blocked]** — Apple Services ID/key + Google client |
-| B3 | Bare RN + New Architecture + RNTP: player, background/lock, reconnect, data saver, sleep timer | **[todo]** |
+| B3 | Bare RN + New Architecture + RNTP: player, background/lock, reconnect, data saver, sleep timer | **[partial]** — pure mount/reconnect/sleep logic in `packages/station-player` + 11 tests; bare RN shell scaffolded in `apps/listener-app` (react-native 0.87, `ios/`+`android/`); RNTP + background/now-playing wiring remain |
 | B4 | Screens: Home / Player / Schedule / Requests / Settings / Sign-in | **[todo]** |
-| B5 | Favorites + device tokens wired to the live Supabase tables (already applied) | **[ready]** |
-| B6 | Push: FCM + APNs, `devices`/`push_prefs` populated, an Edge Function sender | **[todo]** |
+| B5 | Favorites + device tokens wired to the live Supabase tables (already applied) | **[partial]** — `packages/station-data` (favorites store, devices, prefs, profile; PostgREST adapter) + 13 tests; app wiring pending the B3 scaffold |
+| B6 | Push: FCM + APNs, `devices`/`push_prefs` populated, an Edge Function sender | **[partial]** — `send-push` Edge Function (FCM v1, pref-aware, prunes dead tokens); needs the FCM service account + deploy |
 | B7 | Car: request **CarPlay entitlement early**; Android Auto in v1.1 | **[blocked]** — Apple approval |
-| B8 | Store gates: `PrivacyInfo.xcprivacy`, App Privacy, **account deletion (done)**, demo account, privacy/support URLs, screenshots | **[todo]** |
+| B8 | Store gates: `PrivacyInfo.xcprivacy`, App Privacy, **account deletion (done)**, demo account, privacy/support URLs, screenshots | **[partial]** — manifest at `apps/listener-app/ios/NcsoundListener/PrivacyInfo.xcprivacy`; App Privacy/review copy in `docs/LISTENER-APP-STORE-READINESS.md`; screenshots + demo build need a built app |
 | B9 | Legal: **SoundExchange** statutory + **ASCAP/BMI/SESAC/GMR**; populate `Track.isrc`; monthly Reports of Use | **[blocked]** — counsel/fees |
 
 Auth backend (schema, RLS, delete-account, request attribution) is **[done]**.
@@ -67,7 +68,7 @@ Auth backend (schema, RLS, delete-account, request attribution) is **[done]**.
 
 | # | Step | Status |
 |---|---|---|
-| C1 | ingest: `Session` slot window (`notBefore`/`notAfter`), optional `producer` role, **audit log** | **[todo]** |
+| C1 | ingest: `Session` slot window (`notBefore`/`notAfter`), optional `producer` role, **audit log** | **[done 2026-10-07]** — window enforced at `/live/arm`; a slot end clamps `expiresAt` (the air drops then); JSONL audit of `session.issue/revoke` + `live.arm/kill` via `INGEST_AUDIT_FILE`. No `producer` role: guest + `canLive:false` covers it |
 | C2 | Host + guest console builds; host door adds `/requests`; guest door as today | **[ready]** (guest door exists) |
 | C3 | Enable **Cloudflare Access**; OTP IdP; apps + policies on `host/guest/ingest.<domain>` | **[blocked]** — enable Access |
 | C4 | Host/guest doors served behind Access (Pages or a tunnel hostname) | **[todo]** |
