@@ -49,6 +49,39 @@ station?: {
        */
       desiredOnAir?: boolean | null;
       onAir: () => Promise<{ onAir: boolean | null; error: string | null }>;
+      /**
+       * Read the switch and the harbor source state in one telnet session.
+       *
+       * Two separate reads deadlock: Liquidsoap serves one telnet client at a
+       * time, so the second connection waits out the first one's timeout and
+       * `/status` hangs.
+       */
+      onAirAndHarborSource?: () => Promise<{
+        onAir: { onAir: boolean | null; error: string | null };
+        harborSource: { onAir: boolean | null; error: string | null };
+      }>;
+      /**
+       * Is the engine's upload actually feeding Liquidsoap?
+       *
+       * Read from `input.harbor`'s own connect/disconnect callbacks. The
+       * client-side `connected` flag cannot answer this: writing to a socket whose
+       * peer is gone never fails, so after a daemon restart it read `true` with
+       * zero reconnects and no error while the mount carried -91 dBFS.
+       */
+      harborSourceConnected?: () => Promise<{ onAir: boolean | null; error: string | null }>;
+      /**
+       * Is the console's live upload feeding the `live` harbor mount?
+       *
+       * The live equivalent of `harborSourceConnected`, and it exists for the
+       * same reason: only Liquidsoap can say our source won the mount, so
+       * "LIVE" is turned on by this fact and never by the button.
+       *
+       * The name matches `LiquidsoapControl.liveHarborConnected()` so the
+       * production wiring satisfies it structurally. It previously read
+       * `liveSourceConnected`, which no implementation provided — the poll
+       * silently no-op'd and `on_air` could never be reached.
+       */
+      liveHarborConnected?: () => Promise<{ onAir: boolean | null; error: string | null }>;
     };
 };
 

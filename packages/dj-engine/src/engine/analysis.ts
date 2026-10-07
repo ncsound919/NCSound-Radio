@@ -3,8 +3,19 @@ import type { CuePoints, TrackAnalysis, WaveformBands } from "./types";
 const ENV_HZ = 200;            // target envelope rate (~5 ms); the real rate is sr/hop, see below
 const MAX_SECONDS = 90;        // analyze the first 90 s (grid is re-anchored per track)
 
+/**
+ * The minimum an analysis needs from its audio: a sample rate and access to a
+ * channel's samples. AudioBuffer satisfies this structurally, so the same code
+ * serves the main thread and a Worker (which has no AudioBuffer and receives
+ * decoded `Float32Array` channels instead). See `analyzeChannels`.
+ */
+export interface SampleSource {
+  readonly sampleRate: number;
+  getChannelData(channel: number): Float32Array;
+}
+
 /** Onset-strength envelope (positive RMS flux). */
-export function onsetFlux(buf: AudioBuffer): { flux: Float32Array; hz: number } {
+export function onsetFlux(buf: SampleSource): { flux: Float32Array; hz: number } {
   const data = buf.getChannelData(0);
   const hop = Math.floor(buf.sampleRate / ENV_HZ);
   const hz = buf.sampleRate / hop;   // actual envelope rate (hop is an integer)
@@ -71,7 +82,7 @@ const CAMELOT_MINOR = ["5A", "12A", "7A", "2A", "9A", "4A", "11A", "6A", "1A", "
  * Real pitch-class chromagram + Krumhansl-Schmuckler key correlation.
  * Evaluates Goertzel resonators across 3 musical octaves (C2..B4) on downsampled frames.
  */
-function detectCamelotKey(buf: AudioBuffer): { key: string; keyName: string } {
+function detectCamelotKey(buf: SampleSource): { key: string; keyName: string } {
   const data = buf.getChannelData(0);
   const sr = buf.sampleRate;
   const chroma = new Float64Array(12);
@@ -135,7 +146,7 @@ function detectCamelotKey(buf: AudioBuffer): { key: string; keyName: string } {
  * normalized dancefloor energy, and bar-aligned structural cue points.
  */
 export function extractWaveformAndCues(
-  buf: AudioBuffer,
+  buf: SampleSource,
   bpm: number,
   firstBeat: number
 ): {
@@ -332,7 +343,7 @@ function detectTempo(flux: Float32Array, hz: number): { bpm: number; P: number }
   return { bpm: bestBpm, P: lagOf(bestBpm, hz) };
 }
 
-export function analyze(buf: AudioBuffer): TrackAnalysis {
+export function analyze(buf: SampleSource): TrackAnalysis {
   const { flux, hz } = onsetFlux(buf);
   // 1) coarse tempo from a harmonic-summation tempogram
   const { bpm, P } = detectTempo(flux, hz);
@@ -391,4 +402,32 @@ export function analyze(buf: AudioBuffer): TrackAnalysis {
     cuePoints,
     waveform,
   };
+}
+
+/** Wrap decoded channels as a `SampleSource` (Worker-safe; no AudioBuffer). */
+export function channelSource(channels: Float32Array[], sampleRate: number): SampleSource {
+  if (!channels.length) throw new Error("channelSource needs at least one channel");
+  return {
+    sampleRate,
+    getChannelData: (c: number) => channels[c] ?? channels[0],
+  };
+}
+
+/**
+ * Worker entry point: the exact same analysis as `analyze()`, but from decoded
+ * channels and a sample rate instead of an AudioBuffer. A Worker has no
+ * AudioBuffer, so the library's background indexer hands it `Float32Array`s.
+ */
+export function analyzeChannels(channels: Float32Array[], sampleRate: number): TrackAnalysis {
+  return analyze(channelSource(channels, sampleRate));
+}
+
+/** Worker entry point for the 3-band structural waveform/cue pass. */
+export function extractWaveformAndCuesChannels(
+  channels: Float32Array[],
+  sampleRate: number,
+  bpm: number,
+  firstBeat: number
+): ReturnType<typeof extractWaveformAndCues> {
+  return extractWaveformAndCues(channelSource(channels, sampleRate), bpm, firstBeat);
 }

@@ -9,7 +9,6 @@ import {
   Radio,
   Search,
   Send,
-  ShieldCheck,
   X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -38,8 +37,8 @@ function timeAgo(iso: string, now: number): string {
 }
 
 /**
- * RequestLine — listeners shout for the next spin. The rights gate applies
- * here too: the picker only ever lists CLEARED tracks (see /api/tracks).
+ * RequestLine — listeners shout for the next spin. The picker lists the
+ * station's songs (see /api/tracks).
  */
 export function RequestLine() {
   const [tracks, setTracks] = useState<TracksResponse['tracks'] | null>(null)
@@ -177,7 +176,7 @@ export function RequestLine() {
         <div>
           <h2 className="text-xl font-bold tracking-tight">Request Line</h2>
           <p className="text-sm text-muted-foreground">
-            Shout for the next spin — cleared tracks only, the gate checks every request.
+            Shout for the next spin — pick a song and the wheel reorders.
           </p>
         </div>
         {requests && (
@@ -253,7 +252,7 @@ export function RequestLine() {
                         setPickerOpen(true)
                       }}
                       onFocus={() => setPickerOpen(true)}
-                      placeholder="Search the cleared library…"
+                      placeholder="Search the library…"
                       aria-label="Search tracks to request"
                       className="pl-9"
                     />
@@ -272,8 +271,7 @@ export function RequestLine() {
                         </div>
                       ) : filtered.length === 0 ? (
                         <p className="p-3 text-sm text-muted-foreground">
-                          Nothing matches — the gate keeps uncleared tracks off
-                          this list.
+                          Nothing matches that search.
                         </p>
                       ) : (
                         filtered.map((t) => (
@@ -298,9 +296,6 @@ export function RequestLine() {
                                 {' '}
                                 — {t.artist}
                               </span>
-                            </span>
-                            <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
-                              {t.rightsId}
                             </span>
                           </button>
                         ))
@@ -336,15 +331,10 @@ export function RequestLine() {
               <Send className="h-4 w-4" aria-hidden="true" />
               {submitting ? 'Sending…' : 'Send it to the booth'}
             </Button>
-            <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-              <ShieldCheck className="h-3.5 w-3.5 text-primary" aria-hidden="true" />
-              Requests can never fast-track an uncleared record.
-            </p>
-
             {/* how a shout becomes a spin — fills the column and explains the loop */}
             <div className="mt-auto grid grid-cols-3 gap-2 border-t border-border/40 pt-3 [&>*+*]:relative [&>*+*]:before:absolute [&>*+*]:before:left-[-8px] [&>*+*]:before:top-1/2 [&>*+*]:before:h-px [&>*+*]:before:w-4 [&>*+*]:before:-translate-y-1/2 [&>*+*]:before:bg-border">
               {[
-                { n: '1', label: 'Pick a cleared track' },
+                { n: '1', label: 'Pick a track' },
                 { n: '2', label: 'Shout it out' },
                 { n: '3', label: 'Wheel reorders in ~1 min' },
               ].map((s) => (

@@ -31,12 +31,13 @@ fi
 
 echo "== render ncsound.liq =="
 sed -e "s|getenv(\"HARBOR_PASSWORD\")|\"$HARBOR_PASSWORD\"|g" \
+    -e "s|getenv(\"LIVE_HARBOR_PASSWORD\")|\"$LIVE_HARBOR_PASSWORD\"|g" \
     -e "s|getenv(\"ICECAST_SOURCE_PASSWORD\")|\"$ICECAST_SOURCE_PASSWORD\"|g" \
     infra/liquidsoap/ncsound.liq > /tmp/ncsound.dryrun.liq
 if grep -q 'password=getenv(' /tmp/ncsound.dryrun.liq; then
   echo "   FAIL: unrendered getenv() password remains"; fail=1
 else
-  echo "   PASS: all three passwords rendered"
+  echo "   PASS: all four passwords rendered"
 fi
 
 echo "== liquidsoap --check on the RENDERED file =="
@@ -53,7 +54,7 @@ fi
 echo "== no credential literal leaked into the TRACKED sources =="
 leak=0
 for f in infra/icecast/icecast.xml infra/liquidsoap/ncsound.liq; do
-  if grep -qE "$ICECAST_SOURCE_PASSWORD|$ICECAST_ADMIN_PASSWORD|$HARBOR_PASSWORD" "$f"; then
+  if grep -qE "$ICECAST_SOURCE_PASSWORD|$ICECAST_ADMIN_PASSWORD|$HARBOR_PASSWORD|$LIVE_HARBOR_PASSWORD" "$f"; then
     echo "   FAIL: a live value is present in tracked source $f"; leak=1
   fi
 done

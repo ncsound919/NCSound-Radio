@@ -12,9 +12,9 @@ export const dynamic = 'force-dynamic'
 
 /**
  * GET /api/artists/detail?name=… — public artist profile behind the Wave Chart.
- * Everything shown is earned from the PlayLog ledger (the same audit trail the
- * broadcast writes); no ops data, no PII. Unknown names return 200 + found:false
- * so the client shows a gentle "nothing on the ledger yet" state instead of an error.
+ * Everything shown is earned from the play log; no ops data, no PII. Unknown
+ * names return 200 + found:false so the client shows a gentle "no plays yet"
+ * state instead of an error.
  */
 export async function GET(request: NextRequest) {
   try {
@@ -63,7 +63,6 @@ export async function GET(request: NextRequest) {
           select: {
             id: true,
             title: true,
-            rightsId: true,
             playlist: true,
             explicit: true,
           },
@@ -85,7 +84,7 @@ export async function GET(request: NextRequest) {
           _count: { _all: true },
           where: { createdAt: { gte: since7d }, track: { artist: canonical } },
         }),
-        // On-air now: the three most recent ledger spins (same heuristic as /api/charts).
+        // On-air now: the three most recent spins (same heuristic as /api/charts).
         db.playLog.findMany({
           orderBy: { playedAt: 'desc' },
           take: 3,
@@ -144,7 +143,6 @@ export async function GET(request: NextRequest) {
       .map((t) => ({
         trackId: t.id,
         title: t.title,
-        rightsId: t.rightsId,
         playlist: t.playlist,
         explicit: t.explicit,
         spins7d: spins7dMap.get(t.id) ?? 0,

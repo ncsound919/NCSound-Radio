@@ -58,6 +58,16 @@ export type NowPlaying = {
   plan: TransitionPlan | null;
 };
 
+/**
+ * How long an arm may stay outstanding before it is presumed wedged.
+ *
+ * A normal arm decodes one MP3 and assigns `next`, which takes a couple of
+ * seconds. Fifteen is generous enough not to interfere with a slow decode and
+ * short enough that a hung one costs a fraction of a track rather than the rest of
+ * the shift.
+ */
+const ARM_TIMEOUT_MS = 15_000;
+
 const TRANSITIONS: TransitionPreset[] = [
   { id: "auto", name: "Auto", bars: 4, curve: "equal-power" },
   { id: "quick", name: "Quick cut", bars: 1, curve: "cut" },
@@ -107,6 +117,8 @@ export class Autopilot {
   private timer: ReturnType<typeof setInterval> | null = null;
   /** True while a track is being decoded for the next deck. */
   private arming = false;
+  /** When the current arm started, for the stuck-arm deadline. */
+  private armingSince = 0;
   /** Last handover refusal, so it is logged once rather than every tick. */
   private lastRefusal: string | null = null;
   /** Guards the stop-recovery path against re-entering itself. */
@@ -467,8 +479,30 @@ if (!this.playing.next) {
      * the pile-up could load the deck that was already playing once the current
      * track reached its end, which left the engine silent with nothing logged.
      */
-    if (this.arming) return;
+    if (this.arming) {
+      /**
+       * Break a stuck arm.
+       *
+       * `arming` is cleared in a `finally`, so a *throw* cannot wedge it — but a
+       * promise that never settles can. Materialising a track shells out to ffmpeg,
+       * and if that decode hangs the guard stays true forever: every later tick
+       * returns here, nothing is ever armed, and the station plays one track and
+       * then broadcasts silence indefinitely. Observed live as a repeating
+       * `"has ended with no successor armed (arming=true)"` with no recovery.
+       *
+       * So the guard has its own deadline. A slow-but-progressing arm finishes
+       * well inside this; one still outstanding after it is presumed wedged, and
+       * the next tick is allowed to try again. Being wrong in this direction costs
+       * one redundant decode; being wrong the other way costs the broadcast.
+       */
+      if (Date.now() - this.armingSince < ARM_TIMEOUT_MS) return;
+      console.warn(
+        `[autopilot] an arm has been outstanding for more than ${Math.round(ARM_TIMEOUT_MS / 1000)}s; ` +
+          `abandoning it and retrying (the previous decode never settled)`,
+      );
+    }
     this.arming = true;
+    this.armingSince = Date.now();
 
     try {
       // Rotate the crate before repeating anything.
@@ -566,7 +600,6 @@ export function toTrackDTO(track: DecodedTrack, playlist: string): TrackDTO {
     artist: track.artist,
     album: null,
     durationSec: Math.round(track.durationSec),
-    rightsId: track.id.toUpperCase(),
     explicit: false,
     playlist,
     bpm: track.analysis ? Math.round(track.analysis.bpm * 10) / 10 : null,

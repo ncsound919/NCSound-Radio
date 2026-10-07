@@ -39,29 +39,12 @@ model Submission {
   agreementIp         String?
   reviewNotes         String?
   reviewedAt          DateTime?
-  rightsId            String?
   createdAt           DateTime  @default(now())
 
   @@index([status])
 }
 
 // Note: Submission↔Artist linked by name (loose coupling); no strict relation needed.
-
-model RightsLog {
-  id            String    @id // e.g. "R0123"
-  trackTitle    String
-  artistName    String
-  owner         String
-  sampleStatus  String    @default("PENDING") // PENDING | CLEARED | UNCLEARED
-  explicitFlag  Boolean   @default(false)
-  status        String    @default("PENDING") // PENDING | IN_REVIEW | CLEARED | BLOCKED
-  source        String    @default("SUBMISSION") // SUBMISSION | CORE
-  ownerProof    String?   // e.g. "signed agreement v1.1", "email permission 2024-11-02"
-  clearedAt     DateTime?
-  createdAt     DateTime  @default(now())
-
-  @@index([status])
-}
 
 model Sponsor {
   id          String     @id @default(cuid())
@@ -129,10 +112,13 @@ model Track {
   artist      String
   album       String?
   durationSec Int
-  rightsId    String // FK -> RightsLog.id (logical)
   explicit    Boolean  @default(false)
   playlist    String // Core Rotation | New Heat | Throwbacks | Clean Daypart | Fallback | Imaging | Ads
   bpm         Int?
+  /// SoundExchange Reports of Use prefer ISRCs. Null until known; not invented.
+  isrc        String?
+  /// Marketing label / rights-holder line for Reports of Use.
+  label       String?
   seedOrder   Int      @unique
   createdAt   DateTime @default(now())
 
@@ -156,6 +142,9 @@ model TrackRequest {
   trackId      String
   track        Track    @relation(fields: [trackId], references: [id])
   listenerName String
+  /// Supabase auth user id, when the request carried a valid session. Null for
+  /// anonymous web listeners (who still provide listenerName).
+  userId       String?
   note         String?
   createdAt    DateTime @default(now())
 

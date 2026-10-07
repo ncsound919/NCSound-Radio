@@ -14,6 +14,8 @@ import {
   pickRate,
 } from "./sync";
 import { calculateHarmonicKeyShift } from "./timePitchEngine";
+import { FxRack } from "./fx";
+import type { FxTarget } from "./fx";
 import type { PhaseDifferenceInfo, PitchFaderRange } from "./types";
 import {
   BATTLE_CUT_SLICES,
@@ -246,6 +248,12 @@ export class Mixer {
   imagingDuck: GainNode;
   masterLimiter: DynamicsCompressorNode;
   masterAnalyser: AnalyserNode;
+  /**
+   * Two real FX units and their three insertion points (Deck A, Deck B, master).
+   * Default is fully bypassed, so the engine behaves exactly as before until a
+   * DJ patches a unit. See `assignFx`.
+   */
+  fx: FxRack;
   private splitMerger: ChannelMergerNode;
   private cueBusGain: GainNode;
 
@@ -272,6 +280,16 @@ export class Mixer {
    * with no error anywhere. Taps are registered here so routing owns them.
    */
   private programTaps: AudioNode[] = [];
+
+  /**
+   * External consumers of the pre-fader cue bus, reconnected by every
+   * routeOutputs(). Same reason as `programTaps`: routeOutputs disconnects the
+   * cue bus, which would otherwise kill the new console's headphone output.
+   */
+  private cueTaps: AudioNode[] = [];
+
+  /** Set once the new console takes explicit per-deck cue control. */
+  private cueOverride: [boolean, boolean] | null = null;
 
   decks: [Deck, Deck];
   active = 0;
@@ -316,6 +334,17 @@ export class Mixer {
   crossfader = -1;
   crossfaderCurve: CrossfaderCurve = "blend";
   private manualCrossfaderOverride = false;
+  /**
+   * Manual mixing: the operator owns the crossfader.
+   *
+   * Off (the default, used by autopilot and the legacy console), starting a deck
+   * snaps the crossfader hard to that deck, and moving the crossfader toward a
+   * paused deck starts it. Both are autopilot conveniences; on a performance
+   * console they move a fader the DJ didn't touch and start a track the DJ
+   * didn't press play on. On, neither happens: play only plays, and the
+   * crossfader only fades.
+   */
+  manualMix = false;
 
   // Configurable Pitch Fader Range (±4%, ±8%, ±16%, ±50%) & Transition Duration
   pitchFaderRange: PitchFaderRange = 8;
@@ -432,7 +461,11 @@ export class Mixer {
     this.masterTrim.gain.value = 1;
     this.imagingDuck.gain.value = 1;
 
-    this.masterGain.connect(this.subsonicFilter);
+    // FX insertion points. Each bus runs through its slot: with nothing assigned
+    // the slot is a straight wire, so the graph is identical to before.
+    this.fx = new FxRack(this.ctx);
+    this.masterGain.connect(this.fx.slots.master.input);
+    this.fx.slots.master.output.connect(this.subsonicFilter);
     this.subsonicFilter.connect(this.masterTrim);
     this.masterTrim.connect(this.imagingDuck);
     this.imagingDuck.connect(this.masterLimiter);
@@ -443,7 +476,10 @@ export class Mixer {
     this.decks[0].pflTap.connect(this.cueBusGain);
     this.decks[1].pflTap.connect(this.cueBusGain);
 
-    this.decks.forEach(d => d.out.connect(this.masterGain));
+    this.decks[0].out.connect(this.fx.slots.A.input);
+    this.fx.slots.A.output.connect(this.masterGain);
+    this.decks[1].out.connect(this.fx.slots.B.input);
+    this.fx.slots.B.output.connect(this.masterGain);
     this.decks[1].out.gain.value = 0;
 
     this.scratchGain = this.ctx.createGain();
@@ -469,6 +505,7 @@ export class Mixer {
     this.masterLimiter.connect(this.masterAnalyser);
     if (this.recDest) this.masterLimiter.connect(this.recDest);
     for (const tap of this.programTaps) this.masterLimiter.connect(tap);
+    for (const tap of this.cueTaps) this.cueBusGain.connect(tap);
 
     if (this.monitorPolicy === "cue-only") {
       // The program bus is deliberately left unconnected. The engine is already
@@ -514,6 +551,18 @@ export class Mixer {
   }
 
   /**
+   * Patch an FX unit onto a bus, or bypass it.
+   *
+   * `unitIndex` is 0 or 1. `target` is "A", "B", "master", or null. A unit is on
+   * at most one bus; assigning it elsewhere detaches it from the old one. The
+   * default engine state is both units bypassed, so nothing changes for the
+   * autopilot or the ingest path until a DJ uses the FX tab.
+   */
+  assignFx(unitIndex: 0 | 1, target: FxTarget | null): void {
+    this.fx.assign(unitIndex, target);
+  }
+
+  /**
    * Register a consumer of the program bus that survives re-routing.
    *
    * Prefer this over wiring `getMasterOutputNode()` by hand: the destination
@@ -524,6 +573,46 @@ export class Mixer {
     if (this.programTaps.includes(node)) return;
     this.programTaps.push(node);
     this.masterLimiter.connect(node);
+  }
+
+  /**
+   * Register a consumer of the pre-fader cue bus that survives re-routing.
+   * Used by the new console's headphone output (plan 3A.2).
+   */
+  addCueTap(node: AudioNode): void {
+    if (this.cueTaps.includes(node)) return;
+    this.cueTaps.push(node);
+    this.cueBusGain.connect(node);
+  }
+
+  /**
+   * Explicit per-deck headphone cue for the new console (plan 3A.3).
+   *
+   * Independent of the legacy single-deck audition model: both decks can be
+   * cued, or neither. Once called, this owns the PFL gains and `updatePflRouting`
+   * defers to it, so a later routing change cannot silently un-cue a deck.
+   */
+  setDeckCue(slot: 0 | 1, on: boolean): void {
+    if (!this.cueOverride) this.cueOverride = [false, false];
+    this.cueOverride[slot] = on;
+    this.applyCueOverride();
+  }
+
+  private applyCueOverride(): void {
+    if (!this.cueOverride) return;
+    const now = this.ctx.currentTime;
+    this.decks[0].pflTap.gain.setTargetAtTime(this.cueOverride[0] ? 0.9 : 0, now, 0.015);
+    this.decks[1].pflTap.gain.setTargetAtTime(this.cueOverride[1] ? 0.9 : 0, now, 0.015);
+  }
+
+  /**
+   * Next grid boundary for a division in beats (0.25 = 1/16), used by the
+   * quantized sampler (plan 3C.3). Anchored to the audible beat grid, so a
+   * quantized hit lands on the bar line the DJ hears.
+   */
+  nextGridTime(divisionBeats: number, now = this.ctx.currentTime): number {
+    const secPerBeat = 60 / Math.max(20, this.effBpm);
+    return nextBeatTime(now, this.anchor, secPerBeat * Math.max(0.0625, divisionBeats), 0.008);
   }
 
   /** Recomputes beat-grid anchor from a deck's current offset so bar/beat phase never drifts. */
@@ -598,6 +687,11 @@ export class Mixer {
   }
 
   private updatePflRouting() {
+    // The new console's explicit per-deck cue wins over the audition model.
+    if (this.cueOverride) {
+      this.applyCueOverride();
+      return;
+    }
     const cueSlot = this.auditioningSlot ?? this.idle;
     const now = this.ctx.currentTime;
     this.decks[0].pflTap.gain.setTargetAtTime(cueSlot === 0 ? 0.9 : 0, now, 0.015);
@@ -658,7 +752,20 @@ export class Mixer {
    * Toggles live microphone talkover with a 110Hz high-pass vocal filter and automatic
    * -10dB master music ducking for party announcements.
    */
-  async toggleMicTalkover(): Promise<{ ok: boolean; active: boolean; message: string }> {
+  async toggleMicTalkover(
+    opts: {
+      /** Input device from enumerateDevices(); default input when absent. */
+      deviceId?: string | null;
+      /**
+       * Browser voice processing (echo cancellation, noise suppression, auto
+       * gain). On by default for the legacy callers. The radio console turns it
+       * off (plan 5.5): it pumps and smears a broadcast voice, and a booth mic
+       * with headphones doesn't need it. With speakers and a laptop mic, off
+       * will feed back.
+       */
+      processing?: boolean;
+    } = {},
+  ): Promise<{ ok: boolean; active: boolean; message: string }> {
     if (this.micActive) {
       this.micSource?.disconnect();
       this.micFilter?.disconnect();
@@ -676,7 +783,12 @@ export class Mixer {
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        audio: {
+          echoCancellation: opts.processing ?? true,
+          noiseSuppression: opts.processing ?? true,
+          autoGainControl: opts.processing ?? true,
+          ...(opts.deviceId ? { deviceId: { exact: opts.deviceId } } : {}),
+        },
       });
       await this.ctx.resume();
       this.micStream = stream;
@@ -1800,8 +1912,10 @@ export class Mixer {
       this.active = slot;
       const rate = d.rate > 0 ? d.rate : 1;
       this.effBpm = +(d.analysis.bpm * rate).toFixed(2);
-      this.crossfader = slot === 0 ? -1 : 1;
-      this.manualCrossfaderOverride = false;
+      if (!this.manualMix) {
+        this.crossfader = slot === 0 ? -1 : 1;
+        this.manualCrossfaderOverride = false;
+      }
       d.start(now + 0.02, offset, rate);
       this.playing = true;
       this.applyFaderGains();
@@ -2011,12 +2125,13 @@ export class Mixer {
     if (this.busy) return;
 
     // If master is playing and user blends into the idle deck, auto-start the idle deck beat-locked if paused
+    // (not in manual mixing, where only the play button starts a deck).
     if (this.playing) {
       const [xfA, xfB] = this.computeCrossfaderGains(this.crossfader);
-      if (xfA > 0.03 && !this.decks[0].playing && this.decks[0].buffer) {
+      if (!this.manualMix && xfA > 0.03 && !this.decks[0].playing && this.decks[0].buffer) {
         this.toggleDeckPlay(0);
       }
-      if (xfB > 0.03 && !this.decks[1].playing && this.decks[1].buffer) {
+      if (!this.manualMix && xfB > 0.03 && !this.decks[1].playing && this.decks[1].buffer) {
         this.toggleDeckPlay(1);
       }
       if (this.crossfader < -0.65 && this.decks[0].playing) {
@@ -2812,151 +2927,4 @@ const entry = {
     };
   }
 
-  /** Synthesizes club FX one-shots synced to the master BPM using sample-accurate WebAudio automation. */
-  triggerClubFX(
-    fxId:
-      | "dub-siren"
-      | "sub-drop"
-      | "laser-riser"
-      | "vinyl-brake"
-      | "airhorn"
-      | "tape-stop"
-      | "noise-sweep"
-      | "flanger-wash"
-      | "stutter-16"
-      | "stutter-8"
-      | "reverb-crash"
-      | "delay-feedback"
-      | "sub-boom"
-      | "horn-stab"
-      | "rewind-spin"
-      | "crowd-cheer"
-      | string
-  ) {
-    const now = this.ctx.currentTime;
-    const secPerBeat = 60 / this.effBpm;
-
-    if (fxId === "vinyl-brake" || fxId === "tape-stop") {
-      const d = this.decks[this.active];
-      const brakeSec = secPerBeat * (fxId === "tape-stop" ? 1.2 : 0.72);
-      const recoverSec = secPerBeat * 0.28;
-      if (this.playing && d.playing) {
-        d.vinylBrake(now, brakeSec, recoverSec);
-        this.anchor = now + brakeSec + recoverSec;
-        return;
-      }
-      const osc = this.ctx.createOscillator();
-      const g = this.ctx.createGain();
-      osc.type = "sawtooth";
-      osc.frequency.setValueAtTime(220, now);
-      osc.frequency.exponentialRampToValueAtTime(28, now + brakeSec);
-      g.gain.setValueAtTime(0.28, now);
-      g.gain.exponentialRampToValueAtTime(0.001, now + brakeSec);
-      osc.connect(g);
-      g.connect(this.masterGain);
-      osc.start(now);
-      osc.stop(now + brakeSec);
-      return;
-    }
-
-    if (fxId === "rewind-spin") {
-      const d = this.decks[this.active];
-      if (d.playing) {
-        const curOff = d.currentOffset(now);
-        d.seek(Math.max(0, curOff - secPerBeat * 4), now);
-      }
-      return;
-    }
-
-    const osc = this.ctx.createOscillator();
-    const flt = this.ctx.createBiquadFilter();
-    const gain = this.ctx.createGain();
-    osc.connect(flt);
-    flt.connect(gain);
-    gain.connect(this.masterGain);
-
-    if (fxId === "airhorn" || fxId === "horn-stab") {
-      osc.type = "sawtooth";
-      flt.type = "bandpass";
-      flt.frequency.value = 880;
-      flt.Q.value = 3.2;
-      const dur = secPerBeat * 0.8;
-      for (let i = 0; i < 4; i++) {
-        const t = now + (i * dur) / 4;
-        osc.frequency.setValueAtTime(i % 2 === 0 ? 640 : 960, t);
-      }
-      gain.gain.setValueAtTime(0.35, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
-      osc.start(now);
-      osc.stop(now + dur);
-    } else if (fxId === "dub-siren") {
-      osc.type = "sawtooth";
-      flt.type = "bandpass";
-      flt.frequency.value = 1350;
-      flt.Q.value = 2.8;
-      const dur = secPerBeat * 2;
-      for (let i = 0; i < 8; i++) {
-        const t = now + (i * dur) / 8;
-        osc.frequency.setValueAtTime(i % 2 === 0 ? 580 : 880, t);
-      }
-      gain.gain.setValueAtTime(0.26, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
-
-      const delay = this.ctx.createDelay(1.0);
-      const fb = this.ctx.createGain();
-      delay.delayTime.value = Math.min(0.95, secPerBeat * 0.75);
-      fb.gain.value = 0.36;
-      gain.connect(delay);
-      delay.connect(fb);
-      fb.connect(delay);
-      delay.connect(this.masterGain);
-
-      osc.start(now);
-      osc.stop(now + dur);
-    } else if (fxId === "sub-drop" || fxId === "sub-boom") {
-      osc.type = "sine";
-      flt.type = "lowpass";
-      flt.frequency.value = 180;
-      const dur = secPerBeat * (fxId === "sub-boom" ? 1.5 : 3);
-      osc.frequency.setValueAtTime(145, now);
-      osc.frequency.exponentialRampToValueAtTime(28, now + dur);
-      gain.gain.setValueAtTime(0.6, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
-      osc.start(now);
-      osc.stop(now + dur);
-    } else if (fxId === "laser-riser" || fxId === "noise-sweep") {
-      osc.type = fxId === "noise-sweep" ? "square" : "sawtooth";
-      flt.type = "lowpass";
-      flt.Q.value = 4.5;
-      const dur = secPerBeat * 2;
-      osc.frequency.setValueAtTime(190, now);
-      osc.frequency.exponentialRampToValueAtTime(2400, now + dur);
-      flt.frequency.setValueAtTime(380, now);
-      flt.frequency.exponentialRampToValueAtTime(5200, now + dur);
-      gain.gain.setValueAtTime(0.04, now);
-      gain.gain.linearRampToValueAtTime(0.28, now + dur * 0.88);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
-      osc.start(now);
-      osc.stop(now + dur);
-    } else if (fxId === "stutter-16" || fxId === "stutter-8") {
-      const d = this.decks[this.active];
-      if (d.playing && d.buffer) {
-        const stepSec = secPerBeat * (fxId === "stutter-16" ? 0.25 : 0.5);
-        d.setLoop(fxId === "stutter-16" ? 0.25 : 0.5);
-        setTimeout(() => d.setLoop(0), stepSec * 1000 * 4);
-      }
-    } else {
-      // General high-impact synth hit fallback
-      osc.type = "triangle";
-      flt.type = "lowpass";
-      flt.frequency.value = 1200;
-      const dur = secPerBeat * 1.0;
-      osc.frequency.setValueAtTime(440, now);
-      osc.frequency.exponentialRampToValueAtTime(110, now + dur);
-      gain.gain.setValueAtTime(0.3, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
-      osc.start(now);
-      osc.stop(now + dur);
-    }
-  }
 }

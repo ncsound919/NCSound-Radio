@@ -31,11 +31,11 @@ if [ ! -f "$CRED_ENV" ]; then
   exit 1
 fi
 set -a; . "$CRED_ENV"; set +a
-for v in ICECAST_SOURCE_PASSWORD ICECAST_ADMIN_PASSWORD HARBOR_PASSWORD; do
+for v in ICECAST_SOURCE_PASSWORD ICECAST_ADMIN_PASSWORD HARBOR_PASSWORD LIVE_HARBOR_PASSWORD; do
   eval "val=\$$v"
   [ -n "$val" ] || { echo "   $v is empty in $CRED_ENV -- refusing to start"; exit 1; }
 done
-echo "   three credentials loaded (values not echoed)"
+echo "   four credentials loaded (values not echoed)"
 
 echo "== preparing paths =="
 mkdir -p "$LIB" /usr/local/icecast/logs /var/log/icecast2
@@ -104,6 +104,7 @@ mkdir -p /run/ncsound
 # a Liquidsoap string, and `--check` rejects it with "Error 2: Parse error" --
 # caught by infra/preflight.sh before any daemon was restarted.
 sed -e "s|getenv(\"HARBOR_PASSWORD\")|\"$HARBOR_PASSWORD\"|g" \
+    -e "s|getenv(\"LIVE_HARBOR_PASSWORD\")|\"$LIVE_HARBOR_PASSWORD\"|g" \
     -e "s|getenv(\"ICECAST_SOURCE_PASSWORD\")|\"$ICECAST_SOURCE_PASSWORD\"|g" \
     "$LIQ_SRC" > "$LIQ_RUN"
 chmod 600 "$LIQ_RUN"

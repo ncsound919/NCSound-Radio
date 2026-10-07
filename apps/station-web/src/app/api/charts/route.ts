@@ -12,13 +12,12 @@ export const dynamic = 'force-dynamic'
 
 /**
  * GET /api/charts — "The Wave Chart".
- * Most-heard cleared tracks over the trailing 7 days, ranked by spins from the
- * PlayLog ledger, with listener shout heat joined in. Imaging plays count
- * toward totalSpins7d but never chart. The rights gate is implicit: every
- * Track row was only created after its record read CLEARED.
+ * Most-heard tracks over the trailing 7 days, ranked by spins from the
+ * play log, with listener shout heat joined in. Imaging plays count
+ * toward totalSpins7d but never chart.
  *
  * Week-over-week movement ("biggest mover") is derived statelessly from the
- * same ledger: the previous comparable window is the 7 days ending 24h ago.
+ * same play log: the previous comparable window is the 7 days ending 24h ago.
  */
 export async function GET() {
   try {
@@ -86,7 +85,6 @@ export async function GET() {
             id: true,
             title: true,
             artist: true,
-            rightsId: true,
             playlist: true,
             explicit: true,
           },
@@ -112,7 +110,6 @@ export async function GET() {
           trackId: t.id,
           title: t.title,
           artist: t.artist,
-          rightsId: t.rightsId,
           playlist: t.playlist,
           explicit: t.explicit,
           spins7d: s._count._all,
@@ -166,12 +163,12 @@ export async function GET() {
         sharePct: musicSpins7d > 0 ? Math.round((agg.spins / musicSpins7d) * 100) : 0,
       }))
 
-    // Hall of Fame: same music-only filter, ranked on the all-time ledger.
+    // Hall of Fame: same music-only filter, ranked on all-time spins.
     const allTimeIds = allTimeSpins.map((s) => s.trackId)
     const allTimeTracks = allTimeIds.length
       ? await db.track.findMany({
           where: { id: { in: allTimeIds }, playlist: { not: 'Imaging' } },
-          select: { id: true, title: true, artist: true, rightsId: true },
+          select: { id: true, title: true, artist: true },
         })
       : []
     const allTimeMap = new Map(allTimeTracks.map((t) => [t.id, t]))
@@ -184,7 +181,6 @@ export async function GET() {
           rank: 0, // re-ranked below after the final sort
           title: t.title,
           artist: t.artist,
-          rightsId: t.rightsId,
           totalSpins: s._count._all,
           firstPlayedAt: (s._min.playedAt ?? null)?.toISOString() ?? null,
           lastPlayedAt: (s._max.playedAt ?? null)?.toISOString() ?? null,

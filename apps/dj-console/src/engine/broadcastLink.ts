@@ -14,6 +14,8 @@
  * headers and a cross-origin call from the browser would be blocked.
  */
 
+import { authHeaders } from "../app/session";
+
 export type BroadcastMount = {
   mount: string;
   bitrateKbps: number;
@@ -29,6 +31,8 @@ export type BroadcastStatus = {
   engineReady: boolean;
   engineState: string;
   crateSize: number;
+  /** Autopilot sequencing on (it picks and mixes the next track); null when unreachable. */
+  autopilotEnabled: boolean | null;
   /** Seconds since the engine's own start, or null when unreachable. */
   uptimeSec: number | null;
   /** Engine's last reported error, or null. */
@@ -97,6 +101,7 @@ const OFFLINE: BroadcastStatus = {
   engineReady: false,
   engineState: "unreachable",
   crateSize: 0,
+  autopilotEnabled: null,
   uptimeSec: null,
   engineError: null,
   listeners: null,
@@ -124,7 +129,7 @@ async function getJson<T>(path: string, timeoutMs = 2500): Promise<T | null> {
     const res = await fetch(`/ingest${path}`, {
       signal: AbortSignal.timeout(timeoutMs),
       cache: "no-store",
-      headers: { accept: "application/json" },
+      headers: { accept: "application/json", ...authHeaders() },
     });
     if (!res.ok) return null;
     return (await res.json()) as T;
@@ -136,7 +141,7 @@ async function getJson<T>(path: string, timeoutMs = 2500): Promise<T | null> {
 function toStatus(doc: {
   engine: {
     state: string;
-    autopilot: { crateSize: number };
+    autopilot: { crateSize: number; enabled?: boolean };
     listeners: { current: number; peak24h: number };
     uptimeSec: number;
     lastError: string | null;
@@ -177,10 +182,14 @@ function toStatus(doc: {
     engineReady: doc.engine.state === "playing" || doc.engine.state === "idle",
     engineState: doc.engine.state,
     crateSize: doc.engine.autopilot.crateSize,
+    autopilotEnabled: typeof doc.engine.autopilot.enabled === "boolean" ? doc.engine.autopilot.enabled : null,
     uptimeSec: doc.engine.uptimeSec,
     engineError: doc.engine.lastError,
-    listeners: doc.engine.listeners.current,
-    peakListeners24h: doc.engine.listeners.peak24h,
+    // The engine's counters start at 0 and only move when Icecast is polled,
+    // so with Icecast unreachable they read "0 listening" for a station nobody
+    // measured. Null means unmeasured, as the type promises.
+    listeners: doc.stream?.icecast.reachable ? doc.engine.listeners.current : null,
+    peakListeners24h: doc.stream?.icecast.reachable ? doc.engine.listeners.peak24h : null,
     streamOnAir: doc.stream?.onAir ?? null,
     icecastReachable: doc.stream?.icecast.reachable ?? null,
     icecastVersion: doc.stream?.icecast.version ?? null,

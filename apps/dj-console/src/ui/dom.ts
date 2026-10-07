@@ -2,7 +2,7 @@
  * DOM access helpers.
  *
  * Every read goes through getElementById, and every write is null-checked,
- * because index.html and main.ts are loaded independently by the bundler and a
+ * because views build their own DOM and a
  * missing node should degrade a readout rather than throw inside a render loop.
  */
 

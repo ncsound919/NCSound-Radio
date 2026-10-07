@@ -39,7 +39,7 @@ import type { StatsResponse, SubmissionDTO } from '@/lib/station-types'
  * The queue used to open on PENDING with separate tabs for IN_REVIEW, APPROVED
  * and DECLINED, which meant a submission could sit in a tab nobody was looking
  * at. Moving a submission to IN_REVIEW was a mandatory-looking extra click that
- * changed nothing � approval issues the rights record either way.
+ * changed nothing � approval does the same work either way.
  */
 const QUEUE_STATUSES = ['ACTION', 'APPROVED', 'DECLINED'] as const
 type QueueStatus = (typeof QUEUE_STATUSES)[number]
@@ -188,7 +188,7 @@ export function OpsSection() {
 
   useEffect(() => {
     void refresh()
-  }, [refresh])
+  }, [refresh, unlocked])
 
   /**
    * Readiness is measured, not remembered.
@@ -214,9 +214,18 @@ export function OpsSection() {
         toast.error(body?.error ?? `Could not update submission (${res.status})`)
         return
       }
-      const json = (await res.json()) as { submission: SubmissionDTO }
+      const json = (await res.json()) as {
+        submission: SubmissionDTO
+        audio?: { promoted: true; path: string } | { promoted: false; reason: string } | null
+      }
       if (status === 'APPROVED') {
-        toast.success(`Cleared — rights record ${json.submission.rightsId ?? 'issued'} issued`)
+        toast.success(`Approved — "${s.trackTitle}"`)
+        if (json.audio?.promoted) {
+          toast.success('Audio copied into the library — the engine picks it up on its next scan.')
+        } else if (json.audio) {
+          // Approved but NOT airable: say so, don't let a green toast imply otherwise.
+          toast.error(`Approved, but the audio is not in the library: ${json.audio.reason}`)
+        }
       } else if (status === 'DECLINED') {
         toast.error(`Declined — "${s.trackTitle}" blocked at the gate`)
       } else {
@@ -442,7 +451,7 @@ const problems = readiness.filter((r) => r.state === 'problem').length
                 label: 'Monthly MRR',
                 value: `$${stats.sponsors.monthlyMRR.toLocaleString('en-US')}`,
               },
-              { label: 'Cleared tracks', value: String(stats.library.cleared) },
+              { label: 'Library tracks', value: String(stats.library.tracks) },
               { label: 'Pending submissions', value: String(stats.submissions.pending) },
               { label: 'Ad plays 7d', value: String(stats.adplays.last7Days) },
             ].map((tile) => (
@@ -506,7 +515,7 @@ const problems = readiness.filter((r) => r.state === 'problem').length
                           </>
                         ) : (
                           <>
-                            Review actions, rights decisions, ad sync and engine commands
+                            Review actions, ad sync and engine commands
                             require an internal account. The session is a signed cookie your
                             browser cannot read.
                           </>
@@ -717,17 +726,6 @@ const problems = readiness.filter((r) => r.state === 'problem').length
                     okText={`${stats.engine.crateSize} tracks`}
                     badText="empty"
                   />
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1 text-muted-foreground">
-                      <Lock className="h-3 w-3" aria-hidden /> Rights gate
-                    </span>
-                    <span className="inline-flex items-center gap-1.5 font-semibold text-amber-400">
-                      <span className="h-1.5 w-1.5 rounded-full bg-amber-400" aria-hidden />{' '}
-                      {stats.library.pendingRights > 0
-                        ? `${stats.library.pendingRights} PENDING`
-                        : 'CLEAR'}
-                    </span>
-                  </div>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-muted-foreground">Engine uptime</span>
                     <span className="inline-flex items-center gap-1.5 font-semibold">

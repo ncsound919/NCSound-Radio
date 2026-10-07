@@ -17,7 +17,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "NCSound Radio | Independent Hip-Hop Radio",
   description:
-    "The Carolinas' independent hip-hop signal. Live stream, artist submissions through a rights-cleared gate, weekly show schedule, and sponsor proof-of-play reporting.",
+    "The Carolinas' independent hip-hop signal. Live stream, artist submissions, weekly show schedule, and sponsor proof-of-play reporting.",
   keywords: [
     "radio station",
     "hip-hop radio",

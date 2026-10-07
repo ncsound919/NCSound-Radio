@@ -23,6 +23,13 @@ export type IcecastOptions = {
   port?: number;
   user?: string;
   password?: string;
+  /**
+   * Fetch the status page over HTTPS. The public stream host is a VPS Icecast
+   * relay terminating TLS (`icecast-ssl`), so its status page is https; the
+   * loopback dev Icecast is plain http. Default false.
+   * (Decision D10 in docs/MOBILE-LISTENER-APP-IMPLEMENTATION.md.)
+   */
+  tls?: boolean;
   /** ms between polls. Listener counts do not move faster than this. */
   intervalMs?: number;
 };
@@ -173,6 +180,7 @@ export class IcecastPoller {
       port: opts.port ?? 8010,
       user: opts.user ?? "admin",
       password: opts.password ?? "admin",
+      tls: opts.tls ?? false,
       intervalMs: opts.intervalMs ?? 5000,
     };
   }
@@ -183,7 +191,8 @@ export class IcecastPoller {
 
   private get url(): string {
     const { host, port } = this.opts;
-    return `http://${host}:${port}/status-json.xsl`;
+    const scheme = this.opts.tls ? "https" : "http";
+    return `${scheme}://${host}:${port}/status-json.xsl`;
   }
 
   /** One fetch. Never throws: a failed poll reports unreachable, not broken. */

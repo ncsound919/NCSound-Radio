@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { ingestStatus } from '@/lib/ingest'
 import { etDayStartUTC, LAUNCH_UTC_MS } from '@/lib/broadcast'
+import { currentAdmin } from '@/lib/admin-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -25,19 +26,41 @@ type ReadinessItem = {
 }
 
 /**
- * GET /api/stats — ops dashboard rollup: library + rights-gate counts,
+ * GET /api/stats — ops dashboard rollup: library counts,
  * submission pipeline, sponsor MRR, proof-of-play, listeners, bandwidth
  * projection and uptime.
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const nowMs = Date.now()
 
+    /**
+     * Public projection.
+     *
+     * The listener page's StatsStrip shows only live listener counts and the
+     * crate size. The pipeline counts, sponsor MRR, proof-of-play totals and
+     * the readiness internals are the owner's. Non-admins get only the four
+     * public fields, computed directly, so the sensitive queries never run for
+     * a listener.
+     */
+    if (!(await currentAdmin(request))) {
+      const [tracks, durationAgg, live] = await Promise.all([
+        db.track.count({ where: { playlist: { not: 'Imaging' } } }),
+        db.track.aggregate({
+          _sum: { durationSec: true },
+          where: { playlist: { not: 'Imaging' } },
+        }),
+        ingestStatus(),
+      ])
+      const totalHours =
+        Math.round(((durationAgg._sum.durationSec ?? 0) / 3600) * 10) / 10
+      const listeners =
+        live?.engine?.listeners ?? { current: null, peak24h: null, source: 'unavailable' as const }
+      return NextResponse.json({ library: { tracks, totalHours }, listeners })
+    }
+
     const [
       tracks,
-      clearedRightsIds,
-      pendingRights,
-      blocked,
       durationAgg,
       submissionGroups,
       activeSponsors,
@@ -47,13 +70,6 @@ export async function GET() {
       live,
     ] = await Promise.all([
       db.track.count({ where: { playlist: { not: 'Imaging' } } }),
-      // Cleared library = music tracks whose rights record is CLEARED. Counting
-      // CLEARED records alone overshoots when a submission was approved (record
-      // issued) but the file has not landed on the wheel yet — the tile would
-      // read "23 cleared / 22 tracks" forever. Count tracks, not records.
-      db.rightsLog.findMany({ where: { status: 'CLEARED' }, select: { id: true } }),
-      db.rightsLog.count({ where: { status: { in: ['PENDING', 'IN_REVIEW'] } } }),
-      db.rightsLog.count({ where: { status: 'BLOCKED' } }),
       db.track.aggregate({
         _sum: { durationSec: true },
         where: { playlist: { not: 'Imaging' } },
@@ -70,13 +86,6 @@ export async function GET() {
       db.adPlay.count({ where: { playedAt: { gte: etDayStartUTC(new Date(nowMs)) } } }),
       ingestStatus(),
     ])
-
-    const clearedIdSet = new Set(clearedRightsIds.map((r) => r.id))
-    const musicTracks = await db.track.findMany({
-      where: { playlist: { not: 'Imaging' } },
-      select: { rightsId: true },
-    })
-    const cleared = musicTracks.filter((t) => clearedIdSet.has(t.rightsId)).length
 
     /**
      * Readiness, measured.
@@ -169,6 +178,80 @@ export async function GET() {
      * actually carry audio? Everything above can be healthy while this is
      * silent.
      */
+    /**
+     * The render pump, observed directly.
+     *
+     * `renderedAheadSec` saturates at both ends, so a fully stalled pump pins it
+     * to -1 and reads as "slightly behind" rather than "producing nothing". This
+     * is the signal that distinguishes the two.
+     */
+    /**
+     * The upload into Liquidsoap.
+     *
+     * The link that had no field at all while it was broken. `connected` alone is
+     * not enough — writing to a socket never fails when the peer is gone — so this
+     * reports whether bytes are actually moving.
+     */
+    const harbor = live?.engine.harbor
+    if (!harbor) {
+      push('harbor', 'Uploading to Liquidsoap', 'unknown', 'publishing is disabled, so nothing is uploaded')
+    } else {
+      const moving = harbor.backlogBytes < 2 * 1024 * 1024
+      push(
+        'harbor',
+        'Uploading to Liquidsoap',
+        harbor.connected && moving ? 'ok' : 'problem',
+        !harbor.connected
+          ? `not connected${harbor.lastError ? `: ${harbor.lastError}` : ''}`
+          : moving
+            ? `${harbor.framesSent} frames sent, ${harbor.reconnects} reconnects`
+            : `connected but nothing is reading: ${Math.round(harbor.backlogBytes / 1024)} KiB queued`,
+      )
+    }
+
+    /**
+     * Liquidsoap's own view of the engine's upload.
+     *
+     * Authoritative and free, unlike measuring the mount: `input.harbor`'s
+     * connect/disconnect callbacks publish it, so ingest reads a fact rather than
+     * inferring one. The client's own `connected` flag cannot answer this — after a
+     * daemon restart it read `true` while the mount was silent.
+     */
+    const harborSource = live?.harborSource
+    if (!harborSource) {
+      push(
+        'harbor-source',
+        'Liquidsoap has the engine as a source',
+        'unknown',
+        'this Liquidsoap build reports no source state',
+      )
+    } else {
+      push(
+        'harbor-source',
+        'Liquidsoap has the engine as a source',
+        harborSource.onAir ? 'ok' : harborSource.onAir === null ? 'unknown' : 'problem',
+        harborSource.onAir
+          ? 'harbor reports a connected source'
+          : harborSource.onAir === null
+            ? (harborSource.error ?? 'could not be determined')
+            : 'harbor reports no connected source, so nothing the engine renders can reach the mount',
+      )
+    }
+
+    const stallMs = live?.engine.telemetry?.renderStallMs
+    if (stallMs == null) {
+      push('pump', 'Engine is producing audio', 'unknown', 'the engine reported no stall telemetry')
+    } else {
+      push(
+        'pump',
+        'Engine is producing audio',
+        stallMs > 5000 ? 'problem' : 'ok',
+        stallMs > 5000
+          ? `the render tap has produced nothing for ${(stallMs / 1000).toFixed(1)}s`
+          : `rendering; last block ${stallMs}ms ago`,
+      )
+    }
+
     const wd = live?.watchdog
     if (!wd || !wd.last) {
       push(
@@ -192,14 +275,6 @@ export async function GET() {
       )
     }
 
-    push(
-      'rights',
-      'Every library track has a rights record',
-      tracks === 0 ? 'unknown' : cleared === tracks ? 'ok' : 'problem',
-      tracks === 0
-        ? 'no music tracks synced yet'
-        : `${cleared} of ${tracks} cleared${blocked > 0 ? `, ${blocked} blocked` : ''}`,
-    )
 
     const subMap = new Map(
       submissionGroups.map((g) => [g.status, g._count._all]),
@@ -239,9 +314,6 @@ export async function GET() {
     return NextResponse.json({
       library: {
         tracks,
-        cleared,
-        pendingRights,
-        blocked,
         totalHours,
       },
       submissions: {

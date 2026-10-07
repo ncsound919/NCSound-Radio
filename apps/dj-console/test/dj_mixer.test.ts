@@ -195,12 +195,6 @@ mixer.triggerStutterRoll(0, 0.5);  // 1/8th stutter roll on Deck A
 
 mixer.triggerGaterEffect(0, 4);    // 4-step gater pattern on Deck A
 
-// 7. Club Performance FX Triggers
-const fxList = ["filter-sweep", "echo-out", "reverb-splash", "bitcrush", "flanger-rise"] as const;
-for (const fx of fxList) {
-  mixer.triggerClubFX(0, fx);
-}
-
 // 8. Auto-Scratch Pattern Triggering
 const scratchPatterns = [
   "baby-1b", "chirp-1b", "transformer-8th", "flare-orbit", "spinback-whip"

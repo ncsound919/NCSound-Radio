@@ -4,7 +4,7 @@
  * ArtistDetailDialog — the public artist profile behind the Wave Chart.
  * Opens when a listener clicks an artist anywhere on the chart (Artists of
  * the Week, Hall of Fame, or a weekly row). Every number shown is earned
- * from the PlayLog ledger — an audit trail with a face.
+ * from the play log.
  */
 
 import { motion } from 'framer-motion'
@@ -112,10 +112,10 @@ export function ArtistDetailDialog({
             </DialogTitle>
             <DialogDescription className="text-xs leading-relaxed">
               {data?.found
-                ? `On the ledger since ${
+                ? `On air since ${
                     data.firstPlayedAt ? new Date(data.firstPlayedAt).toLocaleDateString() : '—'
-                  } · profile earned from the play-log, never hand-written`
-                : 'Public ledger profile — spins, chart peaks and on-air history.'}
+                  } · profile earned from the play log, never hand-written`
+                : 'Artist profile — spins, chart peaks and on-air history.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -137,9 +137,9 @@ export function ArtistDetailDialog({
           ) : !data.found ? (
             <div className="border-t border-border/60 px-5 py-8 text-center">
               <ListMusic className="mx-auto h-6 w-6 text-muted-foreground/60" aria-hidden="true" />
-              <p className="mt-2 text-sm font-medium">Nothing on the ledger yet</p>
+              <p className="mt-2 text-sm font-medium">No spins yet</p>
               <p className="mx-auto mt-1 max-w-xs text-xs leading-relaxed text-muted-foreground">
-                No cleared tracks by “{data.artist}” have spun on NCSound Radio. Cleared artists appear here
+                No tracks by “{data.artist}” have spun on NCSound Radio yet. Artists appear here
                 automatically after their first on-air play.
               </p>
             </div>
@@ -243,11 +243,11 @@ export function ArtistDetailDialog({
                   </section>
                 )}
 
-              {/* Their cleared tracks */}
-              <section aria-label="Tracks on the ledger">
+              {/* Their tracks */}
+              <section aria-label="Tracks on air">
                 <h4 className="mb-1.5 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
                   <ListMusic className="h-3 w-3" aria-hidden="true" />
-                  Cleared tracks
+                  Tracks
                 </h4>
                 <ol className="max-h-56 space-y-1 overflow-y-auto pr-1 scrollbar-thin">
                   {data.tracks.map((t, idx) => (
@@ -294,8 +294,6 @@ export function ArtistDetailDialog({
                           )}
                         </span>
                         <span className="mt-0.5 flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                          <span className="font-mono">{t.rightsId}</span>
-                          <span className="text-border">·</span>
                           <span className="truncate">{t.playlist}</span>
                           {t.shouts7d > 0 && (
                             <span className="inline-flex shrink-0 items-center gap-0.5 text-red-400/90">
@@ -350,7 +348,7 @@ export function ArtistDetailDialog({
               )}
 
               <p className="text-[10px] leading-relaxed text-muted-foreground/70">
-                Every number is read from the same audited ledger as the broadcast itself — no hand-picked
+                Every number is read from the same play log as the broadcast itself — no hand-picked
                 numbers, no vanity stats.
               </p>
             </div>

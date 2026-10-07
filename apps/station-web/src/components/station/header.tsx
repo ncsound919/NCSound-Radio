@@ -7,7 +7,6 @@ import {
   Megaphone,
   Menu,
   Radio,
-  ShieldCheck,
   SlidersHorizontal,
   Upload,
   Users,
@@ -39,7 +38,6 @@ const TABS: Array<{ id: TabId; label: string; icon: LucideIcon }> = [
   { id: 'on-air', label: 'On Air', icon: Radio },
   { id: 'schedule', label: 'Schedule', icon: CalendarClock },
   { id: 'submit', label: 'Submit', icon: Upload },
-  { id: 'rights', label: 'Rights', icon: ShieldCheck },
   { id: 'sponsors', label: 'Sponsors', icon: Megaphone },
 ]
 

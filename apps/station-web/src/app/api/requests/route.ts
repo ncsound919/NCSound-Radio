@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { etDayStartUTC } from '@/lib/broadcast'
 import { allow, clientIp, sweepRateLimits } from '@/lib/rate-limit'
+import { supabaseUserId } from '@/lib/supabase-user'
 import type {
   RequestRecentEntry,
   RequestTopEntry,
@@ -19,7 +20,7 @@ const postSchema = z.object({
 
 /**
  * GET /api/requests — the listener request line.
- * top: most-requested cleared tracks (last 7 days of activity),
+ * top: most-requested tracks (last 7 days of activity),
  * recent: latest shouts, totalToday / totalAllTime counters.
  */
 export async function GET() {
@@ -45,8 +46,7 @@ export async function GET() {
       db.trackRequest.count(),
     ])
 
-    // Join track metadata for the grouped rows (rights-gate aware: only
-    // CLEARED tracks can be requested, so every row here is cleared).
+    // Join track metadata for the grouped rows.
     const trackIds = grouped.map((g) => g.trackId)
     const tracks = trackIds.length
       ? await db.track.findMany({
@@ -55,7 +55,6 @@ export async function GET() {
             id: true,
             title: true,
             artist: true,
-            rightsId: true,
             explicit: true,
           },
         })
@@ -70,7 +69,6 @@ export async function GET() {
           trackId: g.trackId,
           title: t.title,
           artist: t.artist,
-          rightsId: t.rightsId,
           explicit: t.explicit,
           count: g._count._all,
           lastRequestedAt: (g._max.createdAt ?? new Date()).toISOString(),
@@ -102,8 +100,7 @@ export async function GET() {
 
 /**
  * POST /api/requests — add a listener request.
- * The rights gate applies here too: only tracks whose rights record is
- * CLEARED can be requested. Duplicate (track, listener) pairs are rejected
+ * Duplicate (track, listener) pairs are rejected
  * with 409 so the count reflects distinct listeners.
  */
 export async function POST(req: NextRequest) {
@@ -126,9 +123,13 @@ export async function POST(req: NextRequest) {
     }
     const { trackId, listenerName, note } = parsed.data
 
+    // Attribute to a signed-in listener when the app sends its Supabase JWT;
+    // anonymous web listeners are still just a name.
+    const userId = await supabaseUserId(req)
+
     const track = await db.track.findUnique({
       where: { id: trackId },
-      select: { id: true, title: true, rightsId: true, playlist: true },
+      select: { id: true, title: true, playlist: true },
     })
     if (!track) {
       return NextResponse.json({ error: 'Unknown track.' }, { status: 404 })
@@ -142,23 +143,12 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // THE GATE: no request can fast-track an uncleared record.
-    const rights = await db.rightsLog.findUnique({
-      where: { id: track.rightsId },
-      select: { status: true },
-    })
-    if (!rights || rights.status !== 'CLEARED') {
-      return NextResponse.json(
-        { error: 'That track has no CLEARED rights record — it cannot be requested.' },
-        { status: 403 },
-      )
-    }
-
     try {
       const created = await db.trackRequest.create({
         data: {
           trackId,
           listenerName,
+          userId,
           note: note?.trim() ? note.trim().slice(0, 140) : null,
         },
       })

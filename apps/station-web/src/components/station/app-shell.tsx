@@ -2,20 +2,19 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Keyboard, Radio, ShieldCheck, MapPin } from 'lucide-react'
+import { Keyboard, Radio, MapPin } from 'lucide-react'
 import { StationHeader } from '@/components/station/header'
 import { PlayerBar } from '@/components/station/player-bar'
 import { OnAirSection } from '@/components/station/on-air-section'
 import { ShortcutsDialog } from '@/components/station/shortcuts-dialog'
 import { ScheduleSection } from '@/components/sections/schedule-section'
 import { SubmitSection } from '@/components/sections/submit-section'
-import { RightsSection } from '@/components/sections/rights-section'
 import { SponsorsSection } from '@/components/sections/sponsors-section'
 import { OpsSection } from '@/components/sections/ops-section'
 import { useKeyboardShortcuts } from '@/hooks/use-keyboard-shortcuts'
 import type { TabId } from '@/lib/station-types'
 
-const TAB_ORDER: TabId[] = ['on-air', 'schedule', 'submit', 'rights', 'sponsors', 'ops']
+const TAB_ORDER: TabId[] = ['on-air', 'schedule', 'submit', 'sponsors', 'ops']
 
 /**
  * `initialTab` is how the internal /ops route opens straight into the control
@@ -52,7 +51,6 @@ export function AppShell({ initialTab }: { initialTab?: TabId } = {}) {
             {tab === 'on-air' && <OnAirSection onNavigate={navigate} />}
             {tab === 'schedule' && <ScheduleSection onNavigate={navigate} />}
             {tab === 'submit' && <SubmitSection />}
-            {tab === 'rights' && <RightsSection />}
             {tab === 'sponsors' && <SponsorsSection />}
             {tab === 'ops' && <OpsSection />}
           </motion.div>
@@ -78,16 +76,6 @@ export function AppShell({ initialTab }: { initialTab?: TabId } = {}) {
                 vendor that does not run here is the kind of claim that
                 survives long after it stops being true.
               */}Headless DJ engine &rarr; Liquidsoap &rarr; Icecast, 128 kbps MP3.
-            </p>
-          </div>
-          <div>
-            <div className="flex items-center gap-2 font-semibold">
-              <ShieldCheck className="h-4 w-4 text-primary" />
-              Rights Gate
-            </div>
-            <p className="mt-2 text-muted-foreground leading-relaxed">
-              Every track on this station airs only after its rights record reads
-              CLEARED. No cleared record, no broadcast — that is the audit trail.
             </p>
           </div>
           <div>

@@ -16,8 +16,6 @@ export type FavoriteTrack = {
   id: string
   title: string
   artist: string
-  /** Null when the track had no rights record at the time it was saved. */
-  rightsId: string | null
   savedAt: number
 }
 

@@ -1,0 +1,10 @@
+{
+  "name": "NCSound DJ Console",
+  "short_name": "NCSound",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0c11",
+  "theme_color": "#0a0c11",
+  "icons": []
+}

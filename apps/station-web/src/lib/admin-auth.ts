@@ -136,24 +136,31 @@ function sign(payload: string, secret: string): string {
   return createHmac('sha256', secret).update(payload).digest('base64url')
 }
 
-/** Cookie value: `epoch.user.expiresAt.signature`. */
+/**
+ * Cookie value: `epoch.b64url(user).expiresAt.signature`.
+ *
+ * The username is base64url-encoded because the token is split on `.`: a raw
+ * username like `john.redd` produced five parts, so every session it minted
+ * was rejected by `parse` and that admin could sign in but never stay in.
+ */
 function mint(epoch: string, user: string, expiresAt: number, secret: string): string {
-  const payload = `${epoch}.${user}.${expiresAt}`
+  const payload = `${epoch}.${Buffer.from(user, 'utf8').toString('base64url')}.${expiresAt}`
   return `${payload}.${sign(payload, secret)}`
 }
 
 function parse(token: string, secret: string, epoch: string): string | null {
   const parts = token.split('.')
   if (parts.length !== 4) return null
-  const [tokEpoch, user, expiresAt, signature] = parts as [string, string, string, string]
-  const expected = sign(`${tokEpoch}.${user}.${expiresAt}`, secret)
+  const [tokEpoch, userB64, expiresAt, signature] = parts as [string, string, string, string]
+  const expected = sign(`${tokEpoch}.${userB64}.${expiresAt}`, secret)
   const a = Buffer.from(signature)
   const b = Buffer.from(expected)
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null
   // Epoch mismatch means the session was withdrawn.
   if (tokEpoch !== epoch) return null
   if (!Number.isFinite(Number(expiresAt)) || Number(expiresAt) < Date.now()) return null
-  return user
+  const user = Buffer.from(userB64, 'base64url').toString('utf8')
+  return user || null
 }
 
 function readCookie(request: Request, name: string): string | null {

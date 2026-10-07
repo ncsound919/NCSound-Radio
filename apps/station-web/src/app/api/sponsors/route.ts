@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { etDayStartUTC, toSponsorDTO } from '@/lib/broadcast'
+import { currentAdmin } from '@/lib/admin-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,7 +14,7 @@ const PACKAGES = [
     spotsPerDay: 8,
     perks: [
       '15s or 30s produced spot',
-      'Proof-of-play ledger access',
+      'Proof-of-play report access',
       'Monthly air-check report',
     ],
   },
@@ -45,8 +46,10 @@ const PACKAGES = [
  * GET /api/sponsors — sponsors with nested campaigns plus proof-of-play
  * counters (playsTotal, playsToday against America/New_York midnight).
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    // The sponsors board is public; the sponsor's contact details are not.
+    const isAdmin = (await currentAdmin(request)) !== null
     const dayStart = etDayStartUTC()
     const [sponsors, totals, todays] = await Promise.all([
       db.sponsor.findMany({
@@ -65,7 +68,10 @@ export async function GET() {
     const todayMap = new Map(todays.map((r) => [r.campaignId, r._count._all]))
 
     return NextResponse.json({
-      sponsors: sponsors.map((s) => toSponsorDTO(s, totalMap, todayMap)),
+      sponsors: sponsors.map((s) => {
+        const dto = toSponsorDTO(s, totalMap, todayMap)
+        return isAdmin ? dto : { ...dto, contact: '' }
+      }),
       packages: PACKAGES,
     })
   } catch (error) {

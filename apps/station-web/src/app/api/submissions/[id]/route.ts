@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { toSubmissionDTO } from '@/lib/broadcast'
 import { requireAdmin } from '@/lib/admin-auth'
+import { promoteToLibrary, type PromoteResult } from '@/lib/submission-audio'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,27 +14,15 @@ const patchSchema = z.object({
   reviewNotes: z.string().max(2000).optional(),
 })
 
-/**
- * Next free RightsLog id: R0xxx sequence starting at R0100.
- * Looks at every id matching /^R\d+$/, takes the max value >= 100, +1.
- */
-async function nextRightsId(): Promise<string> {
-  const rows = await db.rightsLog.findMany({ select: { id: true } })
-  let max = 99
-  for (const row of rows) {
-    const m = /^R(\d+)$/.exec(row.id)
-    if (!m) continue
-    const n = Number.parseInt(m[1], 10)
-    if (n >= 100 && n > max) max = n
-  }
-  return `R${String(max + 1).padStart(4, '0')}`
-}
-
-/** GET /api/submissions/[id] */
+/** GET /api/submissions/[id] — admin only. Carries the artist's email, the
+ *  agreement IP and internal review notes; the list route beside it is already
+ *  admin-gated and this one must be too. */
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  const denied = await requireAdmin(request)
+  if (denied) return denied
   try {
     const { id } = await params
     const submission = await db.submission.findUnique({ where: { id } })
@@ -54,9 +43,8 @@ export async function GET(
 }
 
 /**
- * PATCH /api/submissions/[id] — review pipeline.
- * On APPROVED (and when the submission has no rightsId yet) the rights gate
- * issues a CLEARED RightsLog (R0xxx, source SUBMISSION) and links it.
+ * PATCH /api/submissions/[id] — review pipeline. Admin only.
+ * APPROVED copies the submitted audio into the engine's library.
  */
 export async function PATCH(
   request: Request,
@@ -85,7 +73,7 @@ export async function PATCH(
     }
 
     const now = new Date()
-    const data: { status: string; reviewedAt: Date; reviewNotes?: string; rightsId?: string } = {
+    const data: { status: string; reviewedAt: Date; reviewNotes?: string } = {
       status: parsed.data.status,
       reviewedAt: now,
     }
@@ -93,27 +81,21 @@ export async function PATCH(
       data.reviewNotes = parsed.data.reviewNotes
     }
 
-    if (parsed.data.status === 'APPROVED' && !submission.rightsId) {
-      const rightsId = await nextRightsId()
-      const rightsLog = await db.rightsLog.create({
-        data: {
-          id: rightsId,
-          trackTitle: submission.trackTitle,
-          artistName: submission.artistName,
-          owner: `${submission.artistName} (artist)`,
-          sampleStatus: 'CLEARED',
-          explicitFlag: submission.explicit,
-          status: 'CLEARED',
-          source: 'SUBMISSION',
-          ownerProof: `Signed agreement ${submission.agreementVersion} + submission review`,
-          clearedAt: now,
-        },
-      })
-      data.rightsId = rightsLog.id
-    }
-
     const updated = await db.submission.update({ where: { id }, data })
-    return NextResponse.json({ submission: toSubmissionDTO(updated) })
+
+    // Approval is what lets the audio reach the engine's library. A failed copy
+    // does not undo the review, but it is reported rather than swallowed: the
+    // track is approved and will NOT air until the file is in the library.
+    let audio: PromoteResult | null = null
+    if (parsed.data.status === 'APPROVED') {
+      audio = await promoteToLibrary(
+        updated.id,
+        updated.fileName,
+        updated.artistName,
+        updated.trackTitle,
+      )
+    }
+    return NextResponse.json({ submission: toSubmissionDTO(updated), audio })
   } catch (error) {
     console.error('[api/submissions/[id] PATCH]', error)
     return NextResponse.json(

@@ -248,7 +248,8 @@ export function nextBeatTime(now: number, anchor: number, secPerBeat: number, le
 }
 
 export interface HarmonicMatch {
-  tier: "perfect" | "harmonic" | "energy-boost" | "wide";
+  /** "unknown": one side has no detected key. Scored neutrally, never labelled as a match. */
+  tier: "perfect" | "harmonic" | "energy-boost" | "wide" | "unknown";
   score: number; // 0..100
   label: string;
 }
@@ -258,12 +259,12 @@ export interface HarmonicMatch {
  */
 export function evaluateHarmonicMatch(fromKey?: string, toKey?: string): HarmonicMatch {
   if (!fromKey || !toKey) {
-    return { tier: "harmonic", score: 80, label: "Harmonic Ready" };
+    return { tier: "unknown", score: 80, label: "Key unknown" };
   }
   const m1 = /^(\d{1,2})([AB])$/.exec(fromKey.trim());
   const m2 = /^(\d{1,2})([AB])$/.exec(toKey.trim());
   if (!m1 || !m2) {
-    return { tier: "harmonic", score: 80, label: "Harmonic Ready" };
+    return { tier: "unknown", score: 80, label: "Key unknown" };
   }
   const n1 = parseInt(m1[1], 10);
   const l1 = m1[2];

@@ -62,7 +62,7 @@ export async function GET() {
     const onAir = engine.onAir
     const stream = live.stream
 
-    // Queue entries straight from the engine's autopilot. Album, rights id,
+    // Queue entries straight from the engine's autopilot. Album,
     // explicit flag and playlist label are station data the engine cannot
     // know, so they start unknown and are filled in from the library below.
     const next: QueueEntry[] = (onAir?.next ?? []).map((t) => ({
@@ -71,7 +71,6 @@ export async function GET() {
       artist: t.artist,
       album: null,
       durationSec: t.durationSec,
-      rightsId: null,
       explicit: false,
       playlist: UNFILED_PLAYLIST,
       bpm: t.bpm,
@@ -86,8 +85,7 @@ export async function GET() {
           artist: onAir.current.track.artist,
           album: null,
           durationSec: onAir.current.track.durationSec,
-          rightsId: null,
-          explicit: false,
+              explicit: false,
           playlist: UNFILED_PLAYLIST,
           bpm: onAir.current.track.bpm,
           elementKind: (onAir.element.kind ?? 'MUSIC') as ElementKind,
@@ -95,9 +93,7 @@ export async function GET() {
         }
       : null
 
-    // Enrich from the station library. These fields used to be synthesised —
-    // `rightsId: track.id.toUpperCase()` invented a clearance reference for a
-    // rights record that was never created.
+    // Enrich from the station library.
     const entryIds = [currentEntry?.id, ...next.map((e) => e.id)].filter(
       (id): id is string => Boolean(id),
     )
@@ -105,7 +101,7 @@ export async function GET() {
       entryIds.length > 0
         ? await db.track.findMany({
             where: { id: { in: entryIds } },
-            select: { id: true, album: true, rightsId: true, explicit: true, playlist: true },
+            select: { id: true, album: true, explicit: true, playlist: true },
           })
         : []
     const stationById = new Map(stationRows.map((r) => [r.id, r]))
@@ -113,7 +109,6 @@ export async function GET() {
       const row = entry ? stationById.get(entry.id) : undefined
       if (!entry || !row) return
       entry.album = row.album
-      entry.rightsId = row.rightsId
       entry.explicit = row.explicit
       entry.playlist = row.playlist
     }
@@ -279,6 +274,5 @@ function stationIdentity(settingsMap: Map<string, string>) {
     tagline: settingsMap.get('tagline') ?? 'The Carolinas\u2019 independent hip-hop signal',
     bitrateKbps: Number.parseInt(settingsMap.get('bitrate_kbps') ?? '128', 10) || 128,
     timezone: settingsMap.get('timezone') ?? 'America/New_York',
-    rightsGate: settingsMap.get('rights_gate') ?? 'ENFORCED',
   }
 }

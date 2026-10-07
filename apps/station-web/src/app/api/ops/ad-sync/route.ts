@@ -17,7 +17,7 @@ const DEDUPE_TOLERANCE_MS = 90_000
  *
  * Computes proof-of-play from the station's own schedule. It walks the SAME
  * day-anchored ad schedule the on-air clock uses to pick creatives and stamps
- * every SOLD spot from the last 24 hours into the ledger with its broadcast
+ * every SOLD spot from the last 24 hours into the play log with its broadcast
  * timestamp — so proof-of-play always matches what actually aired.
  *
  * Provenance, stated plainly because this used to be the problem: there is no
@@ -27,7 +27,7 @@ const DEDUPE_TOLERANCE_MS = 90_000
  * figure look like an externally attested one — the kind of difference that
  * matters enormously when a number ends up in a sponsorship invoice.
  *
- * House promos (unsold inventory) never appear in the ledger. Slots within
+ * House promos (unsold inventory) never appear in the log. Slots within
  * 90s of an existing row are skipped and P2002 is swallowed — idempotent.
  */
 export async function POST(request: Request) {

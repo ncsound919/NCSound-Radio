@@ -293,14 +293,6 @@ export function PlayerBar() {
                     {track.playlist}
                   </span>
                 )}
-                {elementKind === 'MUSIC' && (
-                  <span
-                    title="Rights ledger ID"
-                    className="rounded border border-border px-1 font-mono text-[10px] leading-4 text-muted-foreground"
-                  >
-                    {track.rightsId}
-                  </span>
-                )}
                 {track.explicit && (
                   <span
                     title="Explicit lyrics"

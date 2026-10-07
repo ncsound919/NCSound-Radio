@@ -119,3 +119,25 @@ async function resolveImagingFile(dir: string, wanted: string): Promise<string> 
   }
   return path;
 }
+
+
+/**
+ * The imaging library's playable files, for the console's pads.
+ *
+ * `id` is the file stem, which `imaging.play` resolves (exact name or stem).
+ * An unset or unreadable directory reports why instead of an empty list, so
+ * the console can say "no imaging library" rather than "no jingles".
+ */
+export async function listImaging(dir: string | null): Promise<{ items: Array<{ id: string; file: string }>; reason: string | null }> {
+  if (!dir) return { items: [], reason: "no imaging library configured (set NCSOUND_JINGLES)" };
+  try {
+    const names = await readdir(resolve(dir));
+    const items = names
+      .filter((n) => AUDIO_EXTENSIONS.has(extname(n).toLowerCase()))
+      .sort((a, b) => a.localeCompare(b))
+      .map((file) => ({ id: file.replace(/\.[^.]+$/, ""), file }));
+    return { items, reason: items.length ? null : `no audio files in ${resolve(dir)}` };
+  } catch {
+    return { items: [], reason: `imaging directory not readable: ${resolve(dir)}` };
+  }
+}

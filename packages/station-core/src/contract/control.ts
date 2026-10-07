@@ -6,8 +6,9 @@ import type {
   TransitionPreset,
 } from "./track";
 import type { EngineState, StreamStatus } from "./broadcast";
+import type { LiveEvent } from "./live";
 
-export type ActorRole = "ops" | "console" | "automation" | "system";
+export type ActorRole = "ops" | "console" | "automation" | "system" | "host" | "guest";
 
 export type Actor = {
   id: string;
@@ -140,6 +141,7 @@ export type EngineEvent =
 
 export type ServerEvent =
   | EngineEvent
+  | LiveEvent
   | { type: "command.result"; at: string; result: CommandResult }
   | { type: "connection.ready"; at: string; actor: Actor };
 

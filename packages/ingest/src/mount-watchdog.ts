@@ -72,6 +72,13 @@ export type WatchdogStatus = {
 
 export type MountWatchdogOptions = {
   /** Seconds of audio to measure per sample. */
+  /**
+   * Seconds of audio to measure per sample.
+   *
+   * 2s is enough for volumedetect to reach a stable mean, and halving it halves the
+   * decode cost — which matters because this runs on the same machine as the
+   * engine's real-time audio rendering.
+   */
   sampleSeconds?: number;
   /** Seconds between samples. */
   intervalSec?: number;
@@ -94,6 +101,13 @@ export type MountWatchdogOptions = {
    * spend real seconds waiting.
    */
   verifyDelayMs?: number;
+  /**
+   * How many measurements to take while waiting for delivery.
+   *
+   * Multiplied by `verifyDelayMs` this is how long recovery is given to actually
+   * work before it is judged a failure.
+   */
+  verifyAttempts?: number;
   mountUrl: string;
   /** Disables the timer. Measurements can still be taken on demand. */
   enabled?: boolean;
@@ -138,11 +152,12 @@ export class MountWatchdog {
 
   constructor(options: MountWatchdogOptions) {
     this.opts = {
-      sampleSeconds: options.sampleSeconds ?? 4,
+      sampleSeconds: options.sampleSeconds ?? 2,
       intervalSec: options.intervalSec ?? 30,
       silentSamplesBeforeRecovery: options.silentSamplesBeforeRecovery ?? 3,
       silenceFloorDb: options.silenceFloorDb ?? -55,
       verifyDelayMs: options.verifyDelayMs ?? VERIFY_DELAY_MS,
+      verifyAttempts: options.verifyAttempts ?? 6,
       mountUrl: options.mountUrl,
       enabled: options.enabled ?? true,
       recover: options.recover,
@@ -203,6 +218,15 @@ export class MountWatchdog {
         [
           "-hide_banner",
           "-nostats",
+          // Single-threaded, deliberately.
+          //
+          // ffmpeg defaults to one thread per core, so a 4-second decode was
+          // saturating the machine every cycle. That is expensive on its own, and
+          // it made the engine's real-time audio tests fail at random whenever the
+          // station was running — three suites' worth of genuine regressions
+          // reported as noise. One thread and a shorter window keeps the check
+          // honest at a cost the host can absorb.
+          "-threads", "1",
           // Long enough to be past any Icecast connect jitter, short enough that
           // a wedged mount is noticed while an operator still cares.
           "-t",
@@ -249,6 +273,30 @@ export class MountWatchdog {
       measuredAt: new Date().toISOString(),
       error: null,
     };
+  }
+
+  /**
+   * Wait for audio to actually arrive, rather than measuring once and deciding.
+   *
+   * A repair does not deliver audio instantly. Re-opening the harbor upload has to
+   * refill Liquidsoap's startup buffer, which is 12 seconds of audio
+   * (`buffer=12.` in ncsound.liq), and then be encoded to the mount. A single
+   * measurement a few seconds after the repair therefore reads the *pre-recovery*
+   * state and reports a successful fix as a failure — observed live: a reconnect
+   * that genuinely restored the stream, logged as `ok=false` against a mount that
+   * was serving -12 dBFS moments later.
+   *
+   * Polls until audible or the budget runs out, so "recovered" means recovered.
+   */
+  private async awaitDelivery(): Promise<WatchdogSample> {
+    const attempts = this.opts.verifyAttempts;
+    let last: WatchdogSample | null = null;
+    for (let i = 0; i < attempts; i++) {
+      if (i > 0) await new Promise((r) => setTimeout(r, this.opts.verifyDelayMs));
+      last = await this.sample();
+      if (last.verdict !== "silent") return last;
+    }
+    return last!;
   }
 
   /** One watchdog cycle: measure, classify, and recover if warranted. */
@@ -330,8 +378,7 @@ export class MountWatchdog {
       const actionOk = outcome.ok;
       let verified: WatchdogSample | null = null;
       if (actionOk) {
-        await new Promise((r) => setTimeout(r, this.opts.verifyDelayMs));
-        verified = await this.sample();
+        verified = await this.awaitDelivery();
         this.last = verified;
       }
       const delivered = verified?.verdict === "audible";
@@ -341,7 +388,7 @@ export class MountWatchdog {
         action: "auto-recover the broadcast",
         ok: delivered,
         detail:
-          `${outcome.detail} — then measured the mount: ` +
+          `${outcome.detail} - then measured the mount: ` +
           (verified
             ? `${verified.verdict} at ${verified.meanDb?.toFixed(1) ?? "?"} dBFS`
             : "no reading") +

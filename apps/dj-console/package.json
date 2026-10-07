@@ -6,16 +6,36 @@
   "scripts": {
     "dev": "vite",
     "start": "vite",
+    "guest": "vite preview --config vite.guest.config.ts",
+    "guest:dev": "vite --config vite.guest.config.ts",
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "tsx test/analysis.test.ts && tsx test/sync.test.ts && tsx test/sentence.test.ts && tsx test/controlLink.test.ts && tsx test/controlBus.test.ts && tsx test/radio.test.ts && tsx test/radio_advanced.test.ts && tsx test/timePitch.test.ts && tsx test/dj_mixer.test.ts && tsx test/marathon_crate.test.ts && tsx test/midi.test.ts"
+    "test": "tsx test/analysis.test.ts && tsx test/sync.test.ts && tsx test/sentence.test.ts && tsx test/timePitch.test.ts && tsx test/dj_mixer.test.ts && tsx test/marathon_crate.test.ts && tsx test/mpd226.test.ts && tsx test/shortcutScope.test.ts && tsx test/library.test.ts && tsx test/audibleDeck.test.ts && tsx test/liveClient.test.ts && tsx test/station.test.ts && tsx test/r2.test.ts && tsx test/remap.test.ts",
+    "screenshot": "node scripts/screenshot.mjs",
+    "ui-audit": "node scripts/audit-ui.mjs",
+    "mix-check": "node scripts/mix-check.mjs",
+    "fx-check": "node scripts/fx-check.mjs",
+    "library-check": "node scripts/library-check.mjs",
+    "sampler-check": "node scripts/sampler-check.mjs",
+    "obs-check": "node scripts/obs-check.mjs",
+    "obs-live-check": "node scripts/obs-live-check.mjs",
+    "r2-check": "node scripts/r2-check.mjs",
+    "r2-offline-check": "node scripts/r2-offline-check.mjs",
+    "live-check": "node scripts/live-check.mjs",
+    "requests-check": "node scripts/requests-check.mjs",
+    "mic-check": "node scripts/mic-check.mjs"
   },
   "dependencies": {
     "@ncsound/dj-engine": "workspace:*",
     "@ncsound/scratch-agent": "workspace:*",
-    "@ncsound/station-core": "workspace:*"
+    "@ncsound/station-core": "workspace:*",
+    "obs-websocket-js": "5",
+    "signalsmith-stretch": "^1.3.2"
   },
   "devDependencies": {
+    "demucs-web": "1.0.2",
+    "onnxruntime-web": "1.30.0",
+    "playwright": "1.48.2",
     "tsx": "^4.23.15",
     "typescript": "^5.5.0",
     "vite": "^5.4.0"

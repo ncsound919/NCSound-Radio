@@ -176,7 +176,7 @@ export type ScheduleResponse = {
   currentShowId: string | null
 }
 
-/** One row of a past show's program log (the "listen back" ledger view). */
+/** One row of a past show's program log (the "listen back" log view). */
 export type ListenBackEntry = {
   /** ISO instant the element started. */
   at: string
@@ -206,8 +206,6 @@ export type SubmissionLookupEntry = {
   trackTitle: string
   genre: string
   status: 'PENDING' | 'IN_REVIEW' | 'APPROVED' | 'DECLINED'
-  /** Present once the A&R desk opened a rights record for the track. */
-  rightsId: string | null
   createdAt: string
   reviewedAt: string | null
 }
@@ -235,21 +233,6 @@ export type SubmissionDTO = {
   agreementIp: string | null
   reviewNotes: string | null
   reviewedAt: string | null
-  rightsId: string | null
-  createdAt: string
-}
-
-export type RightsDTO = {
-  id: string
-  trackTitle: string
-  artistName: string
-  owner: string
-  sampleStatus: 'PENDING' | 'CLEARED' | 'UNCLEARED'
-  explicitFlag: boolean
-  status: 'PENDING' | 'IN_REVIEW' | 'CLEARED' | 'BLOCKED'
-  source: 'SUBMISSION' | 'CORE'
-  ownerProof: string | null
-  clearedAt: string | null
   createdAt: string
 }
 
@@ -298,7 +281,7 @@ export type AdPlaysResponse = {
 }
 
 export type StatsResponse = {
-  library: { tracks: number; cleared: number; pendingRights: number; blocked: number; totalHours: number }
+  library: { tracks: number; totalHours: number }
   submissions: { total: number; pending: number; inReview: number; approved: number; declined: number }
   sponsors: { active: number; monthlyMRR: number }
   adplays: { last7Days: number; today: number }
@@ -361,7 +344,6 @@ export type RequestTopEntry = {
   trackId: string
   title: string
   artist: string
-  rightsId: string
   explicit: boolean
   count: number
   lastRequestedAt: string
@@ -400,17 +382,15 @@ export type TracksResponse = {
     playlist: string
     durationSec: number
     explicit: boolean
-    rightsId: string
   }>
 }
 
-/** One row of The Wave Chart — most-heard cleared tracks over the trailing week. */
+/** One row of The Wave Chart — most-heard tracks over the trailing week. */
 export type ChartEntry = {
   trackId: string
   rank: number
   title: string
   artist: string
-  rightsId: string
   playlist: string
   explicit: boolean
   /** Spins in the trailing 7 days (any source). */
@@ -434,7 +414,6 @@ export type AllTimeEntry = {
   rank: number
   title: string
   artist: string
-  rightsId: string
   /** Every logged spin since launch (music + imaging never mix — imaging never charts). */
   totalSpins: number
   firstPlayedAt: string | null
@@ -457,7 +436,6 @@ export type ArtistEntry = {
 export type ArtistTrackRow = {
   trackId: string
   title: string
-  rightsId: string
   playlist: string
   explicit: boolean
   /** Spins in the trailing 7 days. */
@@ -480,7 +458,7 @@ export type ArtistRecentSpin = {
   source: string
 }
 
-/** Public artist profile behind the Wave Chart — earned entirely from the ledger. */
+/** Public artist profile behind the Wave Chart — earned entirely from the play log. */
 export type ArtistDetailResponse = {
   /** The canonical artist string as stored on the tracks (may differ in case from the request). */
   artist: string
@@ -492,9 +470,9 @@ export type ArtistDetailResponse = {
   sharePct: number
   firstPlayedAt: string | null
   lastPlayedAt: string | null
-  /** The artist's cleared tracks, most-spun first. */
+  /** The artist's tracks, most-spun first. */
   tracks: ArtistTrackRow[]
-  /** The 8 most recent ledger spins of their music. */
+  /** The 8 most recent spins of their music. */
   recent: ArtistRecentSpin[]
   /** Roster + submission extras (genres, home, socials, first seen). */
   profile?: ArtistProfile | null
@@ -544,7 +522,7 @@ export type ChartsResponse = {
   serverTime: string
 }
 
-export const TAB_IDS = ['on-air', 'schedule', 'submit', 'rights', 'sponsors', 'ops'] as const
+export const TAB_IDS = ['on-air', 'schedule', 'submit', 'sponsors', 'ops'] as const
 export type TabId = (typeof TAB_IDS)[number]
 
 export const AGREEMENT_VERSION = 'v1.1'

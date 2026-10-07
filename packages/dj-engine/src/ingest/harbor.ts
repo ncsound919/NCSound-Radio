@@ -147,6 +147,19 @@ const RETRY_BASE_MS = 500;
 const RETRY_MAX_MS = 15_000;
 
 /**
+ * How long to wait for Liquidsoap to answer the handshake.
+ *
+ * Deliberately only a *pre*-response deadline. The connection itself must never
+ * time out - Liquidsoap kills long uploads after about five minutes, so an idle
+ * timeout on the live socket is a known way to fall silent. But before a response
+ * exists there is nothing to protect, and waiting indefinitely there cost a full
+ * daemon: `engine.start()` awaited this, so a silent server meant no station, no
+ * health endpoint, and no error in any log. A refused connection fails instantly;
+ * this only fires when the server accepted the socket and then went quiet.
+ */
+const HANDSHAKE_TIMEOUT_MS = 30_000;
+
+/**
  * Backlog threshold for deciding the peer has stopped reading.
  *
  * Writing to a socket never fails when the peer is gone - Node buffers it. So a
@@ -216,7 +229,9 @@ export class HarborPublisher {
       port: opts.port ?? 8008,
       mount: opts.mount ?? "dj",
       user: opts.user ?? "engine",
-      password: opts.password ?? "REDACTED",
+      // No built-in default: a hardcoded fallback is a credential in the repo,
+      // and an unset env var must fail loudly rather than authenticate with it.
+      password: opts.password ?? process.env.HARBOR_PASSWORD ?? "",
       channels: opts.channels ?? 2,
       sampleRate: opts.sampleRate ?? 48000,
     };
@@ -262,6 +277,11 @@ export class HarborPublisher {
    */
   async connect(_signal?: AbortSignal, title?: string): Promise<void> {
     const { host, port, mount, user, password, channels, sampleRate } = this.opts;
+    if (!password) {
+      throw new Error(
+        "harbor password is not set: pass opts.password or set HARBOR_PASSWORD (see infra/icecast/.env)",
+      );
+    }
     const auth = Buffer.from(`${user}:${password}`).toString("base64");
     if (title) this.lastTitle = title;
     const streamTitle = title ?? this.streamTitle;
@@ -270,6 +290,46 @@ export class HarborPublisher {
     this.state.endedByServer = false;
 
     await new Promise<void>((resolve, reject) => {
+      /**
+       * Bound only the handshake, never the connection.
+       *
+       * This promise used to settle on exactly two paths: a response arrived, or
+       * the response was a non-2xx status. Every other outcome left it pending
+       * forever — a socket error was swallowed by `if (!this.state.connected)
+       * return` below, and a server that accepted the connection and then never
+       * answered left no event at all. `engine.start()` awaits this, so one
+       * unsettled handshake blocked the whole daemon: the log stopped after
+       * "loading library", every HTTP route timed out, and because nothing ever
+       * rejected there was no error anywhere to find.
+       *
+       * So the handshake gets a deadline and a shared `settle` guard. The
+       * established connection keeps no timeout at all — Liquidsoap fails long
+       * uploads after about five minutes, and an idle timeout on the live socket
+       * is precisely the bug that predates this.
+       */
+      let settled = false;
+      let handshakeTimer: ReturnType<typeof setTimeout>;
+      const settle = (finish: () => void): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(handshakeTimer);
+        finish();
+      };
+
+      handshakeTimer = setTimeout(() => {
+        settle(() => {
+          if (this.req === req) this.req = null;
+          req.destroy();
+          const to = `${Math.round(HANDSHAKE_TIMEOUT_MS / 1000)}s`;
+          const msg = `harbor accepted the connection but sent no response within ${to}`;
+          console.warn(
+            `[harbor] ${msg}; giving up on this handshake so the engine can start and the publisher can retry`,
+          );
+          this.state.lastError = msg;
+          reject(new Error(msg));
+        });
+      }, HANDSHAKE_TIMEOUT_MS);
+
       const req = http.request(
         {
           host,
@@ -300,14 +360,18 @@ export class HarborPublisher {
           const status = res.statusCode ?? 0;
           res.resume();
           if (status < 200 || status >= 300) {
-            this.state.connected = false;
-            this.state.lastError = `harbor responded ${status}`;
-            req.destroy();
-            reject(new Error(`harbor responded ${status}`));
+            settle(() => {
+              this.state.connected = false;
+              this.state.lastError = `harbor responded ${status}`;
+              req.destroy();
+              reject(new Error(`harbor responded ${status}`));
+            });
             return;
           }
-          this.onConnectAccepted(streamTitle, sampleRate, channels);
-          resolve();
+          settle(() => {
+            this.onConnectAccepted(streamTitle, sampleRate, channels);
+            resolve();
+          });
         },
       );
 
@@ -317,6 +381,22 @@ export class HarborPublisher {
 
       req.on("error", (err) => {
         const message = err instanceof Error ? err.message : String(err);
+        /**
+         * A failure before any response is a handshake failure, and it is the
+         * one case this handler used to drop on the floor: `state.connected` is
+         * still false here, so `if (!this.state.connected) return` swallowed it,
+         * nobody rejected the promise, and `engine.start()` blocked forever with
+         * no error logged anywhere. Reject it explicitly.
+         */
+        if (!settled) {
+          settle(() => {
+            if (this.req === req) this.req = null;
+            this.state.lastError = message;
+            console.error(`[harbor] handshake failed: ${message}`);
+            reject(new Error(`harbor handshake failed: ${message}`));
+          });
+          return;
+        }
         // A destroy we initiated is not a failure to report.
         if (!this.state.connected) return;
         this.state.connected = false;
@@ -327,6 +407,18 @@ export class HarborPublisher {
       // The server closing the socket is the drop this whole class of bug is
       // about, so it must trigger recovery rather than pass unnoticed.
       req.on("close", () => {
+        // Closed before any response: there is no connection to recover yet, so
+        // this is a failed handshake rather than a drop. Without this the promise
+        // sat here until the deadline for something already known to be over.
+        if (!settled) {
+          settle(() => {
+            if (this.req === req) this.req = null;
+            this.state.lastError ??= "harbor closed the connection before responding";
+            console.error(`[harbor] ${this.state.lastError}`);
+            reject(new Error(this.state.lastError));
+          });
+          return;
+        }
         if (!this.state.connected || this.closedByUs) return;
         this.state.connected = false;
         this.state.lastError ??= "harbor closed the connection";

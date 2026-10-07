@@ -13,14 +13,41 @@ const globalForLimiter = globalThis as unknown as {
 const buckets: Map<string, Bucket> =
   globalForLimiter.ncsoundRateBuckets ?? (globalForLimiter.ncsoundRateBuckets = new Map())
 
-/** Best-effort client IP from proxy headers (x-forwarded-for first hop). */
-export function clientIp(req: Request): string {
+/**
+ * The client IP as asserted by a trusted reverse proxy, or null.
+ *
+ * `x-forwarded-for` / `x-real-ip` are request headers: without a proxy in
+ * front that overwrites them, the client writes them. Trusting them
+ * unconditionally let anyone rotate the header to get a fresh rate-limit
+ * bucket per request (unlimited admin-login guesses) and forge the IP stored
+ * on a signed submission agreement.
+ *
+ * Set TRUST_PROXY=1 only when the station sits behind a proxy that replaces
+ * these headers (nginx `proxy_set_header X-Forwarded-For $remote_addr`, a
+ * Cloudflare tunnel, etc.).
+ */
+export function trustedClientIp(req: Request): string | null {
+  if (process.env.TRUST_PROXY !== '1') return null
   const fwd = req.headers.get('x-forwarded-for')
   if (fwd) {
-    const first = fwd.split(',')[0]?.trim()
-    if (first) return first
+    // Rightmost hop is the one our proxy appended; leftmost is client-supplied.
+    const hops = fwd.split(',').map((h) => h.trim()).filter(Boolean)
+    const last = hops[hops.length - 1]
+    if (last) return last
   }
-  return req.headers.get('x-real-ip') ?? 'local'
+  return req.headers.get('x-real-ip')
+}
+
+/**
+ * Rate-limit key for the caller.
+ *
+ * Without a trusted proxy, Next route handlers have no socket address, so every
+ * caller shares one 'direct' bucket. That trades per-IP fairness for a limit
+ * that cannot be bypassed: a flood can lock legitimate users out for one
+ * window, but it cannot buy unlimited attempts.
+ */
+export function clientIp(req: Request): string {
+  return trustedClientIp(req) ?? 'direct'
 }
 
 /**

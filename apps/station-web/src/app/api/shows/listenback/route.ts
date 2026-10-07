@@ -15,8 +15,8 @@ const MAX_WINDOW_DAYS = 21
 
 /**
  * GET /api/shows/listenback?slug=…&date=YYYY-MM-DD
- * Rebuilds what actually aired during a past show window from the two audited
- * ledgers: PlayLog (music / station IDs / talk) + ad_plays (sold sponsor
+ * Rebuilds what actually aired during a past show window from the two
+ * logs: PlayLog (music / station IDs / talk) + ad_plays (sold sponsor
  * spots). Windows are resolved in station time (America/New_York, DST-safe),
  * exactly like the scheduled-show takeover math.
  */
@@ -50,13 +50,13 @@ export async function GET(request: NextRequest) {
 
     const nowMs = Date.now()
     // Guard rails: no future windows, no archaeology beyond ~3 weeks
-    // (the ledger itself is the older bound — it only has what it has).
+    // (the play log is the older bound — it only has what it has).
     if (windowStartMs > nowMs) {
       return NextResponse.json({ error: 'That occurrence has not aired yet' }, { status: 400 })
     }
     if (nowMs - windowEndMs > MAX_WINDOW_DAYS * 86_400_000) {
       return NextResponse.json(
-        { error: `Listen back reaches ${MAX_WINDOW_DAYS} days into the ledger` },
+        { error: `Listen back reaches ${MAX_WINDOW_DAYS} days into the log` },
         { status: 400 },
       )
     }

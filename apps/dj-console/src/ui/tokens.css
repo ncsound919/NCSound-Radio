@@ -1,0 +1,43 @@
+/*
+ * Design tokens for the redesigned console.
+ * One accent (amber) for selection and values; red is reserved for live / on-air / clip.
+ * Sizes follow the DAW-UI floors: keys >= 36x44, pads >= 56, gaps >= 8, text >= 11px,
+ * knobs M38 / L50 / XL66.
+ */
+@font-face { font-family: "Geist"; src: url("./fonts/Geist-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "Geist Mono"; src: url("./fonts/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+
+:root {
+  --nc-desk: #0a0c11;
+  --nc-chassis: #12151d;
+  --nc-raised: #1a1e29;
+  --nc-raised-hi: #232838;
+  --nc-screen: #07090d;
+  --nc-ink: #eef1f6;
+  --nc-ink-dim: #cbd5e1;
+  --nc-muted: #94a3b8;
+  --nc-hairline: color-mix(in srgb, var(--nc-ink) 8%, transparent);
+  --nc-hairline-strong: color-mix(in srgb, var(--nc-ink) 16%, transparent);
+  --nc-accent: #e8a33d;
+  --nc-accent-soft: color-mix(in srgb, var(--nc-accent) 18%, transparent);
+  --nc-live: #e5484d;
+  --nc-live-soft: color-mix(in srgb, var(--nc-live) 20%, transparent);
+  --nc-ok: #4fb286;
+  --nc-deck-a: #7b93d6; /* muted tints that tell the decks apart; never used for state */
+  --nc-deck-b: #a585d6;
+  --nc-radius-s: 4px;
+  --nc-radius-m: 8px;
+  --nc-gap: 8px;
+  --nc-gap-l: 16px;
+  --nc-knob-m: 38px;
+  --nc-knob-l: 50px;
+  --nc-knob-xl: 66px;
+  --nc-pad: 64px;
+  --nc-key-h: 36px;
+  --nc-key-w: 44px;
+  --nc-font: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --nc-font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", monospace;
+  --nc-ease: cubic-bezier(0.2, 0, 0, 1);
+  --nc-dur: 160ms;
+}
+@media (prefers-reduced-motion: reduce) { :root { --nc-dur: 0ms; } }

@@ -80,7 +80,7 @@ export function SponsorsSection() {
 
   useEffect(() => {
     void refresh()
-  }, [refresh])
+  }, [refresh, unlocked])
 
   async function runAdSync() {
     // This button used to POST with no `x-ops-pin` against a route that
@@ -297,14 +297,14 @@ export function SponsorsSection() {
             </div>
           </div>
 
-          {/* ---- Proof-of-play ledger ---- */}
+          {/* ---- Proof of play ---- */}
           <Card>
             <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 pb-3">
               <CardTitle className="flex items-center gap-2 text-base">
                 <div className="rounded-md bg-primary/10 p-1.5 text-primary">
                   <ScrollText className="h-4 w-4" aria-hidden />
                 </div>
-                Proof-of-Play Ledger
+                Proof of Play
               </CardTitle>
               <div className="flex flex-wrap items-center gap-2">
                 <Badge

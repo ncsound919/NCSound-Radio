@@ -17,26 +17,46 @@
  * API instead, which is both real and unaffected by CORS.
  */
 
-/** Icecast moved off 8000: an unrelated Windows service holds that port. */
-const ICECAST_PORT = Number(process.env.NEXT_PUBLIC_ICECAST_PORT ?? 8010)
-
-export type StreamQuality = 'hi' | 'mobile'
+import { STREAM_MOUNTS, streamBaseUrl, type StreamQuality } from './stream'
 
 /**
- * The two mounts, with what they actually carry.
- *
- * `bitrateKbps` and `codec` were previously duplicated as UI literals in the
- * player bar, where they read "128 kbps AAC" and "64 kbps HE-AAC". Both were
- * wrong twice over: the bitrates happened to match, but Liquidsoap encodes these
- * mounts with `%mp3` (infra/liquidsoap/ncsound.liq), so the codec was fiction.
- * One authority here, so the label cannot drift from the encoder again.
+ * The mounts and the base URL now live in `./stream`, so the server
+ * (`/api/stream`) and the player share one authority. Re-exported here so
+ * existing importers (`player-bar.tsx`, `use-station-player.ts`) keep working.
  */
-export const MOUNTS: Record<
-  StreamQuality,
-  { path: string; bitrateKbps: number; codec: string; label: string }
-> = {
-  hi: { path: '/live.mp3', bitrateKbps: 128, codec: 'MP3', label: 'Full quality' },
-  mobile: { path: '/mobile.mp3', bitrateKbps: 64, codec: 'MP3', label: 'Data saver' },
+export { STREAM_MOUNTS as MOUNTS }
+export type { StreamQuality }
+
+type Descriptor = { live?: { url?: string }; mobile?: { url?: string } }
+let descriptor: Descriptor | null = null
+let loading: Promise<Descriptor | null> | null = null
+
+/**
+ * The server (`/api/stream`) is the single authority for the base URL: it holds
+ * the server-only env (`NCSOUND_STREAM_BASE_URL`) and returns the real mount
+ * URLs. Fetching it here removes the split where the page could resolve a
+ * different base than the API reported. The env/loopback in `./stream` is only
+ * a fallback if the endpoint is unreachable.
+ */
+function loadDescriptor(): Promise<Descriptor | null> {
+  if (descriptor) return Promise.resolve(descriptor)
+  if (loading) return loading
+  loading = fetch('/api/stream', { cache: 'no-store' })
+    .then((r) => (r.ok ? (r.json() as Promise<Descriptor>) : null))
+    .then((d) => {
+      descriptor = d ?? null
+      return descriptor
+    })
+    .catch(() => null)
+    .finally(() => {
+      loading = null
+    })
+  return loading
+}
+
+function descriptorUrl(q: StreamQuality): string | null {
+  const url = q === 'hi' ? descriptor?.live?.url : descriptor?.mobile?.url
+  return typeof url === 'string' && url ? url : null
 }
 
 export type StreamSource = {
@@ -81,7 +101,7 @@ function create(): StreamSource {
     // normal and does not mean the stream died.
   })
 
-  const urlFor = (q: StreamQuality) => `http://127.0.0.1:${ICECAST_PORT}${MOUNTS[q].path}`
+  const urlFor = (q: StreamQuality) => descriptorUrl(q) ?? `${streamBaseUrl()}${STREAM_MOUNTS[q].path}`
 
   const cancelFade = () => {
     if (raf) cancelAnimationFrame(raf)
@@ -95,6 +115,7 @@ function create(): StreamSource {
     error: () => lastError,
 
     async play(q, volume) {
+      await loadDescriptor()
       const wanted = urlFor(q)
       if (el.src !== wanted) {
         el.src = wanted
@@ -138,6 +159,10 @@ function create(): StreamSource {
 
 export function getStreamSource(): StreamSource | null {
   if (typeof window === 'undefined') return null
-  if (!singleton) singleton = create()
+  if (!singleton) {
+    singleton = create()
+    // Fetch the server's descriptor eagerly so urlFor/display is accurate.
+    void loadDescriptor()
+  }
   return singleton
 }

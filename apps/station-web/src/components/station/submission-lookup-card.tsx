@@ -2,9 +2,8 @@
 
 /**
  * SubmissionLookupCard — the artist-facing half of the submissions pipeline.
- * Artists who already applied can check where their track sits (and grab their
- * rights ledger ID once one is issued) by looking up the exact email they
- * submitted with. Public by design: the API only returns status facts and is
+ * Artists who already applied can check where their track sits by looking up
+ * the exact email they submitted with. Public by design: the API only returns status facts and is
  * rate-limited, so this can't enumerate emails or expose review notes.
  */
 
@@ -38,13 +37,13 @@ const STATUS_META: Record<
   },
   IN_REVIEW: {
     label: 'In review',
-    hint: 'The desk is listening — rights screening comes next.',
+    hint: 'A person is listening to it now.',
     cls: 'border-primary/40 bg-primary/10 text-primary',
     Icon: Search,
   },
   APPROVED: {
     label: 'Approved',
-    hint: 'Accepted — once the file lands and the rights record clears, the R-ID below goes on the wheel.',
+    hint: 'Accepted — the track goes on the wheel once the file is in the library.',
     cls: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-400',
     Icon: CheckCircle2,
   },
@@ -182,15 +181,6 @@ export function SubmissionLookupCard() {
                       </p>
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                      {row.rightsId && (
-                        <span
-                          title="Rights ledger ID — issued once the track cleared"
-                          className="inline-flex items-center gap-1 rounded border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] font-bold text-emerald-400"
-                        >
-                          <Radio className="h-2.5 w-2.5" aria-hidden />
-                          {row.rightsId}
-                        </span>
-                      )}
                       <span
                         className={cn(
                           'inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider',

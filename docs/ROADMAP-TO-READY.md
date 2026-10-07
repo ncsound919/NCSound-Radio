@@ -1,0 +1,131 @@
+# Roadmap to a fully ready system
+
+Consolidated, dependency-ordered plan across every workstream. Companion to
+`MOBILE-LISTENER-APP-IMPLEMENTATION.md`, `HOSTS-AND-GUEST-SLOTS-PLAN.md`,
+`CLOUDFLARE-INTEGRATION.md`, `DATA-AND-DB-PLAN.md`, `REMOTE-LIVE.md`, and
+`infra/stream/README.md`. Status legend: **[done]** / **[ready]** (artifacts
+exist, needs running) / **[blocked]** (external input) / **[todo]**.
+
+---
+
+## 0. Critical path
+
+The shortest chain to "a listener hears NCSound in the app, and you can safely
+let others drive":
+
+1. Restart Icecast on the home PC (apply the mount fix). *(minutes)*
+2. Provision the VPS stream relay and go live on HTTPS. **Blocks public + app.**
+3. Enable the app's auth providers (Apple/Google) → build the RN app.
+4. Harden host/guest access (slot windows + audit + Access doors) before letting
+   anyone else on air.
+5. Ops/legal/CI before launch.
+
+Everything else (Vectorize, AI Gateway, station container, hub) is additive and
+does not block a first real broadcast.
+
+---
+
+## A. Stream delivery — the listener-facing audio
+
+| # | Step | Status |
+|---|---|---|
+| A1 | Restart home Icecast so the fixed `<mount-name>`/`<max-listeners>`/`<genre>` apply | **[done 2026-10-07]** — re-rendered + restarted; both mounts reconnect; names apply |
+| A2 | Choose the production domain (`stream.<domain>`) | **[blocked]** — your decision |
+| A3 | Provision a small VPS (Hetzner/DO/Vultr); `stream.<domain>` **DNS-only** A record | **[blocked]** — provider acct |
+| A4 | Run the relay from `infra/stream/` (`icecast-ssl` per D11, or `libretime/icecast:2.5.0` + certbot); TLS + firewall source port to home IP | **[ready]** |
+| A5 | Point home `ncsound.liq` `output.icecast` at the VPS (push); restart | **[todo]** |
+| A6 | Point ingest at the VPS: `ICECAST_STATUS_HOST/PORT/TLS/USER/PASSWORD` | **[ready]** (code done) |
+| A7 | Set `NEXT_PUBLIC_STREAM_BASE_URL=https://stream.<domain>`; verify `/api/stream` | **[ready]** |
+| A8 | **Accept:** a phone on cellular plays `/live.mp3` + `/mobile.mp3`; counts come from the relay | **[todo]** |
+
+Why first: nothing public scales until the stream leaves the home PC and stops
+relying on a Cloudflare tunnel (barred for audio, no ICY caching).
+
+---
+
+## B. Listener app (React Native) — the product
+
+Strategy + build detail already written. Remaining:
+
+| # | Step | Status |
+|---|---|---|
+| B1 | `packages/station-client` typed fetch client (shared by app + web), validated with `station-core` | **[todo]** |
+| B2 | Enable Supabase auth providers: **Apple + Google + email OTP** | **[blocked]** — Apple Services ID/key + Google client |
+| B3 | Bare RN + New Architecture + RNTP: player, background/lock, reconnect, data saver, sleep timer | **[todo]** |
+| B4 | Screens: Home / Player / Schedule / Requests / Settings / Sign-in | **[todo]** |
+| B5 | Favorites + device tokens wired to the live Supabase tables (already applied) | **[ready]** |
+| B6 | Push: FCM + APNs, `devices`/`push_prefs` populated, an Edge Function sender | **[todo]** |
+| B7 | Car: request **CarPlay entitlement early**; Android Auto in v1.1 | **[blocked]** — Apple approval |
+| B8 | Store gates: `PrivacyInfo.xcprivacy`, App Privacy, **account deletion (done)**, demo account, privacy/support URLs, screenshots | **[todo]** |
+| B9 | Legal: **SoundExchange** statutory + **ASCAP/BMI/SESAC/GMR**; populate `Track.isrc`; monthly Reports of Use | **[blocked]** — counsel/fees |
+
+Auth backend (schema, RLS, delete-account, request attribution) is **[done]**.
+
+---
+
+## C. Hosts & guest slots — letting others drive safely
+
+| # | Step | Status |
+|---|---|---|
+| C1 | ingest: `Session` slot window (`notBefore`/`notAfter`), optional `producer` role, **audit log** | **[todo]** |
+| C2 | Host + guest console builds; host door adds `/requests`; guest door as today | **[ready]** (guest door exists) |
+| C3 | Enable **Cloudflare Access**; OTP IdP; apps + policies on `host/guest/ingest.<domain>` | **[blocked]** — enable Access |
+| C4 | Host/guest doors served behind Access (Pages or a tunnel hostname) | **[todo]** |
+| C5 | Shows & slots roster in station-web that mints slot-bound sessions | **[todo]** |
+| C6 | (optional) Access-JWT → session broker so recurring hosts hold no link | **[todo]** |
+
+P0 (gate the public endpoints, worker tokens) is **[done]**.
+
+---
+
+## D. Cloudflare edge completion
+
+| # | Step | Status |
+|---|---|---|
+| D1 | **Vectorize** "similar tracks": needs a server-side feature producer first (Queue consumer, or console-publish with a server-held token) | **[blocked]** by D1-producer |
+| D2 | Decide `ncsound-api` gating (`LIBRARY_TOKEN`) — currently fail-open by decision | **[todo]** |
+| D3 | **Access + Turnstile + WAF + rate limits** on public surfaces (phase 7) | **[blocked/todo]** |
+| D4 | **AI Gateway** in front of any model calls | **[blocked]** — token scope |
+| D5 | **Hyperdrive → Supabase** (only if a Worker reads operator Postgres) | **[todo]** |
+| D6 | **Durable Objects** for edge control state (if the edge serves now-playing / live keys) | **[todo]** |
+| D7 | **Station container** (Liquidsoap+Icecast+ingest) to retire the home SPOF | **[todo]** |
+
+Done: `ncsound-api` Worker, `ncsound-transcode` Container (gated), R2 media +
+CORS, the `ncsound-api.overlay365.online` subdomain, Cloudflare **Stream** live
+input + OBS→Stream wiring.
+
+---
+
+## E. Operator site, ops, and release hygiene
+
+| # | Step | Status |
+|---|---|---|
+| E1 | Host station-web and set the admin credential (`scripts/set-admin-password.ts`) | **[todo]** |
+| E2 | Confirm no remaining ungated endpoints; keep CORS public-only | **[done]** |
+| E3 | Backups: DB snapshots, R2 lifecycle rules, ingest sessions file | **[todo]** |
+| E4 | Monitoring/alerting on the mount watchdog + Icecast | **[todo]** |
+| E5 | CI: one pipeline running typecheck + all tests + the check scripts | **[todo]** |
+| E6 | Secrets: rotate the OBS password and the Cloudflare Stream key (both surfaced in chat); delete `.history-backup-pre-scrub.bundle`; creds now at `~/.config/ncsound/supabase.txt` | **[todo]** |
+| E7 | Commit the working tree (very large, long uncommitted) | **[todo]** |
+
+---
+
+## F. Data / databases
+
+**[done]**: Supabase identity (RLS, delete-account, request attribution); SQLite
+migrations baselined + `Track.isrc`/`label` + `TrackRequest.userId`; media in R2.
+**Remaining**: populate ISRCs (B9); decide the operator-site SQLite→Postgres move
+(recommended: later, separate project — `DATA-AND-DB-PLAN.md` §4).
+
+---
+
+## External inputs you must supply (the true blockers)
+
+1. **Domain** for `stream.<domain>`.
+2. **VPS provider** account/billing (Hetzner / DO / Vultr).
+3. **Apple** developer account: Services ID + key (Sign in with Apple) and the
+   **CarPlay** audio entitlement request.
+4. **Google** OAuth client.
+5. **Cloudflare**: enable **Access**; a token with **Stream** + **AI Gateway**
+   scopes; **Stream** billing.
+6. **Licenses**: SoundExchange + a PRO, and ISRC data, before public launch.

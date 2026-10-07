@@ -8,8 +8,7 @@
  * accumulate as the API is polled.
  *
  * Programming rules enforced here:
- *  - Rights gate: only library tracks ever reach the wheel; the request line
- *    refuses anything without a CLEARED rights record.
+ *  - Only library tracks ever reach the wheel.
  *  - Clean Daypart 06:00–19:00 ET: explicit tracks are held out of rotation.
  *  - Fallback tracks sit on the bench and only join the wheel when a listener
  *    shout pulls them in (request weight > 0) — zero dead air insurance.
@@ -27,7 +26,6 @@ import type {
   AdPlay,
   Campaign,
   PlayLog,
-  RightsLog,
   Show,
   Sponsor,
   Submission,
@@ -36,7 +34,6 @@ import type {
 import type {
   AdPlayDTO,
   CampaignDTO,
-  RightsDTO,
   ShowDTO,
   SponsorDTO,
   SubmissionDTO,
@@ -122,7 +119,7 @@ const globalForRotation = globalThis as unknown as {
  * something true, or say nothing.
  */
 export const HOUSE_PROMOS: Array<{ title: string; line: string }> = [
-  { title: 'House promo — submit your track', line: 'Artists: send your music through the rights gate on this site.' },
+  { title: 'House promo — submit your track', line: 'Artists: send your music in through this site.' },
   { title: 'House promo — listener requests open', line: 'Request a track from the request line while you listen.' },
   { title: 'House promo — sponsor this daypart', line: 'Daypart sponsorship available — enquire on the station site.' },
 ]
@@ -626,7 +623,6 @@ export function toTrackDTO(t: Track): TrackDTO {
     artist: t.artist,
     album: t.album,
     durationSec: t.durationSec,
-    rightsId: t.rightsId,
     explicit: t.explicit,
     playlist: t.playlist,
     bpm: t.bpm,
@@ -671,24 +667,7 @@ export function toSubmissionDTO(s: Submission): SubmissionDTO {
     agreementIp: s.agreementIp,
     reviewNotes: s.reviewNotes,
     reviewedAt: s.reviewedAt?.toISOString() ?? null,
-    rightsId: s.rightsId,
     createdAt: s.createdAt.toISOString(),
-  }
-}
-
-export function toRightsDTO(r: RightsLog): RightsDTO {
-  return {
-    id: r.id,
-    trackTitle: r.trackTitle,
-    artistName: r.artistName,
-    owner: r.owner,
-    sampleStatus: r.sampleStatus as RightsDTO['sampleStatus'],
-    explicitFlag: r.explicitFlag,
-    status: r.status as RightsDTO['status'],
-    source: r.source as RightsDTO['source'],
-    ownerProof: r.ownerProof,
-    clearedAt: r.clearedAt?.toISOString() ?? null,
-    createdAt: r.createdAt.toISOString(),
   }
 }
 

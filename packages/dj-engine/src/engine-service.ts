@@ -160,6 +160,33 @@ export class HeadlessEngine {
   }
 
   /**
+   * Tear down and re-open the harbor upload.
+   *
+   * `HarborPublisher` cannot detect a dead peer on its own in this topology.
+   * Liquidsoap's harbor accepts the connection and never acknowledges the body, so
+   * `write()` keeps succeeding and `connected` stays true; observed live across a
+   * full Liquidsoap restart: `connected=true`, `reconnects=0`, `lastError=null`,
+   * the engine rendering steadily, and the mount at -91 dBFS with no `close` or
+   * `error` event ever firing. The publisher's own backlog detector never trips
+   * because the socket's write queue does not fill — nothing is reading, but the
+   * OS keeps accepting.
+   *
+   * So the re-establish has to be driven from outside, by something that can see
+   * the mount is silent while the engine is demonstrably still producing.
+   */
+  async reconnectHarbor(): Promise<boolean> {
+    if (!this.harbor) return false;
+    this.harbor.disconnect();
+    try {
+      await this.harbor.connect(undefined, this.title);
+      return this.harbor.status.connected;
+    } catch (err) {
+      this.lastError = `harbor reconnect failed: ${err instanceof Error ? err.message : String(err)}`;
+      return false;
+    }
+  }
+
+  /**
    * Milliseconds since the render tap last produced a block.
    *
    * A direct observation, unlike `renderedAheadSec` which is a derived estimate
@@ -217,7 +244,7 @@ export class HeadlessEngine {
       trackId: deck.buffer ? this.trackIdForDeck(slot) : null,
       playing: deck.playing,
       bpm: deck.analysis?.bpm ?? null,
-      key: deck.analysis ? deck.getEffectiveKey() : null,
+      key: deck.analysis ? deck.getEffectiveKey() || null : null,
       positionSec: deck.buffer ? deck.currentOffset(this.audioContext.currentTime) : 0,
       durationSec: deck.buffer?.duration ?? 0,
       speed: deck.rate,
@@ -401,9 +428,7 @@ export class HeadlessEngine {
           artist: "",
           album: null,
           durationSec: duration,
-          // No invented clearance record and no invented playlist: both are
-          // station data this path does not have.
-          rightsId: null,
+          // No invented playlist: that is station data this path does not have.
           explicit: false,
           playlist: "Unfiled",
           bpm: deck.analysis?.bpm ?? null,
@@ -461,6 +486,29 @@ renderedAheadSec: this.renderedAheadSec,
       },
       autopilot: this.autopilotState(),
       listeners: this.listenerCounts,
+      /**
+       * The upload into Liquidsoap's harbor.
+       *
+       * This was the one link in the chain that nothing reported. The engine
+       * rendered audio, the deck read "playing", the master bus metered normally,
+       * the mount was connected and holding a listener — and the engine was
+       * uploading to nothing, so listeners heard -91 dBFS. Liquidsoap said
+       * `Not ready: need more buffering (0/529200)` the whole time, and the only
+       * way to see that was to read the daemon's log by hand.
+       *
+       * `backlogBytes` is the honest liveness signal: `connected` stays true when
+       * nothing is reading, because writing to a socket never fails.
+       */
+      harbor: this.harbor
+        ? {
+            connected: this.harbor.status.connected,
+            bytesSent: this.harbor.status.bytesSent,
+            framesSent: this.harbor.status.framesSent,
+            backlogBytes: this.harbor.status.backlogBytes,
+            reconnects: this.harbor.status.reconnects,
+            lastError: this.harbor.status.lastError,
+          }
+        : null,
       uptimeSec: this.startedAt ? (Date.now() - this.startedAt) / 1000 : 0,
       serverTime: new Date().toISOString(),
       lastError: this.lastError,
@@ -530,7 +578,6 @@ renderedAheadSec: this.renderedAheadSec,
         cacheDir: this.opts.analysisCacheDir,
         rootDir: this.opts.libraryDir,
       });
-
       const started = await this.autopilot.start(crate[0]);
       if (!started) throw new Error("autopilot refused to start");
       this.syncTitle();
@@ -552,16 +599,6 @@ renderedAheadSec: this.renderedAheadSec,
         }
       }
       await this.ringer.start(this.mixer.getMasterOutputNode());
-      /**
-       * Register the render tap as a durable program tap.
-       *
-       * `routeOutputs` rebuilds the master bus's outgoing connections whenever the
-       * mixer's routing changes, and `disconnect()` is indiscriminate — so the
-       * tap has to be one the mixer knows about, or a routing change detaches the
-       * thing that publishes to harbor and the station goes silent with every
-       * field still reporting health.
-       */
-      this.mixer.addProgramTap(this.ringer.tapNode);
       this.applyHeadroomGuard();
 
       this.startedAt = Date.now();

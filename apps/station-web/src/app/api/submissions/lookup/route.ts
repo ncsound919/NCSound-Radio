@@ -18,8 +18,7 @@ const asStatus = (s: string): SubStatus =>
  *
  * Artist-facing status lookup — the public half of the submissions pipeline.
  * An artist who applied through the form can check where their track sits
- * (PENDING → IN_REVIEW → APPROVED/DECLINED, plus the rights ledger ID once
- * the A&R desk opened a record) without any ops access.
+ * (PENDING → IN_REVIEW → APPROVED/DECLINED) without any ops access.
  *
  * Privacy posture: returns ONLY status facts for rows whose submission email
  * matches exactly, capped at the 10 most recent — no review notes, no PII
@@ -59,7 +58,6 @@ export async function GET(req: Request) {
         trackTitle: true,
         genre: true,
         status: true,
-        rightsId: true,
         createdAt: true,
         reviewedAt: true,
       },
@@ -70,7 +68,6 @@ export async function GET(req: Request) {
         trackTitle: r.trackTitle,
         genre: r.genre,
         status: asStatus(r.status),
-        rightsId: r.rightsId,
         createdAt: r.createdAt.toISOString(),
         reviewedAt: r.reviewedAt?.toISOString() ?? null,
       })),

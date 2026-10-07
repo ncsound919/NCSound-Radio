@@ -14,7 +14,6 @@ const TAB_LABELS: Record<string, string> = {
   'on-air': 'On Air',
   schedule: 'Schedule',
   submit: 'Submit',
-  rights: 'Rights',
   sponsors: 'Sponsors',
   ops: 'Ops',
 }

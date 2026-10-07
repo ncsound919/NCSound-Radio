@@ -6,17 +6,10 @@ export const dynamic = 'force-dynamic'
 
 /**
  * GET /api/tracks — the on-air library for the listener request picker.
- * Only CLEARED, non-imaging tracks are exposed: the rights gate decides
- * what can even be requested.
+ * Station content (imaging, talk) is left out; everything else is requestable.
  */
 export async function GET() {
   try {
-    const clearedRights = await db.rightsLog.findMany({
-      where: { status: 'CLEARED' },
-      select: { id: true },
-    })
-    const clearedIds = new Set(clearedRights.map((r) => r.id))
-
     const tracks = await db.track.findMany({
       where: { playlist: { notIn: ['Imaging', 'Talk'] } },
       orderBy: [{ title: 'asc' }],
@@ -27,12 +20,11 @@ export async function GET() {
         playlist: true,
         durationSec: true,
         explicit: true,
-        rightsId: true,
       },
     })
 
     const body: TracksResponse = {
-      tracks: tracks.filter((t) => clearedIds.has(t.rightsId)),
+      tracks,
     }
     return NextResponse.json(body)
   } catch (error) {

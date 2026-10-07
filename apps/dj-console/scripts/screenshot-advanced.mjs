@@ -1,0 +1,10 @@
+import { chromium } from "playwright";
+const [base, out] = process.argv.slice(2);
+const b = await chromium.launch(); const p = await b.newPage({ viewport: { width: 1600, height: 1000 } });
+const errs = []; p.on("pageerror", e => errs.push(String(e)));
+await p.goto(base, { waitUntil: "load" }); await p.waitForTimeout(1000);
+await p.click("#advancedModeBtn"); await p.waitForTimeout(800);
+await p.evaluate(() => document.querySelectorAll("details").forEach(d => d.open = true)); await p.waitForTimeout(400);
+await p.screenshot({ path: out, fullPage: true });
+console.log("saved", out, errs.length ? "ERRORS: " + errs.join(" | ") : "no page errors");
+await b.close();

@@ -11,6 +11,7 @@ import { IngestService } from "./server";
 import { createImagingPlayer } from "./imaging";
 import { LiquidsoapControl } from "./liquidsoap";
 import { dirname, resolve } from "node:path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const PORT = Number(process.env.INGEST_PORT ?? 8099);
@@ -37,6 +38,54 @@ const CACHE_DIR =
   process.env.NCSOUND_CACHE_DIR ??
   resolve(dirname(fileURLToPath(import.meta.url)), "../../../.ncsound-cache");
 
+/**
+ * The harbor credential, from the same source Liquidsoap uses.
+ *
+ * Liquidsoap resolves `password=getenv("HARBOR_PASSWORD")`, and
+ * `infra/station-up.sh` populates that from `infra/icecast/.env`. This process
+ * runs on Windows, where that variable is normally absent, so it reads the file
+ * directly rather than trusting its own environment — two sources of truth for one
+ * credential is exactly how they drift apart.
+ *
+ * The value is never logged or returned. Only its origin is reported.
+ */
+function resolveHarborPassword(): { password: string; source: string } {
+  const fromEnv = process.env.HARBOR_PASSWORD;
+  if (fromEnv) return { password: fromEnv, source: "HARBOR_PASSWORD" };
+
+  const envPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../infra/icecast/.env");
+  try {
+    const text = readFileSync(envPath, "utf8");
+    for (const line of text.split(/\r?\n/)) {
+      const m = /^\s*HARBOR_PASSWORD\s*=\s*(.*)$/.exec(line);
+      if (m) {
+        const value = m[1].trim().replace(/^["']|["']$/g, "");
+        if (value) return { password: value, source: "infra/icecast/.env" };
+      }
+    }
+  } catch {
+    /* fall through to the refusal below */
+  }
+
+  /**
+   * Refuse rather than fall back to a default.
+   *
+   * A default credential here is what produced a silent station: the engine
+   * authenticated with a password nobody was listening for, got a 401, and every
+   * other field kept reporting health. Starting without the credential fails
+   * loudly instead.
+   */
+  throw new Error(
+    `HARBOR_PASSWORD is not set and ${envPath} has no HARBOR_PASSWORD entry. ` +
+      `The engine cannot upload to Liquidsoap without it. Set HARBOR_PASSWORD in the ` +
+      `environment, or add it to infra/icecast/.env (see infra/station-up.sh).`,
+  );
+}
+
+const harborCredential = resolveHarborPassword();
+const harborPassword = harborCredential.password;
+console.log(`  harbor password: from ${harborCredential.source}`);
+
 // The off-air switch. Liquidsoap's telnet server is unauthenticated and must
 // stay on loopback; this only ever dials 127.0.0.1.
 const station = new LiquidsoapControl({
@@ -52,13 +101,37 @@ const service = new IngestService({
   engine: {
     libraryDir: LIBRARY,
     analysisCacheDir: CACHE_DIR,
+    /**
+     * The harbor credential, read from the same file Liquidsoap reads.
+     *
+     * `HarborPublisher` defaulted to a hardcoded `"s3cret"`, which is how the
+     * engine spent hours uploading into a `401`: Liquidsoap takes its password
+     * from `infra/icecast/.env`, and this process had no idea. Every rendered
+     * block went nowhere, harbor sat at `need more buffering (0/529200)`, and the
+     * station broadcast silence while the engine reported itself healthy.
+     *
+     * The value is never logged — only where it came from.
+     */
+    harbor: {
+      password: harborPassword,
+    },
     // Two ingests publishing to one Liquidsoap harbor fight over the same
     // mount. Set NCSOUND_PUBLISH=0 for a second, non-broadcasting instance —
     // useful for exercising the control plane against the real library without
     // interrupting a station that is already on air.
     publish: process.env.NCSOUND_PUBLISH !== "0",
   },
-  icecast: { port: Number(process.env.ICECAST_PORT ?? 8010) },
+  // Public listener counts come from the Icecast that listeners actually
+  // connect to. On the station PC that is the loopback Icecast; in production
+  // the stream is served by a VPS Icecast relay over TLS, so this points there.
+  // See decision D10 in docs/MOBILE-LISTENER-APP-IMPLEMENTATION.md.
+  icecast: {
+    host: process.env.ICECAST_STATUS_HOST ?? "127.0.0.1",
+    port: Number(process.env.ICECAST_STATUS_PORT ?? process.env.ICECAST_PORT ?? 8010),
+    user: process.env.ICECAST_STATUS_USER ?? "admin",
+    password: process.env.ICECAST_STATUS_PASSWORD ?? "admin",
+    tls: process.env.ICECAST_STATUS_TLS === "1",
+  },
   station,
 });
 

@@ -384,15 +384,19 @@ export class Deck {
   }
 
   /**
-   * Returns the effective musical key heard on this deck.
-   * If Key Lock is ON: Effective key is native key shifted by pitchShiftSemitones.
-   * If Key Lock is OFF: Effective key is native key shifted by playback speed + pitchShiftSemitones.
+   * The key actually heard on this deck, or "" when the track has no detected key.
+   *
+   * Playback is a resampling AudioBufferSourceNode: changing the rate moves the
+   * pitch with it. `keyLockEnabled` and `pitchShiftSemitones` are stored flags
+   * that nothing in the audio path reads, so this reports only the shift the rate
+   * really causes. It used to subtract the speed shift whenever key lock was "on"
+   * (the default) and add the unapplied semitone shift, and returned "8A" for a
+   * track with no key, so the readout described audio that was not playing.
    */
   getEffectiveKey(): string {
-    if (!this.analysis?.key) return "8A";
+    if (!this.analysis?.key) return "";
     const baseKey = this.analysis.key;
-    const speedSemitones = this.keyLockEnabled ? 0 : Math.round(12 * Math.log2(this.currentRate));
-    const totalSemitones = speedSemitones + this.pitchShiftSemitones;
+    const totalSemitones = Math.round(12 * Math.log2(this.currentRate));
 
     if (totalSemitones === 0) return baseKey;
 
@@ -427,6 +431,11 @@ export class Deck {
       brakeSec * (1 - (1 - minRate / baseRate) / Math.log(baseRate / minRate)) +
       recoverSec * 0.48;
     this.startedAtCtx += lostWallSec;
+  }
+
+  /** Track position where the active loop starts, or null when no loop is set. */
+  get loopStartSec(): number | null {
+    return this.loopBars > 0 && this.buffer ? this.startedOffset : null;
   }
 
   /** Toggles or sets quantized beat loop (0 = off, 0.125 .. 16 bars). */
@@ -478,6 +487,13 @@ export class Deck {
     else if (band === "mid") this.midDb = clamped;
     else this.highDb = clamped;
     this.applyEqBand(band);
+  }
+
+  /** Sets the isolator Kill state directly (for a hardware switch that reports on/off). */
+  setEqKill(band: "low" | "mid" | "high", on: boolean): boolean {
+    const current = band === "low" ? this.lowKill : band === "mid" ? this.midKill : this.highKill;
+    if (current !== on) this.toggleEqKill(band);
+    return on;
   }
 
   /** Toggles isolator Kill (-48 dB cut) on Low, Mid, or High EQ band. */

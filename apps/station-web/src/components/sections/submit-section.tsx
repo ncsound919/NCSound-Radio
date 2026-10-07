@@ -195,7 +195,7 @@ export function SubmitSection() {
             Submit Your Track
           </h2>
           <p className="text-sm text-muted-foreground">
-            Every submission goes through human review and the rights gate before it can air.
+            Every submission is reviewed by a person before it can air.
           </p>
         </div>
       </div>
@@ -216,7 +216,7 @@ export function SubmitSection() {
                 </div>
                 {/* Pipeline visual */}
                 <div className="flex flex-wrap items-center justify-center gap-1.5">
-                  {['Human review', 'Rights check', 'CLEARED + R-ID issued', 'AutoDJ rotation'].map(
+                  {['Submitted', 'Human review', 'Approved', 'AutoDJ rotation'].map(
                     (step, i) => (
                       <div key={step} className="flex items-center gap-1.5">
                         <span className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card/80 px-2.5 py-1.5 text-xs">
@@ -489,9 +489,7 @@ export function SubmitSection() {
               <p className="leading-relaxed">
                 <span className="font-mono text-foreground/90">Submission</span> →{' '}
                 <span className="font-mono text-amber-400">IN_REVIEW</span> →{' '}
-                <span className="font-mono text-emerald-400">APPROVED</span> (rights record{' '}
-                <span className="font-mono text-emerald-400">CLEARED</span>, R-ID issued) → uploaded
-                to AutoDJ.
+                <span className="font-mono text-emerald-400">APPROVED</span> → added to AutoDJ.
               </p>
               <p className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 p-2.5 text-xs text-red-400">
                 <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -517,7 +515,7 @@ export function SubmitSection() {
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
-                  Audit trail — every airplay maps back to a signed agreement.
+                  Every airplay maps back to your signed agreement.
                 </li>
                 <li className="flex items-start gap-2">
                   <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
@@ -553,9 +551,8 @@ export function SubmitSection() {
             <section>
               <h4 className="font-semibold text-foreground">2. Samples</h4>
               <p>
-                All samples must be cleared <strong className="text-foreground">before</strong>{' '}
-                submission. Uncleared samples are an instant block from the rights gate — no
-                exceptions.
+                Clear any samples <strong className="text-foreground">before</strong>{' '}
+                you submit. Tracks with uncleared samples are declined.
               </p>
             </section>
             <section>

@@ -67,6 +67,7 @@ Verify:
 | 2026-10-04 | [The booth prepared sets from four invented tracks, and the "OBS overlay" captured the whole console UI](2026-10-04-booth-crate-and-the-obs-overlay-that-was-not-one.md) | ncsound-radio | flaw | high | resolved |
 | 2026-10-04 | [The station site and the DJ console each decided "are we live?" differently, and the site lied to listeners](2026-10-04-two-surfaces-two-definitions-of-on-air.md) | ncsound-radio | flaw | critical | resolved |
 | 2026-10-04 | [A command answered "playing: true" while the station broadcast silence for five hours](2026-10-04-commands-that-report-success-while-doing-nothing.md) | ncsound-radio | flaw | critical | resolved |
+| 2026-10-04 | [A hardcoded fallback password meant the engine spent hours uploading into a 401](2026-10-04-a-default-credential-silently-stilled-the-station.md) | ncsound-radio | flaw | critical | resolved |
 
 ```sh
 infra/verify-ingest.ps1          # engine up, crate loaded, command plane answers

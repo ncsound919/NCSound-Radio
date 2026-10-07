@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { adminConfigured, currentAdmin, logout } from '@/lib/admin-auth'
+import { adminConfigured, currentAdmin } from '@/lib/admin-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,9 +16,4 @@ export async function GET(request: Request) {
     authenticated: admin !== null,
     user: admin?.user ?? null,
   })
-}
-
-/** POST /api/auth/logout — withdraw every outstanding session. */
-export async function POST() {
-  return logout()
 }

@@ -1,10 +1,9 @@
 'use client'
 
 /**
- * WaveChartCard — "The Wave Chart": the most-heard cleared tracks of the
- * trailing week, ranked straight from the PlayLog ledger with listener shout
- * heat folded in. Ranks are earned on air, not picked by hand — same audit
- * trail as the broadcast itself.
+ * WaveChartCard — "The Wave Chart": the most-heard tracks of the
+ * trailing week, ranked straight from the play log with listener shout
+ * heat folded in. Ranks are earned on air, not picked by hand.
  */
 
 import { motion } from 'framer-motion'
@@ -83,7 +82,7 @@ export function WaveChartCard() {
           </span>
         </CardTitle>
         <CardDescription>
-          Most-heard tracks — ranked by the play-log ledger, shouts break ties
+          Most-heard tracks — ranked by plays, shouts break ties
           {data ? ` · ${data.totalSpins7d.toLocaleString()} spins in 7d` : ''}
         </CardDescription>
       </CardHeader>
@@ -188,13 +187,11 @@ export function WaveChartCard() {
                     <button
                       type="button"
                       onClick={() => setDetailArtist(row.artist)}
-                      title={`Open ${row.artist}'s ledger profile`}
+                      title={`Open ${row.artist}'s profile`}
                       className="max-w-[16ch] truncate text-left underline-offset-2 transition-colors hover:text-primary hover:underline focus-visible:outline focus-visible:outline-1 focus-visible:outline-primary sm:max-w-none"
                     >
                       {row.artist}
                     </button>
-                    <span className="mx-1.5 text-border">·</span>
-                    <span className="font-mono text-[10px]">{row.rightsId}</span>
                     {row.lastPlayedAt && (
                       <>
                         <span className="mx-1.5 text-border">·</span>
@@ -255,7 +252,7 @@ export function WaveChartCard() {
                           <button
                             type="button"
                             onClick={() => setDetailArtist(e.artist)}
-                            title={`Open ${e.artist}'s ledger profile`}
+                            title={`Open ${e.artist}'s profile`}
                             className="group/a flex w-full items-center gap-2 rounded px-1.5 py-1 text-left transition-colors hover:bg-accent/40 focus-visible:outline focus-visible:outline-1 focus-visible:outline-primary"
                           >
                             <span
@@ -312,7 +309,7 @@ export function WaveChartCard() {
                           <button
                             type="button"
                             onClick={() => setDetailArtist(a.artist)}
-                            title={`Open ${a.artist}'s ledger profile`}
+                            title={`Open ${a.artist}'s profile`}
                             aria-label={`${a.artist} — ${a.trackCount} tracks, ${a.sharePct}% of this week's spins. Open profile.`}
                             className="group/a relative flex w-full items-center gap-2 overflow-hidden rounded px-1.5 py-1 text-left transition-colors hover:bg-accent/40 focus-visible:outline focus-visible:outline-1 focus-visible:outline-primary"
                           >
@@ -352,12 +349,12 @@ export function WaveChartCard() {
         )}
         <p className="mt-3 flex items-center gap-1.5 text-[10px] leading-relaxed text-muted-foreground">
           <Mic className="h-3 w-3 shrink-0" aria-hidden="true" />
-          Every counted spin passed the rights gate — the chart is an audit trail with rhythm.
+          Every counted spin is a real play from the station log.
           <Radio className="h-3 w-3 shrink-0" aria-hidden="true" />
         </p>
         <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground/70">
           Movement compares against the previous seven days (ending 24h ago), read from the same
-          ledger — nothing is hand-picked. Click any artist for their ledger profile.
+          play log — nothing is hand-picked. Click any artist for their profile.
         </p>
       </CardContent>
 

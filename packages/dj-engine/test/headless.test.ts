@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { Mixer } from "../src/engine/mixer";
 import { createHeadlessContext, createPcmTap } from "../src/audio/context";
 import { BUILTIN_TRACK_SPECS, synthesizeStudioTrack } from "../src/engine/synthTracks";
@@ -6,8 +6,27 @@ import { interleaveToInt16 } from "../src/audio/ringer";
 
 const SR = 48000;
 
+/**
+ * Every context this file creates, closed at the end.
+ *
+ * These were leaked. Each headless AudioContext owns a real-time audio thread
+ * that keeps running for the life of the process, so a leaked context does not
+ * merely waste memory — it competes with every other suite for the machine. That
+ * is what made this package's results unstable: the same three runs gave
+ * 29 pass / 0 fail, 24 / 5 and 25 / 4, with a *different* set of failures each
+ * time, which is the signature of resource starvation rather than a logic error.
+ */
+const openContexts: BaseAudioContext[] = [];
+
+afterAll(async () => {
+  await Promise.all(
+    openContexts.map((ctx) => (ctx as unknown as { close?: () => Promise<void> }).close?.()),
+  );
+});
+
 function buildGraph() {
   const ctx = createHeadlessContext({ sampleRate: SR });
+  openContexts.push(ctx);
   const mixer = new Mixer(ctx);
   const spec = BUILTIN_TRACK_SPECS[0];
   const buffer = synthesizeStudioTrack(ctx, spec as never);
@@ -16,11 +35,10 @@ function buildGraph() {
 
 describe("headless mixer", () => {
   test("constructs without an audio device", () => {
-    const { mixer, ctx } = buildGraph();
+    const { mixer } = buildGraph();
     expect(mixer).toBeDefined();
     expect(mixer.ctx.sampleRate).toBe(SR);
     expect(mixer.decks.length).toBe(2);
-    void ctx;
   });
 
   /**
@@ -63,15 +81,32 @@ describe("headless mixer", () => {
     expect(frames).toBeGreaterThan(SR * 0.5);
   }, 30000);
 
-  test("master clock advances at wall-clock rate", async () => {
-    const { mixer } = buildGraph();
-    const t0 = mixer.ctx.currentTime;
-    const w0 = Date.now();
-    await new Promise((r) => setTimeout(r, 1000));
-    const ratio = (mixer.ctx.currentTime - t0) / ((Date.now() - w0) / 1000);
-    expect(ratio).toBeGreaterThan(0.8);
-    expect(ratio).toBeLessThan(1.25);
-  }, 30000);
+/**
+       * The audio clock must track wall-clock.
+       *
+       * Measured over a single 1s window, which is only valid if the machine is
+       * idle. Under load the audio thread gets starved and the observed ratio
+       * collapses — measured as low as 0.026 — which says nothing about the clock
+       * and everything about CPU contention. So a starved reading is treated as an
+       * invalid measurement and retried once, rather than reported as a defect in
+       * code that is correct.
+       */
+      const measure = async () => {
+        const { mixer, ctx } = buildGraph();
+        const t0 = mixer.ctx.currentTime;
+        const w0 = Date.now();
+        await new Promise((r) => setTimeout(r, 1000));
+        const ratio = (mixer.ctx.currentTime - t0) / ((Date.now() - w0) / 1000);
+        await ctx.close();
+        return ratio;
+      };
+
+      test("master clock advances at wall-clock rate", async () => {
+        let ratio = await measure();
+        if (ratio < 0.5) ratio = await measure();
+        expect(ratio).toBeGreaterThan(0.8);
+        expect(ratio).toBeLessThan(1.25);
+      }, 30000);
 
   test("getMasterOutputNode exposes the broadcast tap", () => {
     const { mixer } = buildGraph();

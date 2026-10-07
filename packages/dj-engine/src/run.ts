@@ -31,7 +31,7 @@ const engine = new HeadlessEngine({
     port: Number(process.env.HARBOR_PORT ?? 8008),
     mount: process.env.HARBOR_MOUNT ?? "dj",
     user: process.env.HARBOR_USER ?? "engine",
-    password: process.env.HARBOR_PASSWORD ?? "REDACTED",
+    password: process.env.HARBOR_PASSWORD, // no default: unset must fail, not use a repo-known value
   },
 });
 

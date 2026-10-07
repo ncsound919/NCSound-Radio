@@ -3,8 +3,9 @@
 #
 #   . "$(dirname "$0")/load-credentials.sh"
 #
-# Populates and exports ICECAST_SOURCE_PASSWORD, ICECAST_ADMIN_PASSWORD and
-# HARBOR_PASSWORD from infra/icecast/.env, then verifies all three are non-empty.
+# Populates and exports ICECAST_SOURCE_PASSWORD, ICECAST_ADMIN_PASSWORD,
+# HARBOR_PASSWORD and LIVE_HARBOR_PASSWORD from infra/icecast/.env, then verifies
+# all four are non-empty.
 # Exits the calling script if the file is missing or a value is blank, so a
 # verify script can never report a healthy station while authenticating with a
 # default nobody rotated.
@@ -31,7 +32,7 @@ set -a
 . "$_CRED_ENV"
 set +a
 
-for _v in ICECAST_SOURCE_PASSWORD ICECAST_ADMIN_PASSWORD HARBOR_PASSWORD; do
+for _v in ICECAST_SOURCE_PASSWORD ICECAST_ADMIN_PASSWORD HARBOR_PASSWORD LIVE_HARBOR_PASSWORD; do
   eval "_val=\$$_v"
   if [ -z "$_val" ]; then
     echo "ERROR: $_v is empty or unset in $_CRED_ENV" >&2
@@ -44,4 +45,5 @@ unset _v _val
 ICECAST_SOURCE_USER=source
 ICECAST_ADMIN_USER=admin
 HARBOR_USER=engine
-export ICECAST_SOURCE_USER ICECAST_ADMIN_USER HARBOR_USER
+LIVE_HARBOR_USER=live
+export ICECAST_SOURCE_USER ICECAST_ADMIN_USER HARBOR_USER LIVE_HARBOR_USER

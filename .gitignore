@@ -14,6 +14,20 @@ server.log
 !.env.example
 *.pem
 
+# wrangler local secrets — never commit
+.dev.vars
+.dev.vars.*
+
+# Supabase project credentials (project ref, DB password, service_role key,
+# access token) — never commit. Rotate if this ever reached a commit.
+supabase.txt
+
+# vendored reference source, throwaway spikes, agent scratch — never commit
+obs-studio-master/
+apps/dj-console/spike/
+.merge-park/
+apps/dj-console/--dur=*
+
 *.tsbuildinfo
 next-env.d.ts
 
@@ -23,7 +37,9 @@ Thumbs.db
 # runtime / generated
 apps/station-web/dev.pid
 apps/station-web/.zscripts/dev.pid
-library/
+# The generated music library at the repo root only. Anchored so it does not
+# also swallow source directories named "library" (e.g. apps/dj-console/src/library).
+/library/
 analysis/.venv/
 analysis/.cache/
 analysis/out/
@@ -36,3 +52,6 @@ analysis/out/
 apps/station-web/db/
 # decoded-analysis cache: regenerated from the library, never committed
 .ncsound-cache/
+
+# wrangler/miniflare local state
+.wrangler/

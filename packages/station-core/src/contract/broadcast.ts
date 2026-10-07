@@ -28,7 +28,6 @@ export type StationIdentity = {
   name: string;
   tagline: string;
   timezone: string;
-  rightsGate: string;
 };
 
 export type ListenerCounts = {
@@ -106,6 +105,17 @@ export type EngineTelemetry = {
   scratch: ScratchTelemetry | null;
   master: MasterBusTelemetry;
   renderedAheadSec: number;
+  /**
+   * Milliseconds since the render tap last produced a block, or -1 when it never
+   * has.
+   *
+   * `renderedAheadSec` is a derived estimate that saturates at both ends, so a
+   * fully stalled pump pins it to -1 and reads as "slightly behind". This is a
+   * direct observation: climbing into the thousands means the engine has stopped
+   * producing audio while still reporting itself healthy, which is exactly the
+   * state that went unnoticed for hours.
+   */
+  renderStallMs: number;
   cpuMsPerBlock: number;
   sampleRate: number;
 };
@@ -125,6 +135,28 @@ export type EngineStatus = {
   telemetry: EngineTelemetry | null;
   autopilot: AutopilotState;
   listeners: ListenerCounts;
+  /**
+   * The engine's upload into Liquidsoap's harbor, or null when publishing is off.
+   *
+   * The one link in the chain that used to go unreported. Every other link had a
+   * field: the deck had `playing`, the bus had a meter, the mount had a listener
+   * count. The engine could be uploading to nothing while all of them looked
+   * healthy, and the only evidence was a line in Liquidsoap's own log —
+   * `Not ready: need more buffering (0/529200)`.
+   *
+   * Read `backlogBytes`, not `connected`: writing to a socket never fails when the
+   * peer is gone, so `connected` stays true while bytes queue for a reader that
+   * never comes.
+   */
+  harbor: {
+    connected: boolean;
+    bytesSent: number;
+    framesSent: number;
+    /** Bytes queued with nothing draining them. Climbing means a dead peer. */
+    backlogBytes: number;
+    reconnects: number;
+    lastError: string | null;
+  } | null;
   uptimeSec: number;
   serverTime: string;
   lastError: string | null;

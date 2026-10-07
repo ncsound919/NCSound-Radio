@@ -1,0 +1,18 @@
+{
+  "name": "@ncsound/station-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Typed client for the NCSound station-web public API. Shared by the listener app and the web player, so mount names, response shapes and offline handling cannot drift.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@ncsound/station-core": "workspace:*"
+  }
+}

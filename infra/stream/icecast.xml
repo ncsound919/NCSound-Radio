@@ -1,0 +1,78 @@
+<?xml version="1.0"?>
+<!--
+  NCSound Radio - public stream relay (VPS).
+
+  A DUMB relay: the home Liquidsoap pushes its two mounts here as a source
+  client, and this Icecast re-serves them over TLS to listeners. It does not
+  sequence, mix or fail over - all of that stays on the home engine and in
+  ncsound.liq. See docs/MOBILE-LISTENER-APP-IMPLEMENTATION.md section 4
+  (decisions D9-D11).
+
+  Not Cloudflare: Cloudflare's terms bar serving audio over the free CDN and it
+  does not cache ICY streams, so the listener-facing host is this VPS on a
+  DNS-only subdomain.
+
+  Element names matter. Icecast per-mount settings live in
+  <mount><mount-name>...</mount-name> with <max-listeners> (plural) and
+  <genre>. A bare <mount> or <max-listener> is silently ignored - the mount is
+  still created from the source connection, but none of the settings apply.
+  (The home icecast.xml uses those incorrect names; this relay does not.)
+
+  The __PLACEHOLDERS__ are rendered from infra/stream/.env before start (or set
+  as the image's environment). Do not commit real values. Source auth must be
+  GLOBAL in <authentication>: a per-mount <password> is only honoured with a
+  matching <username>, which source clients rarely send.
+
+  Note: an XML comment cannot contain a double hyphen.
+-->
+<icecast>
+  <location>NCSound Radio relay</location>
+  <admin>ops@ncsound.example</admin>
+  <hostname>stream.example.com</hostname>
+
+  <!-- Source upload + plain status. Firewall this port to the home IP only. -->
+  <listen-socket>
+    <port>8000</port>
+  </listen-socket>
+
+  <!-- HTTPS: listeners, the Icecast status page, and the station's poller
+       (ICECAST_STATUS_TLS=1 with ICECAST_STATUS_PORT=443). -->
+  <listen-socket>
+    <port>443</port>
+    <ssl>1</ssl>
+  </listen-socket>
+
+  <authentication>
+    <source-password>__ICECAST_SOURCE_PASSWORD__</source-password>
+    <admin-user>admin</admin-user>
+    <admin-password>__ICECAST_ADMIN_PASSWORD__</admin-password>
+  </authentication>
+
+  <paths>
+    <!-- Concatenated certificate chain + private key, e.g.
+         cat fullchain.pem privkey.pem > bundle.pem
+         Match this path to the image you run. -->
+    <ssl-certificate>/etc/icecast2/bundle.pem</ssl-certificate>
+  </paths>
+
+  <mount type="normal">
+    <mount-name>/live.mp3</mount-name>
+    <public>1</public>
+    <hidden>0</hidden>
+    <max-listeners>1000</max-listeners>
+    <stream-name>NCSound Radio</stream-name>
+    <stream-description>Independent hip-hop radio</stream-description>
+    <genre>Various</genre>
+  </mount>
+
+  <mount type="normal">
+    <mount-name>/mobile.mp3</mount-name>
+    <public>1</public>
+    <hidden>0</hidden>
+    <max-listeners>1000</max-listeners>
+    <stream-name>NCSound Radio (mobile)</stream-name>
+    <genre>Various</genre>
+  </mount>
+
+  <fileserve>1</fileserve>
+</icecast>

@@ -1,0 +1,16 @@
+{
+  "context_window": 200000,
+  "commit_docs": false,
+  "workflow": {
+    "research_enabled": true,
+    "plan_checker_enabled": true,
+    "tdd_mode": false,
+    "security_enforcement": true,
+    "security_asvs_level": 1,
+    "security_block_on": "high",
+    "ui_phase": true,
+    "ui_safety_gate": true,
+    "pattern_mapper": true,
+    "plan_chunked": false
+  }
+}

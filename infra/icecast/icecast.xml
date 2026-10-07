@@ -75,25 +75,25 @@
 
   <!-- Primary mount: 128 kbps from Liquidsoap. -->
   <mount type="normal">
-    <mount>/live.mp3</mount>
+    <mount-name>/live.mp3</mount-name>
     <public>1</public>
     <hidden>0</hidden>
-    <max-listener>500</max-listener>
+    <max-listeners>500</max-listeners>
     <queue-size>1048576</queue-size>
     <stream-name>NCSound Radio</stream-name>
     <stream-description>Independent hip-hop radio</stream-description>
-    <stream-genre>Various</stream-genre>
+    <genre>Various</genre>
   </mount>
 
   <!-- Mobile mount: 64 kbps. Matches the 128/64 switch in the station player. -->
   <mount type="normal">
-    <mount>/mobile.mp3</mount>
+    <mount-name>/mobile.mp3</mount-name>
     <public>1</public>
     <hidden>0</hidden>
-    <max-listener>500</max-listener>
+    <max-listeners>500</max-listeners>
     <queue-size>1048576</queue-size>
     <stream-name>NCSound Radio (mobile)</stream-name>
-    <stream-genre>Various</stream-genre>
+    <genre>Various</genre>
   </mount>
 
   <fileserve-ttl>10</fileserve-ttl>

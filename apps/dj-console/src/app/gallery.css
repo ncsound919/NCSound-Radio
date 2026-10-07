@@ -1,0 +1,6 @@
+.gal { margin: 0; min-height: 100dvh; background: var(--nc-desk); color: var(--nc-ink); font: 14px/1.4 var(--nc-font); }
+.gal-frame { max-width: 1100px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 16px; }
+.gal-intro { margin: 0; color: var(--nc-muted); font-size: 13px; }
+.gal-row { background: var(--nc-chassis); border: 1px solid var(--nc-hairline); border-radius: var(--nc-radius-m); padding: 14px 16px; }
+.gal-row h2 { margin: 0 0 12px; font: 600 13px var(--nc-font); color: var(--nc-ink-dim); }
+.gal-body { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }

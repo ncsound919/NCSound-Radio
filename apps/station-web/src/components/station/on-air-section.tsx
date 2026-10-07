@@ -4,7 +4,6 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import Image from 'next/image'
 import { motion } from 'framer-motion'
 import {
-  ArrowRight,
   CalendarClock,
   Disc3,
   Flame,
@@ -20,7 +19,7 @@ import {
   Play,
   Radio,
   Share2,
-  ShieldCheck,
+  Library,
   Sun,
   TrendingUp,
   Upload,
@@ -79,11 +78,10 @@ function hashString(s: string): number {
   return h
 }
 
-/** Deterministic art hue from the rights ID — amber/red family only (20..45). */
-function hueForRightsId(rightsId: string | null): number {
-  // No rights record yet: use the neutral hue rather than hashing null.
-  if (!rightsId) return 32
-  return 20 + (hashString(rightsId) % 26)
+/** Deterministic art hue from the track id — amber/red family only (20..45). */
+function hueForTrackId(id: string | null): number {
+  if (!id) return 32
+  return 20 + (hashString(id) % 26)
 }
 
 function fmtTime(sec: number): string {
@@ -185,7 +183,7 @@ function OnAirPill({ mode }: { mode: NowPlayingResponse['mode'] | undefined }) {
 
 /**
  * TrackDialog — detail sheet for any real spin (music / ID / talk). Music
- * tracks deep-link into the request line; imaging/talk link to their ledger.
+ * tracks deep-link into the request line; imaging and talk are not requestable.
  */
 function TrackDialog({
   entry,
@@ -198,7 +196,7 @@ function TrackDialog({
 }) {
   const requestable =
     !!entry && entry.elementKind === 'MUSIC' && !['Imaging', 'Talk'].includes(entry.playlist)
-  const hue = entry ? hueForRightsId(entry.rightsId) : 32
+  const hue = entry ? hueForTrackId(entry.id) : 32
   const { ids, toggle } = useFavorites()
   const isFav = !!entry && ids.has(entry.id)
 
@@ -208,7 +206,6 @@ function TrackDialog({
       id: entry.id,
       title: entry.title,
       artist: entry.artist,
-      rightsId: entry.rightsId,
     })
     if (added) {
       toast.success(`Saved to My Waves — “${entry.title}”`, {
@@ -276,10 +273,6 @@ function TrackDialog({
                 <dd className="font-mono">{fmtTime(entry.durationSec)}</dd>
               </div>
               <div>
-                <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Rights ID</dt>
-                <dd className="font-mono text-primary">{entry.rightsId ?? '—'}</dd>
-              </div>
-              <div>
                 <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Explicit</dt>
                 <dd className="font-medium">{entry.explicit ? 'E — held 6a–7p ET' : 'Clean'}</dd>
               </div>
@@ -321,18 +314,6 @@ function TrackDialog({
                   <Share2 aria-hidden="true" />
                   Share
                 </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    onClose()
-                    onNavigate('rights')
-                  }}
-                >
-                  <ShieldCheck aria-hidden="true" />
-                  Rights ledger
-                </Button>
               </div>
               {requestable ? (
                 <Button type="button" size="sm" onClick={handleRequest}>
@@ -363,7 +344,7 @@ function FavoriteHeartButton({
   track,
   alwaysVisible = false,
 }: {
-  track: { id: string; title: string; artist: string; rightsId: string | null }
+  track: { id: string; title: string; artist: string }
   alwaysVisible?: boolean
 }) {
   const { ids, toggle } = useFavorites()
@@ -448,10 +429,6 @@ export function OnAirSection({ onNavigate }: { onNavigate: (tab: string) => void
         <SponsorTicker onNavigate={onNavigate} />
       </FadeIn>
 
-      <FadeIn delay={0.35}>
-        <TrustNote onNavigate={onNavigate} />
-      </FadeIn>
-
       <TrackDialog
         entry={dialogEntry}
         onClose={() => setDialogEntry(null)}
@@ -490,7 +467,6 @@ function Hero({
         ? `${data.stream.mounts[0].bitrateKbps} kbps ${data.stream.encoder.toUpperCase()}`
         : 'bitrate unknown',
     },
-    { icon: ShieldCheck, label: 'Rights-cleared library' },
     data?.daypart
       ? {
           icon: Sun,
@@ -665,7 +641,7 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
   const track = data?.current?.track
   const duration = data?.current?.duration ?? 0
   const remaining = Math.max(0, duration - progress * duration)
-  const hue = track ? hueForRightsId(track.rightsId) : 32
+  const hue = track ? hueForTrackId(track.id) : 32
   const kind = data?.element?.kind ?? 'MUSIC'
   const isSponsorSpot = kind === 'AD_SPOT' && Boolean(data?.element?.sponsorName)
   const isHousePromo = kind === 'AD_SPOT' && !data?.element?.sponsorName
@@ -673,7 +649,7 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
   // Use the label the route actually sends. This used to hardcode
   // "explicit lyrics held until 7:00 PM ET", a daypart policy the station does
   // not implement and cannot report.
-  const daypartNote = data?.daypart?.label ?? 'Autopilot sequencing — rights gate enforced'
+  const daypartNote = data?.daypart?.label ?? 'Autopilot sequencing'
 
   return (
     <Card
@@ -763,11 +739,6 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
                   >
                     {track.playlist}
                   </Badge>
-                  {track.rightsId && (
-                    <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
-                      {track.rightsId}
-                    </span>
-                  )}
                   {track.bpm !== null && (
                     <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
                       {track.bpm} BPM
@@ -782,11 +753,6 @@ function NowPlayingCard({ data, progress }: { data: NowPlayingResponse | null; p
                     </span>
                   )}
                 </>
-              )}
-              {kind === 'STATION_ID' && track.rightsId && (
-                <span className="rounded border border-border/70 bg-background/70 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground backdrop-blur">
-                  {track.rightsId}
-                </span>
               )}
               {isTalk && (
                 <span className="rounded border border-amber-400/50 bg-background/70 px-1.5 py-0.5 text-[10px] font-semibold text-amber-500 backdrop-blur">
@@ -1080,7 +1046,7 @@ function RecentlyPlayedCard({
           <History className="h-4 w-4 text-primary" aria-hidden="true" />
           Recently Played
         </CardTitle>
-        <CardDescription>Last ten spins from the play-log ledger</CardDescription>
+        <CardDescription>Last ten spins from the play log</CardDescription>
       </CardHeader>
       <CardContent>
         {error ? (
@@ -1143,9 +1109,6 @@ function RecentlyPlayedCard({
                 >
                   {play.track.playlist}
                 </Badge>
-                <span className="hidden shrink-0 font-mono text-[10px] text-muted-foreground sm:inline">
-                  {play.track.rightsId}
-                </span>
                 <span className="w-20 shrink-0 text-right text-[10px] text-muted-foreground">
                   {timeAgo(new Date(play.playedAt).getTime(), serverMs)}
                 </span>
@@ -1213,14 +1176,10 @@ function StatsStrip() {
           spark: false,
         },
         {
-          icon: ShieldCheck,
-          label: 'Cleared Tracks',
-          value: (
-            <>
-              <AnimatedStat value={data.library.cleared} />/{data.library.tracks}
-            </>
-          ),
-          sub: 'every spin rights-checked',
+          icon: Library,
+          label: 'Library Tracks',
+          value: <AnimatedStat value={data.library.tracks} />,
+          sub: 'on the station wheel',
           spark: false,
         },
         {
@@ -1348,34 +1307,5 @@ function SponsorTicker({ onNavigate }: { onNavigate: (tab: string) => void }) {
         )}
       </CardContent>
     </Card>
-  )
-}
-
-// -------------------------------------------------------------- trust note
-
-function TrustNote({ onNavigate }: { onNavigate: (tab: string) => void }) {
-  return (
-    <section
-      aria-label="Rights gate note"
-      className="flex flex-col gap-4 rounded-xl border border-border/60 bg-card/60 p-4 sm:flex-row sm:items-center sm:p-5"
-    >
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-primary/30 bg-primary/10">
-        <ShieldCheck className="h-5 w-5 text-primary" aria-hidden="true" />
-      </span>
-      <p className="flex-1 text-sm leading-relaxed text-muted-foreground">
-        <span className="font-semibold text-foreground">The Rights Gate</span> — every track airs
-        only after its rights record reads CLEARED. Browse the public ledger.
-      </p>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        onClick={() => onNavigate('rights')}
-        className="text-primary hover:text-primary"
-      >
-        Browse the ledger
-        <ArrowRight aria-hidden="true" />
-      </Button>
-    </section>
   )
 }

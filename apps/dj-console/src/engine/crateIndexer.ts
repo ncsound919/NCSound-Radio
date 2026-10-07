@@ -889,8 +889,8 @@ export function searchAndFilterCrate<T extends CrateSearchCandidate>(
     if (sortBy === "bpm-asc") return a.item.analysis.bpm - b.item.analysis.bpm;
     if (sortBy === "bpm-desc") return b.item.analysis.bpm - a.item.analysis.bpm;
     if (sortBy === "key") {
-      const ka = a.item.analysis.key || "8A";
-      const kb = b.item.analysis.key || "8A";
+      const ka = a.item.analysis.key || "";
+      const kb = b.item.analysis.key || "";
       const na = parseInt(ka, 10) + (ka.endsWith("B") ? 12 : 0);
       const nb = parseInt(kb, 10) + (kb.endsWith("B") ? 12 : 0);
       return na - nb;

@@ -9,12 +9,13 @@
     "./contract": "./src/contract/index.ts",
     "./analysis": "./src/contract/analysis.ts",
     "./control": "./src/contract/control.ts",
-    "./schema": "./src/schema/index.ts"
+    "./schema": "./src/schema/index.ts",
+    "./http": "./src/http/index.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test ./test/contract.test.ts"
+    "test": "bun test ./test/"
   },
   "peerDependencies": {
     "zod": "^4.0.0"

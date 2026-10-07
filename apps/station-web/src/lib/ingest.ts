@@ -11,10 +11,9 @@
  * admits it is not connected.
  */
 
-const INGEST_BASE = process.env.INGEST_URL ?? 'http://127.0.0.1:8099'
+import { streamUrl as streamUrlFor } from './stream'
 
-/** Icecast moved off 8000: an unrelated Windows service holds that port. */
-const ICECAST_PORT = process.env.ICECAST_PORT ?? '8010'
+const INGEST_BASE = process.env.INGEST_URL ?? 'http://127.0.0.1:8099'
 
 export type IngestEngineStatus = {
   state: string
@@ -49,6 +48,22 @@ export type IngestEngineStatus = {
   } | null
   autopilot: { enabled: boolean; vibeTemplateId: string | null; crateSize: number }
   /**
+   * The upload into Liquidsoap's harbor.
+   *
+   * The one link that went unreported while it was broken — the engine rendered
+   * audio and uploaded to nothing, and the only evidence was a line in
+   * Liquidsoap's own log. `connected` stays true when nothing is reading, so
+   * `backlogBytes` is the honest liveness signal.
+   */
+  harbor?: {
+    connected: boolean
+    bytesSent: number
+    framesSent: number
+    backlogBytes: number
+    reconnects: number
+    lastError: string | null
+  } | null
+  /**
    * Per-deck state and the master spectrum.
    *
    * `playing` is an observation of the deck, not the `state` string. The state
@@ -61,6 +76,9 @@ export type IngestEngineStatus = {
    */
   telemetry: {
     spectrum: number[]
+    /** -1 when never; climbing into the thousands means production has stopped. */
+    renderStallMs?: number
+    renderedAheadSec?: number
     decks?: { slot: number; trackId: string | null; playing: boolean; positionSec: number }[]
   }
   listeners: { current: number; peak24h: number; source: string }
@@ -120,6 +138,15 @@ export type IngestStatus = {
     lastRecoveryAt: string | null
   } | null
   station?: { onAir: boolean | null; error: string | null }
+  /**
+   * Liquidsoap's own report of whether the engine's upload is connected.
+   *
+   * From `input.harbor`'s connect/disconnect callbacks, so it is a fact rather
+   * than an inference. The publisher's client-side flag is not usable: writing to
+   * a socket whose peer is gone never fails, so after a daemon restart it read
+   * `true` with zero reconnects while the mount carried -91 dBFS.
+   */
+  harborSource?: { onAir: boolean | null; error: string | null } | null
   broadcast?: {
     onAir: boolean
     reason: string
@@ -133,8 +160,7 @@ export type IngestStatus = {
 }
 
 /** Public stream URL, served by Icecast rather than by Next. */
-export const streamUrl = (mobile = false) =>
-  `http://127.0.0.1:${ICECAST_PORT}${mobile ? '/mobile.mp3' : '/live.mp3'}`
+export const streamUrl = (mobile = false) => streamUrlFor(mobile ? 'mobile' : 'hi')
 
 async function getJson<T>(path: string, timeoutMs = 2500): Promise<T | null> {
   try {

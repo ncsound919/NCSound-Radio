@@ -126,12 +126,6 @@ export function MyWavesCard() {
                     </p>
                     <p className="truncate text-xs text-muted-foreground">
                       {fav.artist}
-                      {fav.rightsId && (
-                        <>
-                          <span className="mx-1.5 text-border">·</span>
-                          <span className="font-mono text-[10px]">{fav.rightsId}</span>
-                        </>
-                      )}
                       {onAir && heat > 0 && (
                         <span className="ml-1.5 inline-flex items-center gap-0.5 text-[10px] text-red-400">
                           <Flame className="h-3 w-3" aria-hidden="true" />

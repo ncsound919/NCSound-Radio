@@ -85,17 +85,34 @@ function forceRecoveringSample(watchdog: MountWatchdog, audibleAfterCalls: numbe
 }
 
 describe("mount watchdog", () => {
-  test("a real measurement of the live mount parses", async () => {
-    const { watchdog } = makeWatchdog({ intent: () => true });
-    const sample = await watchdog.sample();
-
-    // Verifies ffmpeg is invoked correctly and volumedetect output is parsed.
-    // It deliberately does NOT assert `verdict`, because the station is
-    // legitimately silent whenever it is off air or stopped - asserting that
-    // here would make the suite depend on whether a DJ is currently playing.
-    expect(sample.error).toBeNull();
-    expect(sample.meanDb).not.toBeNull();
-    expect(typeof sample.meanDb).toBe("number");
+  test("a real ffmpeg measurement of a mount parses", async () => {
+    // This used to measure http://127.0.0.1:8010/live.mp3 and failed on any
+    // machine without a running station. It now serves its own 10 s, 440 Hz
+    // MP3 over HTTP, so ffmpeg and the volumedetect parser are exercised
+    // everywhere. Set NCSOUND_TEST_MOUNT to measure a real station instead.
+    const mp3 = Bun.spawnSync(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:d=10", "-f", "mp3", "pipe:1"]).stdout;
+    expect(mp3.byteLength).toBeGreaterThan(10_000);
+    const server = process.env.NCSOUND_TEST_MOUNT
+      ? null
+      : Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response(new Uint8Array(mp3), { headers: { "content-type": "audio/mpeg" } }) });
+    try {
+      const mountUrl = process.env.NCSOUND_TEST_MOUNT ?? `http://127.0.0.1:${server!.port}/live.mp3`;
+      const watchdog = new MountWatchdog({
+        mountUrl,
+        enabled: false,
+        recover: async () => ({ ok: true, detail: "unused" }),
+        operatorIntent: () => true,
+      });
+      const sample = await watchdog.sample();
+      expect(sample.error).toBeNull();
+      expect(typeof sample.meanDb).toBe("number");
+      if (server) {
+        // Our own tone is loud and steady, so here the verdict is known.
+        expect(sample.verdict).toBe("audible");
+      }
+    } finally {
+      server?.stop(true);
+    }
   });
 
   test("classifies measured audio against the silence floor", async () => {
@@ -235,6 +252,44 @@ describe("mount watchdog", () => {
     expect(status.recoveries[0].ok).toBe(false);
     expect(status.recoveries[1].ok).toBe(false);
     expect(status.lastRecoveryAt).not.toBeNull();
+  });
+
+  /**
+   * A repair is not instantaneous.
+   *
+   * Re-opening the harbor upload has to refill Liquidsoap's 12-second startup
+   * buffer before anything reaches the mount. A single measurement straight after
+   * the repair reads the pre-recovery state, so a fix that genuinely worked gets
+   * logged as a failure — which is what happened live.
+   */
+  test("waits for delivery instead of judging the repair instantly", async () => {
+    const { watchdog } = makeWatchdog({
+      intent: () => true,
+      silentSamplesBeforeRecovery: 1,
+      recover: async () => ({ ok: true, detail: "re-opened the harbor upload" }),
+    });
+    // Silent for the streak sample and the first three verification reads, then
+    // audio arrives.
+    forceRecoveringSample(watchdog, 4);
+
+    await watchdog.tick();
+
+    const recovery = watchdog.status.recoveries.at(-1);
+    expect(recovery?.ok).toBe(true);
+    expect(recovery?.detail).toMatch(/audible/);
+  });
+
+  test("gives up honestly when the repair never delivers", async () => {
+    const { watchdog } = makeWatchdog({
+      intent: () => true,
+      silentSamplesBeforeRecovery: 1,
+      recover: async () => ({ ok: true, detail: "re-opened the harbor upload" }),
+    });
+    forceSample(watchdog, "silent", -91);
+
+    await watchdog.tick();
+
+    expect(watchdog.status.recoveries.at(-1)?.ok).toBe(false);
   });
 
   test("a verified recovery is recorded as a success", async () => {

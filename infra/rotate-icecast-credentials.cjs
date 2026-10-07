@@ -43,6 +43,7 @@ const creds = {
   ICECAST_SOURCE_PASSWORD: gen(),
   ICECAST_ADMIN_PASSWORD: gen(),
   HARBOR_PASSWORD: gen(),
+  LIVE_HARBOR_PASSWORD: gen(),
 };
 
 const body = [
@@ -54,7 +55,7 @@ const body = [
   '# infra/station-up.sh renders them into /etc/icecast2/icecast.xml at copy time.',
   '# Liquidsoap and the verify scripts read these directly.',
   '#',
-  '# Rotating all three together is mandatory: changing the source password',
+  '# Rotating all four together is mandatory: changing the source password',
   '# without changing ncsound.liq leaves Liquidsoap authenticating with a stale',
   '# password, the mount goes silent, and Icecast reports the mount as healthy',
   '# with no source on it. Restart both daemons together (station-down.sh then',
@@ -63,6 +64,7 @@ const body = [
   `ICECAST_SOURCE_PASSWORD=${creds.ICECAST_SOURCE_PASSWORD}`,
   `ICECAST_ADMIN_PASSWORD=${creds.ICECAST_ADMIN_PASSWORD}`,
   `HARBOR_PASSWORD=${creds.HARBOR_PASSWORD}`,
+  `LIVE_HARBOR_PASSWORD=${creds.LIVE_HARBOR_PASSWORD}`,
   '',
 ].join('\n');
 
@@ -85,6 +87,11 @@ const example = [
   '# Password for the Harbor ingest endpoint on 127.0.0.1:8008/dj, which the DJ',
   '# engine pushes audio into. Must equal the password in ncsound.liq.',
   'HARBOR_PASSWORD=replace-with-32-hex-chars',
+  '',
+  '# Password for the LIVE harbor mount on 127.0.0.1:8008/live, which the DJ',
+  '# console reaches through ingest (ingest -> ffmpeg -> this mount). Must equal',
+  '# the password in ncsound.liq. Rotate with the others and restart both daemons.',
+  'LIVE_HARBOR_PASSWORD=replace-with-32-hex-chars',
   '',
 ].join('\n');
 fs.writeFileSync(EXAMPLE_PATH, example);

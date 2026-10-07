@@ -3,11 +3,21 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { AGREEMENT_VERSION } from '@/lib/station-types'
 import { toSubmissionDTO } from '@/lib/broadcast'
-import { allow, clientIp } from '@/lib/rate-limit'
+import { allow, clientIp, trustedClientIp } from '@/lib/rate-limit'
+import { requireAdmin } from '@/lib/admin-auth'
+import {
+  ALLOWED_AUDIO_EXTS,
+  audioExt,
+  looksLikeAudio,
+  newSubmissionId,
+  removeFromInbox,
+  safeSegment,
+  saveToInbox,
+} from '@/lib/submission-audio'
 
 export const dynamic = 'force-dynamic'
 
-const MAX_FILE_BYTES = 15 * 1024 * 1024 // 15MB (metadata only — never written to disk)
+const MAX_FILE_BYTES = 15 * 1024 * 1024 // 15MB; saved to the local submissions inbox
 
 const submissionSchema = z.object({
   artistName: z.string().min(1, 'Artist name is required').max(120),
@@ -41,9 +51,15 @@ const asBool = (v: unknown): boolean =>
   v === true || v === 1 || v === 'true' || v === 'on' || v === '1'
 
 /**
- * GET /api/submissions — full pipeline, newest first.
+ * GET /api/submissions — full pipeline, newest first. Admin only.
+ *
+ * Every row carries the artist's email, agreement IP and review notes. This
+ * used to be open, so anyone who could reach the site could download the
+ * whole submitter list. Artists check their own status via /lookup.
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = await requireAdmin(request)
+  if (denied) return denied
   try {
     const rows = await db.submission.findMany({
       orderBy: { createdAt: 'desc' },
@@ -60,8 +76,9 @@ export async function GET() {
 
 /**
  * POST /api/submissions — accepts JSON or multipart/form-data.
- * Multipart may include an optional `file` audio field (<= 15MB); only its
- * metadata (fileName, fileSize) is stored, the binary is never written.
+ * Multipart may include an optional `file` audio field (<= 15MB). It is saved
+ * to the local submissions inbox (NCSOUND_SUBMISSIONS_DIR) and only copied into
+ * the engine's library when an admin approves the submission.
  */
 export async function POST(request: Request) {
   try {
@@ -73,10 +90,23 @@ export async function POST(request: Request) {
       )
     }
 
+    // formData() buffers the entire body before the per-file size check can
+    // run, so the 15MB limit did not bound memory. Refuse oversized bodies up
+    // front. (A client can omit content-length with chunked encoding; a
+    // reverse-proxy body limit is the real backstop when exposed publicly.)
+    const declared = Number(request.headers.get('content-length') ?? '0')
+    if (Number.isFinite(declared) && declared > MAX_FILE_BYTES + 64 * 1024) {
+      return NextResponse.json(
+        { error: 'Audio file exceeds the 15MB limit' },
+        { status: 413 },
+      )
+    }
+
     const contentType = request.headers.get('content-type') ?? ''
     let raw: RawBody = {}
     let fileName: string | null = null
     let fileSize: number | null = null
+    let audio: { ext: string; data: Uint8Array } | null = null
 
     if (contentType.includes('multipart/form-data')) {
       const form = await request.formData()
@@ -89,7 +119,22 @@ export async function POST(request: Request) {
                 { status: 400 },
               )
             }
-            fileName = value.name
+            const ext = audioExt(value.name)
+            if (!ext) {
+              return NextResponse.json(
+                { error: `Audio must be one of: ${ALLOWED_AUDIO_EXTS.join(', ')}` },
+                { status: 400 },
+              )
+            }
+            const data = new Uint8Array(await value.arrayBuffer())
+            if (!looksLikeAudio(data, ext)) {
+              return NextResponse.json(
+                { error: `That file does not look like a real ${ext} audio file` },
+                { status: 400 },
+              )
+            }
+            audio = { ext, data }
+            fileName = safeSegment(value.name, 120)
             fileSize = value.size
           }
         } else if (typeof value === 'string') {
@@ -136,11 +181,30 @@ export async function POST(request: Request) {
 
     const data = parsed.data
     const now = new Date()
-    const forwardedFor = request.headers.get('x-forwarded-for')
-    const agreementIp = forwardedFor?.split(',')[0]?.trim() || 'unknown'
+    // Only record an IP a trusted proxy vouched for; a client-written header
+    // on a signed agreement is evidence of nothing.
+    const agreementIp = trustedClientIp(request) ?? 'unknown'
 
-    const submission = await db.submission.create({
+    // Write the audio before the row exists: a submission that claims a file
+    // we failed to keep is worse than a clear error the artist can retry.
+    const id = newSubmissionId()
+    if (audio) {
+      try {
+        await saveToInbox(id, audio.ext, audio.data)
+      } catch (error) {
+        console.error('[api/submissions POST] could not save audio', error)
+        return NextResponse.json(
+          { error: 'Could not store the audio file — please try again.' },
+          { status: 500 },
+        )
+      }
+    }
+
+    let submission
+    try {
+      submission = await db.submission.create({
       data: {
+        id,
         artistName: data.artistName,
         email: data.email,
         trackTitle: data.trackTitle,
@@ -157,7 +221,11 @@ export async function POST(request: Request) {
         agreementAcceptedAt: now,
         agreementIp,
       },
-    })
+      })
+    } catch (error) {
+      if (audio) await removeFromInbox(id, audio.ext)
+      throw error
+    }
 
     // Loose artist registry upsert keyed by name.
     const existingArtist = await db.artist.findFirst({

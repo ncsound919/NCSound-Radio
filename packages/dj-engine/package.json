@@ -9,6 +9,8 @@
     "./mixer": "./src/engine/mixer.ts",
     "./engine/types": "./src/engine/types.ts",
     "./deck": "./src/engine/deck.ts",
+    "./fx": "./src/engine/fx/index.ts",
+    "./sampler": "./src/engine/sampler.ts",
     "./analysis": "./src/engine/analysis.ts",
     "./transitions": "./src/engine/transitions.ts",
     "./marathon": "./src/engine/marathon.ts",
@@ -22,7 +24,8 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test --timeout 30000 ./test/"
+    "//test": "Every test here renders audio in real time and owns a headless AudioContext with its own audio thread. bun's default --max-concurrency is 20, so twenty of those compete for one machine and the assertions about rendered level start failing at random: three consecutive runs gave 29 pass/0 fail, 24/5 and 25/4, with a different set of failures each time. Serialising costs wall-clock and buys a result you can trust.",
+    "test": "bun test --timeout 30000 --max-concurrency 1 ./test/"
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",
