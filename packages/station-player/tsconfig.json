@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": [],
+    "paths": {
+      "@ncsound/station-client": ["../station-client/src/index.ts"],
+      "@ncsound/station-core": ["../station-core/src/index.ts"],
+      "@ncsound/station-core/http": ["../station-core/src/http/index.ts"]
+    }
+  },
+  "include": ["src"]
+}

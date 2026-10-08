@@ -1,0 +1,18 @@
+{
+  "name": "@ncsound/station-player",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Platform-agnostic live-radio playback logic for the NCSound listener app: mount selection, reconnect policy, stall watchdog, sleep timer. Pure and clock-injected so it is unit-tested without a device.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test ./test/"
+  },
+  "dependencies": {
+    "@ncsound/station-client": "workspace:*"
+  }
+}
