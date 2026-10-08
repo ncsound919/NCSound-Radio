@@ -69,6 +69,23 @@ Open `http://127.0.0.1:3102`, switch to **Radio**, open **Broadcast**, then pres
 - "ingest requires a token…" means `INGEST_TOKEN` is missing or wrong on the laptop.
 - "origin not allowed" means you opened the console on a non-loopback address. Use 127.0.0.1, or add that origin to `INGEST_ALLOWED_ORIGINS` on ingest.
 
+## Alternative control-plane: Workers VPC (2026)
+
+Workers VPC (beta, free) lets a Worker bind to a **private** host:port through a
+Cloudflare Tunnel (or Mesh/WAN), HTTP or raw TCP. That removes the need to give
+ingest a **public** `ingest.<domain>` hostname:
+
+- Register the home ingest (`127.0.0.1:8099`) as a **VPC Service**; a Worker
+  (e.g. `ncsound-api`) reaches it via the binding with no public route.
+- The console and station-web then talk to that Worker, not to a public tunnel
+  host — so there is no control hostname for an attacker to find, and **Cloudflare
+  Access becomes optional** for the control path (the VPC binding is the boundary).
+- Raw TCP + Hyperdrive also reaches Supabase Postgres privately.
+
+Still beta, and not routable on this account yet, so the tunnel model above stays
+the working default. Evaluate VPC when hardening the control plane. See
+`docs/CLOUDFLARE-NEW-2026.md`.
+
 ## Bandwidth
 
 192 kbps Opus needs about 250 kbps of sustained upload. If **Queued s** climbs or **Behind s** keeps rising, the uplink can't keep up: hand back, pick **128 kbps**, and go live again. After 3 s behind, the console treats it as a drop and the station falls back to autopilot by itself.

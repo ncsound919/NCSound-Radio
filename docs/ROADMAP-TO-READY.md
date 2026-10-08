@@ -71,7 +71,7 @@ Auth backend (schema, RLS, delete-account, request attribution) is **[done]**.
 | C1 | ingest: `Session` slot window (`notBefore`/`notAfter`), optional `producer` role, **audit log** | **[done 2026-10-07]** — window enforced at `/live/arm`; a slot end clamps `expiresAt` (the air drops then); JSONL audit of `session.issue/revoke` + `live.arm/kill` via `INGEST_AUDIT_FILE`. No `producer` role: guest + `canLive:false` covers it |
 | C2 | Host + guest console builds; host door adds `/requests`; guest door as today | **[done 2026-10-07]** — the guest door already proxies `/requests`; ingest's role-scoped reads (host includes `/requests`) do the scoping, so one door serves both invite roles |
 | C3 | Enable **Cloudflare Access**; OTP IdP; apps + policies on `host/guest/ingest.<domain>` | **[blocked]** — enable Access |
-| C4 | Host/guest doors served behind Access (Pages or a tunnel hostname) | **[todo]** |
+| C4 | Host/guest doors served behind Access (Pages or a tunnel hostname) | **[todo]** — **optional if the control plane moves to Workers VPC** (2026), where the private binding is the boundary instead of a public Access gate. See `CLOUDFLARE-NEW-2026.md` |
 | C5 | Shows & slots roster in station-web that mints slot-bound sessions | **[partial]** — read-only roster + window-bound mint/revoke in the Ops tab (`api/ops/slots`, `lib/slots`, `SlotsPanel`), admin-gated, using the engine's owner `/sessions`. Needs `INGEST_TOKEN` set on station-web and the Access door (C4) to be usable end-to-end; not yet run against a live engine |
 | C6 | (optional) Access-JWT → session broker so recurring hosts hold no link | **[todo]** |
 
@@ -85,8 +85,8 @@ P0 (gate the public endpoints, worker tokens) is **[done]**.
 |---|---|---|
 | D1 | **Vectorize** "similar tracks": feature producer + index + `/similar` | **[done 2026-10-07]** — index `ncsound-tracks` (32-dim, cosine); `trackFeatureVector` (station-core) from `TrackAnalysis`; Worker `/index` (INDEX_TOKEN, fail-closed) + `/similar`; the console publishes R2 tracks via the `/vectorize` proxy. `/similar` neighbour ordering verified live. Console runtime populates the index as tracks are analysed |
 | D2 | Decide `ncsound-api` gating (`LIBRARY_TOKEN`) — currently fail-open by decision | **[todo]** |
-| D3 | **Access + Turnstile + WAF + rate limits** on public surfaces (phase 7) | **[blocked/todo]** |
-| D4 | **AI Gateway** in front of any model calls | **[blocked]** — token scope |
+| D3 | **Access + Turnstile + WAF + rate limits** on public surfaces (phase 7) | **[partial]** — Turnstile reachable; AI Gateway + AI Search already exist (account). Access: needs enablement, and is optional if the control plane uses Workers VPC |
+| D4 | **AI Gateway** in front of any model calls | **[ready]** — the account already runs `ecosystem` and `default` gateways; reuse one rather than provisioning |
 | D5 | **Hyperdrive → Supabase** (only if a Worker reads operator Postgres) | **[todo]** |
 | D6 | **Durable Objects** for edge control state (if the edge serves now-playing / live keys) | **[todo]** |
 | D7 | **Station container** (Liquidsoap+Icecast+ingest) to retire the home SPOF | **[todo]** |
@@ -104,7 +104,7 @@ input + OBS→Stream wiring.
 | E1 | Host station-web and set the admin credential (`scripts/set-admin-password.ts`) | **[todo]** |
 | E2 | Confirm no remaining ungated endpoints; keep CORS public-only | **[done]** |
 | E3 | Backups: DB snapshots, R2 lifecycle rules, ingest sessions file | **[partial]** — `infra/backup-state.mjs` takes an online SQLite snapshot (`node:sqlite` `backup()`) plus the ingest sessions/audit files, one timestamped dir per run with rotation; verified (integrity ok). Scheduling + R2 lifecycle rules remain |
-| E4 | Monitoring/alerting on the mount watchdog + Icecast | **[todo]** |
+| E4 | Monitoring/alerting on the mount watchdog + Icecast | **[todo]** — edge half is free via Cloudflare **Observability + Notifications** (2026 GA); the mount watchdog stays local (Cloudflare cannot see Icecast internals) |
 | E5 | CI: one pipeline running typecheck + all tests + the check scripts | **[done 2026-10-07]** — `.github/workflows/ci.yml` runs `bun install` + `bun run typecheck` + `bun run test`; the browser check scripts stay local (they need a dev server / OBS) |
 | E6 | Secrets: rotate the OBS password and the Cloudflare Stream key (both surfaced in chat); delete `.history-backup-pre-scrub.bundle`; creds now at `~/.config/ncsound/supabase.txt` | **[partial 2026-10-07]** — bundle deleted; OBS password + Stream key rotation still open (operator action) |
 | E7 | Commit the working tree (very large, long uncommitted) | **[done 2026-10-07]** — baseline `883c3d7`; C1 merged to `main` `1b46a6e`. B's newer packages (`station-data`, `station-player`, `listener-app`) are still untracked — B commits those |

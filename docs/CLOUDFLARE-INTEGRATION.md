@@ -11,6 +11,11 @@ Workers (`vec-memory`, `py-ai`, `browser-run`), R2 (`overlayr2`,
 `oncology-papers`), D1 (`brain-memory`, `truth-chain-ledger`), Vectorize
 (`brain-memory`, 384-dim cosine). Wrangler 4.147 is authenticated on this PC.
 
+> **2026 update:** see `CLOUDFLARE-NEW-2026.md` for the newest products (Workers
+> VPC, MoQ, Observability/Notifications, AI Search GA, Basin, K2) and the measured
+> account state — AI Gateway (`ecosystem`, `default`) and AI Search (`overlay`)
+> already exist and can be reused; KV/Queues/Hyperdrive/MoQ/VPC are empty.
+
 ## 1. Product mapping
 
 | Need | Cloudflare product | Why this one |

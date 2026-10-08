@@ -237,6 +237,12 @@ access to more than their slot":
   + policies/rule groups (`Access: … Write` scope on the API token).
 - Add tunnel ingress hostnames (guest/host/ingest) to `~/.cloudflared/config.yml`.
 - Add a bearer token to the transcode Worker (and decide ncsound-api gating).
+  **[done]** the transcode Worker is `TRANSCODE_TOKEN`-gated; `ncsound-api` stays
+  open by decision (public media).
+- **Workers VPC (2026, beta):** the lower-exposure control-plane option — bind
+  home ingest as a **VPC Service** so a Worker reaches it privately; then
+  **Access is optional** for the control path. Reuse the existing AI Gateway /
+  AI Search in the account. See `docs/REMOTE-LIVE.md` + `docs/CLOUDFLARE-NEW-2026.md`.
 
 ---
 
