@@ -1,6 +1,10 @@
-pluginManagement { includeBuild("../node_modules/@react-native/gradle-plugin") }
+// This is a hoisted bun workspace (bunfig.toml: `linker = "hoisted"`), so
+// @react-native/gradle-plugin lives at the REPO ROOT node_modules, three levels
+// above android/ — not under apps/listener-app/node_modules as the RN template
+// assumes. Both includeBuild calls must point at the same resolved path.
+pluginManagement { includeBuild("../../../node_modules/@react-native/gradle-plugin") }
 plugins { id("com.facebook.react.settings") }
 extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
 rootProject.name = 'NcsoundListener'
 include ':app'
-includeBuild('../node_modules/@react-native/gradle-plugin')
+includeBuild('../../../node_modules/@react-native/gradle-plugin')

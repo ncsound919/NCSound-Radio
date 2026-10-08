@@ -84,13 +84,28 @@ function forceRecoveringSample(watchdog: MountWatchdog, audibleAfterCalls: numbe
   };
 }
 
+// Resolve ffmpeg exactly as the engine does (NCSOUND_FFMPEG first; see
+// src/live.ts), so the test measures with the same binary the ingest path uses.
+// Skip cleanly when no binary resolves rather than reporting a false regression.
+const ffmpegBin =
+  process.env.NCSOUND_FFMPEG ?? (process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
+const ffmpegAvailable = (() => {
+  try {
+    return (
+      Bun.spawnSync([ffmpegBin, "-version"], { stdout: "ignore", stderr: "ignore" }).exitCode === 0
+    );
+  } catch {
+    return false;
+  }
+})();
+
 describe("mount watchdog", () => {
-  test("a real ffmpeg measurement of a mount parses", async () => {
+  test.skipIf(!ffmpegAvailable)("a real ffmpeg measurement of a mount parses", async () => {
     // This used to measure http://127.0.0.1:8010/live.mp3 and failed on any
     // machine without a running station. It now serves its own 10 s, 440 Hz
     // MP3 over HTTP, so ffmpeg and the volumedetect parser are exercised
     // everywhere. Set NCSOUND_TEST_MOUNT to measure a real station instead.
-    const mp3 = Bun.spawnSync(["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:d=10", "-f", "mp3", "pipe:1"]).stdout;
+    const mp3 = Bun.spawnSync([ffmpegBin, "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=f=440:d=10", "-f", "mp3", "pipe:1"]).stdout;
     expect(mp3.byteLength).toBeGreaterThan(10_000);
     const server = process.env.NCSOUND_TEST_MOUNT
       ? null

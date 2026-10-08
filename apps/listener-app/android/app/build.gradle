@@ -25,8 +25,12 @@ if (hasReleaseKeystore) {
  */
 react {
     /* Folders */
-    //   The root of your project, i.e. where "package.json" lives. Default is '../..'
-    // root = file("../../")
+    //   The root of your project: the directory that CONTAINS node_modules. The
+    //   default is "../.." (the app dir), but this is a hoisted bun workspace, so
+    //   node_modules lives at the repo root — three levels above android/ (the
+    //   android dir is apps/listener-app/android). Setting `root` also fixes
+    //   reactNativeDir, codegenDir and cliFile, which default to paths under it.
+    root = file("$rootDir/../../..")
     //   The folder where the react-native NPM package is. Default is ../../node_modules/react-native
     // reactNativeDir = file("../../node_modules/react-native")
     //   The folder where the react-native Codegen package is. Default is ../../node_modules/@react-native/codegen
