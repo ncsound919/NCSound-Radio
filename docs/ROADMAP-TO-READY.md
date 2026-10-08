@@ -11,18 +11,33 @@ exist, needs running) / **[partial]** (part done, part still open) /
 
 ## 0. Critical path
 
+**Verified working locally (2026-10-07):** the whole chain came up — home
+Icecast + Liquidsoap + ingest on `:8137` + the engine — with the full library on
+air (393 tracks), the harbour publishing, and the E4 health check returning
+`ok`. The station is functional on this machine; what remains is making it
+*public* and *safe to delegate*.
+
 The shortest chain to "a listener hears NCSound in the app, and you can safely
-let others drive":
+let others drive" is four gates, each waiting on an external input:
 
-1. Restart Icecast on the home PC (apply the mount fix). *(minutes)*
-2. Provision the VPS stream relay and go live on HTTPS. **Blocks public + app.**
-3. Enable the app's auth providers (Apple/Google) → build the RN app.
-4. Harden host/guest access (slot windows + audit + Access doors) before letting
-   anyone else on air.
-5. Ops/legal/CI before launch.
+| Gate | Needs | Unblocks |
+|---|---|---|
+| 1. Stream relay (A2–A8) | a domain (`stream.<domain>`) + a VPS | public web player + the app |
+| 2. App auth (B2, B7) | Apple Services ID/key + CarPlay entitlement; Google OAuth client | building/shipping the RN app |
+| 3. Access doors (C3/C4, D3) | Cloudflare Access enabled; a token with Stream + AI Gateway scopes; Stream billing | host/guest delegation + phase-7 hardening |
+| 4. Legal (B9) | SoundExchange + a PRO; ISRC data | public launch, Reports of Use |
 
-Everything else (Vectorize, AI Gateway, station container, hub) is additive and
-does not block a first real broadcast.
+Gate 1 is the bottleneck: nothing listener-facing scales until the stream leaves
+the home PC (Cloudflare's CDN is barred for audio and does not cache ICY).
+
+**Finishable now, no external input:** C5 end-to-end (`INGEST_TOKEN` + the slots
+roster against a live engine), E1 hosting target, E3/E4 scheduling (code done,
+verified), E6 secret rotation (OBS password, Stream key), D2 (`ncsound-api`
+gating), and the small `.env.example` tracking fix.
+
+**Additive, not blocking a first broadcast:** D5 Hyperdrive / D6 Durable Objects
+(only if a Worker reads Postgres / serves edge state); D7 containerize the
+station to retire the home SPOF.
 
 ---
 
