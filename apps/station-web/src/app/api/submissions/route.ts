@@ -110,9 +110,12 @@ export async function POST(request: Request) {
 
     if (contentType.includes('multipart/form-data')) {
       const form = await request.formData()
-      for (const [key, value] of form.entries()) {
+      // The ambient FormData type resolves to string-valued entries once
+      // @types/node is hoisted (it shadows the DOM lib), so the `File` arm is
+      // cast back in here. At runtime a multipart `file` part IS a File.
+      for (const [key, value] of form.entries() as IterableIterator<[string, File | string]>) {
         if (key === 'file') {
-          if (value instanceof File && value.size > 0) {
+          if (typeof value !== 'string' && value.size > 0) {
             if (value.size > MAX_FILE_BYTES) {
               return NextResponse.json(
                 { error: 'Audio file exceeds the 15MB limit' },

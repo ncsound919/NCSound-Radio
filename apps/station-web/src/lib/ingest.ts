@@ -13,7 +13,7 @@
 
 import { streamUrl as streamUrlFor } from './stream'
 
-const INGEST_BASE = process.env.INGEST_URL ?? 'http://127.0.0.1:8099'
+const INGEST_BASE = process.env.INGEST_URL ?? 'http://127.0.0.1:8137'
 
 export type IngestEngineStatus = {
   state: string
@@ -251,4 +251,108 @@ export async function sendCommand(
   } catch {
     return { unreachable: true as const, body: null }
   }
+}
+
+// ---- owner session plane (host / guest slots) -----------------------------
+//
+// Minting a credential is an owner act: ingest requires the master
+// `INGEST_TOKEN` for `/sessions` and `/sessions/revoke`, and returns the token
+// exactly once. The listener-facing site never mints; the control room does
+// (see `api/ops/slots`). The three results are kept distinct on purpose —
+// "unreachable", "refused" and "not configured" are three different operator
+// problems, and collapsing them into a bare `null` is how a missing token gets
+// misread as a policy refusal.
+
+export type IngestSessionRole = 'host' | 'guest'
+
+export type IngestSession = {
+  id: string
+  role: IngestSessionRole
+  label: string
+  canLive: boolean
+  /** Slot window (ISO), or null for "no bound". */
+  notBefore: string | null
+  notAfter: string | null
+  createdAt: string
+  expiresAt: string
+  revokedAt: string | null
+}
+
+export type IngestMintInput = {
+  role: IngestSessionRole
+  label: string
+  ttlMin?: number
+  canLive?: boolean
+  notBefore?: string
+  notAfter?: string
+}
+
+export type OwnerResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; status: number; error: string }
+  | { ok: false; unreachable: true }
+
+async function ownerJson<T>(path: string, init: RequestInit = {}): Promise<OwnerResult<T>> {
+  const token = process.env.INGEST_TOKEN
+  if (!token) {
+    return {
+      ok: false,
+      status: 0,
+      error:
+        'This app cannot authenticate to the engine. Set INGEST_TOKEN on the station app to match the engine.',
+    }
+  }
+  try {
+    const res = await fetch(`${INGEST_BASE}${path}`, {
+      ...init,
+      signal: AbortSignal.timeout(4000),
+      cache: 'no-store',
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+        ...((init.headers as Record<string, string> | undefined) ?? {}),
+      },
+    })
+    const body = (await res.json().catch(() => null)) as
+      | (Record<string, unknown> & { error?: string; message?: string })
+      | null
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        error: body?.error ?? body?.message ?? `engine returned ${res.status}`,
+      }
+    }
+    return { ok: true, data: body as T }
+  } catch {
+    return { ok: false, unreachable: true }
+  }
+}
+
+/** Every live host/guest credential the engine currently holds. */
+export async function listIngestSessions(): Promise<OwnerResult<IngestSession[]>> {
+  const result = await ownerJson<{ sessions: IngestSession[] }>('/sessions')
+  if (!result.ok) return result
+  return { ok: true, data: result.data.sessions ?? [] }
+}
+
+/** Mint a credential bound to a slot. The token is returned once. */
+export async function mintIngestSession(
+  input: IngestMintInput,
+): Promise<OwnerResult<{ session: IngestSession; token: string }>> {
+  return ownerJson<{ ok: true; session: IngestSession; token: string }>('/sessions', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+/** Revoke by id; drops the holder off the air if they were live. */
+export async function revokeIngestSession(
+  id: string,
+): Promise<OwnerResult<{ ok: boolean; killedLive: boolean }>> {
+  return ownerJson<{ ok: boolean; killedLive: boolean }>('/sessions/revoke', {
+    method: 'POST',
+    body: JSON.stringify({ id }),
+  })
 }

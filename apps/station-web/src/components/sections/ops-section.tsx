@@ -31,6 +31,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useAdminSession } from '@/hooks/use-admin-session'
 import { cn } from '@/lib/utils'
+import { SlotsPanel } from '@/components/sections/slots-panel'
 import type { StatsResponse, SubmissionDTO } from '@/lib/station-types'
 
 /**
@@ -894,6 +895,9 @@ const problems = readiness.filter((r) => r.state === 'problem').length
           </div>
         </>
       )}
+
+      {/* Shows & slots (C5) — mints window-bound host/guest credentials for others. */}
+      <SlotsPanel unlocked={unlocked} />
     </motion.section>
   )
 }
