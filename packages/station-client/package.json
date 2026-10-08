@@ -12,7 +12,10 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts"
   },
-  "dependencies": {
+  "comments": {
+    "dependencies": "None on purpose: this client is dependency-free at runtime. station-core is a type/test-only dependency (the schema key type and the contract test's injected validator)."
+  },
+  "devDependencies": {
     "@ncsound/station-core": "workspace:*"
   }
 }

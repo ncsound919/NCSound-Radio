@@ -6,8 +6,10 @@
  * shapes and the offline contract cannot drift between them.
  *
  * What it deliberately does NOT do:
- *  - import zod unless response validation is switched on (kept opt-in so the
- *    default bundle stays dependency-free; see `validateResponses`),
+ *  - import zod, or `@ncsound/station-core/http`, at runtime. Response
+ *    validation is *injected* (see `validateResponse`), so the React Native
+ *    bundler never pulls zod in for a caller that leaves validation off. Only
+ *    the type of the schema key crosses the boundary, and types are erased.
  *  - own a base URL from `process.env` (env differs per platform — the caller
  *    passes it, e.g. from `react-native-config`),
  *  - treat the now-playing 503 as an error. Offline is a state the app renders,
@@ -70,6 +72,24 @@ export class StationResponseError extends Error {
   }
 }
 
+/** The slice of a zod `safeParse` result this client reads. Kept structural. */
+export type ResponseValidation =
+  | { success: true }
+  | { success: false; issues: unknown };
+
+/**
+ * Injected response validator. Build it from station-core without importing
+ * station-core here: `(key, body) => responseSchemas[key].safeParse(body)`.
+ *
+ * The client never reaches for a schema itself, so leaving this out keeps zod
+ * (and station-core) entirely out of the bundle — which is what the React Native
+ * app does. Inject it in dev, in CI, and in the mock-server contract test.
+ */
+export type ResponseValidator = (
+  schemaKey: ResponseSchemaKey,
+  body: unknown,
+) => ResponseValidation;
+
 export type StationClientConfig = {
   /** e.g. `https://api.<domain>` or `http://127.0.0.1:3100`. Trailing slash OK. */
   baseUrl: string;
@@ -82,13 +102,8 @@ export type StationClientConfig = {
   fetchImpl?: typeof fetch;
   /** Per-request abort time. Default 8000ms. */
   timeoutMs?: number;
-  /**
-   * Validate every 2xx body against the station-core HTTP schema before handing
-   * it back. Default false (zod stays out of the bundle). Turn it on in dev, in
-   * CI, and in the mock-server contract test; the price is a lazy zod import on
-   * the first request.
-   */
-  validateResponses?: boolean;
+  /** Validate every 2xx body before handing it back. Omitted => no validation. */
+  validateResponse?: ResponseValidator;
 };
 
 export type StationClient = {
@@ -138,7 +153,6 @@ export function createStationClient(config: StationClientConfig): StationClient 
         ...init,
         headers,
         signal: controller.signal,
-        cache: "no-store",
       });
 
       let body: unknown = null;
@@ -157,16 +171,10 @@ export function createStationClient(config: StationClientConfig): StationClient 
         );
       }
 
-      if (config.validateResponses && opts.schema) {
-        const { responseSchemas } = await import("@ncsound/station-core/http");
-        const parsed = responseSchemas[opts.schema].safeParse(body);
+      if (config.validateResponse && opts.schema) {
+        const parsed = config.validateResponse(opts.schema, body);
         if (!parsed.success) {
-          throw new StationResponseError(
-            opts.schema,
-            res.status,
-            parsed.error.issues,
-            body,
-          );
+          throw new StationResponseError(opts.schema, res.status, parsed.issues, body);
         }
       }
 

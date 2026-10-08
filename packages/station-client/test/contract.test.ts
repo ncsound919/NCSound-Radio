@@ -1,13 +1,21 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { createStationClient, StationResponseError } from "../src/index.ts";
+import { responseSchemas } from "@ncsound/station-core/http";
+import { createStationClient, StationResponseError, type ResponseValidator } from "../src/index.ts";
+
+/**
+ * The validator is injected from station-core here (station-client never
+ * imports it), so the client itself stays free of zod.
+ */
+const validate: ResponseValidator = (schemaKey, body) =>
+  responseSchemas[schemaKey].safeParse(body);
 
 /**
  * Fixtures mirror the real route responses (see `apps/station-web/src/app/api/*`).
  * They are the contract sample: if a schema and a route disagree, this is where
  * the disagreement shows up. The server echoes them; the client is constructed
- * with `validateResponses: true`, so every call is zod-checked against the
+ * with the injected `validate` above, so every call is zod-checked against the
  * station-core HTTP schemas before it returns.
  */
 
@@ -126,7 +134,7 @@ after(() => {
 });
 
 function validatedClient() {
-  return createStationClient({ baseUrl, validateResponses: true });
+  return createStationClient({ baseUrl, validateResponse: validate });
 }
 
 test("every endpoint's real response shape validates against the station-core schemas", async () => {
@@ -144,7 +152,7 @@ test("every endpoint's real response shape validates against the station-core sc
 test("a response that drifts from the schema throws StationResponseError, not a silent pass", async () => {
   const client = createStationClient({
     baseUrl,
-    validateResponses: true,
+    validateResponse: validate,
     fetchImpl: (async () =>
       new Response(
         JSON.stringify({
