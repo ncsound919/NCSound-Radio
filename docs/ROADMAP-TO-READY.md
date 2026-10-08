@@ -101,10 +101,10 @@ input + OBS→Stream wiring.
 
 | # | Step | Status |
 |---|---|---|
-| E1 | Host station-web and set the admin credential (`scripts/set-admin-password.ts`) | **[todo]** |
+| E1 | Host station-web and set the admin credential (`scripts/set-admin-password.ts`) | **[partial 2026-10-07]** — credential set/rotated (recoverably stored at `~/.config/ncsound/admin.txt`; the checklist required rotating the shared one). **Hosting remains** — needs a target (Vercel / self-host / Pages); the ops surfaces are otherwise ready |
 | E2 | Confirm no remaining ungated endpoints; keep CORS public-only | **[done]** |
 | E3 | Backups: DB snapshots, R2 lifecycle rules, ingest sessions file | **[partial]** — `infra/backup-state.mjs` takes an online SQLite snapshot (`node:sqlite` `backup()`) plus the ingest sessions/audit files, one timestamped dir per run with rotation; verified (integrity ok). Scheduling + R2 lifecycle rules remain |
-| E4 | Monitoring/alerting on the mount watchdog + Icecast | **[todo]** — edge half is free via Cloudflare **Observability + Notifications** (2026 GA); the mount watchdog stays local (Cloudflare cannot see Icecast internals) |
+| E4 | Monitoring/alerting on the mount watchdog + Icecast | **[partial 2026-10-07]** — `infra/health-check.mjs` polls ingest `/status`, distinguishing "not on air" (exit 1) from "ingest down / port held by another process" (404 or non-JSON ⇒ exit 2); optional `--webhook`. Verified against a mock (healthy 0 / silent 1 / off-air 1 / wrong-service 2). Remaining: schedule it, and the edge half via Cloudflare **Observability + Notifications** |
 | E5 | CI: one pipeline running typecheck + all tests + the check scripts | **[done 2026-10-07]** — `.github/workflows/ci.yml` runs `bun install` + `bun run typecheck` + `bun run test`; the browser check scripts stay local (they need a dev server / OBS) |
 | E6 | Secrets: rotate the OBS password and the Cloudflare Stream key (both surfaced in chat); delete `.history-backup-pre-scrub.bundle`; creds now at `~/.config/ncsound/supabase.txt` | **[partial 2026-10-07]** — bundle deleted; OBS password + Stream key rotation still open (operator action) |
 | E7 | Commit the working tree (very large, long uncommitted) | **[done 2026-10-07]** — baseline `883c3d7`; C1 merged to `main` `1b46a6e`. B's newer packages (`station-data`, `station-player`, `listener-app`) are still untracked — B commits those |
