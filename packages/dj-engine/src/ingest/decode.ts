@@ -3,8 +3,9 @@
  *
  * node-web-audio-api has no file loading and its decodeAudioData coverage is
  * uneven across container formats, so this shells out to ffmpeg and reads raw
- * s16le PCM back. ffmpeg is already a dependency of the WSL Liquidsoap stack
- * and is on PATH on Windows.
+ * s16le PCM back. ffmpeg is already a dependency of the WSL Liquidsoap stack;
+ * on Windows it is resolved through `NCSOUND_FFMPEG` (or must be on PATH),
+ * because a bare `ffmpeg.exe` is not guaranteed to be installed.
  *
  * Memory is the constraint that shaped this file. A real library is not eight
  * short clips: 66 tracks decoded to 48 kHz stereo float32 is about 4.8 GB of
@@ -56,7 +57,22 @@ export type DecodeOptions = {
   readTags?: boolean;
 };
 
-const FFMPEG = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+/**
+ * Resolve an ffmpeg-family binary. `NCSOUND_FFMPEG` / `NCSOUND_FFPROBE` let a
+ * portable build outside PATH be used; `ffprobe` falls back to a sibling of
+ * `NCSOUND_FFMPEG` when only that is set.
+ */
+function resolveBinary(kind: "ffmpeg" | "ffprobe"): string {
+  const exe = process.platform === "win32" ? ".exe" : "";
+  const explicit =
+    kind === "ffmpeg" ? process.env.NCSOUND_FFMPEG : process.env.NCSOUND_FFPROBE;
+  if (explicit) return explicit;
+  const ffmpeg = process.env.NCSOUND_FFMPEG;
+  if (kind === "ffprobe" && ffmpeg) return ffmpeg.replace(/ffmpeg(\.exe)?$/i, `ffprobe${exe}`);
+  return `${kind}${exe}`;
+}
+
+const FFMPEG = resolveBinary("ffmpeg");
 
 export function idForPath(path: string): string {
   // Stable across runs so the station's PlayLog rows keep matching.
@@ -212,7 +228,7 @@ type TrackMeta = {
 async function probeTags(
   path: string,
 ): Promise<{ title?: string; artist?: string; album?: string } | null> {
-  const bin = process.platform === "win32" ? "ffprobe.exe" : "ffprobe";
+  const bin = resolveBinary("ffprobe");
   let doc: { format?: { tags?: Record<string, string> } };
   try {
     const raw = await run(

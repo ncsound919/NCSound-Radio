@@ -1,0 +1,4 @@
+# Portable ffmpeg/ffprobe are fetched locally, never committed.
+# The engine resolves them via NCSOUND_FFMPEG / NCSOUND_FFPROBE.
+# See coding lessons: 2026-10-07-ncsound-engine-needs-ffmpeg-exe-on-windows
+*.exe

@@ -23,7 +23,7 @@
 
 import { spawn } from "node:child_process";
 
-const FFMPEG = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+const FFMPEG = process.env.NCSOUND_FFMPEG ?? (process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
 
 /**
  * How long to wait before re-measuring after a recovery attempt.

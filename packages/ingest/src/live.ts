@@ -145,7 +145,10 @@ export class LiveBridge {
     if (!harbor.password) harbor.password = process.env.LIVE_HARBOR_PASSWORD ?? "";
     this.opts = {
       harbor,
-      ffmpegPath: options.ffmpegPath ?? (process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg"),
+      ffmpegPath:
+        options.ffmpegPath ??
+        process.env.NCSOUND_FFMPEG ??
+        (process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg"),
       bitrateKbps: options.bitrateKbps ?? 192,
       blockDropMs: options.blockDropMs ?? 2000,
       stallDropMs: options.stallDropMs ?? 3000,
