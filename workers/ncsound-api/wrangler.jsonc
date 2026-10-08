@@ -12,6 +12,12 @@
       "bucket_name": "ncsound-media"
     }
   ],
+  "vectorize": [
+    {
+      "binding": "VECTORIZE",
+      "index_name": "ncsound-tracks"
+    }
+  ],
   "vars": {
     "ALLOWED_ORIGINS": "*"
   }

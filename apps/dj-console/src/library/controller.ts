@@ -28,6 +28,8 @@ import { fetchR2Catalog, r2Track } from "./sources/r2";
 import { cachedOfflineKeys, fetchR2Audio, pinOffline, type PinProgress } from "./sources/r2Cache";
 import { tracksFromFiles } from "./sources/files";
 import { measureLoudness as measureTrackLoudness, normalizeTrack as normalizeTrackBytes, type Loudness } from "../services/transcode";
+import { publishFeatureVector } from "../services/vectorize";
+import type { TrackAnalysis } from "@ncsound/station-core";
 
 export type LibraryIndex = {
   total: number;
@@ -288,10 +290,27 @@ export class LibraryController {
         bpm: record.analysis.bpm ?? null,
         key: record.analysis.key ?? null,
       });
+      this.publishVector(track, record.analysis);
     } catch (e) {
       this.patchTrack(track.id, { status: "failed", error: e instanceof Error ? e.message : String(e) });
     }
     this.recomputeIndex();
+  }
+
+  /**
+   * Publish an R2 track's audio fingerprint to the Vectorize index. Best-effort,
+   * and only for R2 tracks: a local file/folder track has no object key to key
+   * the index by (the listener app only ever sees R2 keys).
+   */
+  private publishVector(track: LibraryTrack, analysis: TrackAnalysis): void {
+    if (track.source !== "r2" || !track.r2Key) return;
+    void publishFeatureVector(track.r2Key, analysis, {
+      title: track.title,
+      artist: track.artist,
+      album: track.album ?? "",
+      bpm: analysis.bpm ?? 0,
+      key: analysis.key ?? "",
+    }).catch(() => undefined);
   }
 
   /**

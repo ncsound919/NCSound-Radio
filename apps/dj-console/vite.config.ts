@@ -38,6 +38,10 @@ const INGEST_TOKEN = process.env.INGEST_TOKEN?.trim() || null;
 const TRANSCODE_TARGET = process.env.TRANSCODE_URL ?? "https://ncsound-transcode.tap4500.workers.dev";
 const TRANSCODE_TOKEN = process.env.TRANSCODE_TOKEN?.trim() || null;
 
+/** The R2 catalogue Worker also owns the Vectorize index (`/index`, `/similar`). */
+const VECTORIZE_TARGET = process.env.VECTORIZE_URL ?? "https://ncsound-api.tap4500.workers.dev";
+const INDEX_TOKEN = process.env.INDEX_TOKEN?.trim() || null;
+
 // Not 3000 (Grafana) and not 3101 (an unrelated project on this machine holds
 // it, and strictPort would abort the boot). Override with DJ_CONSOLE_PORT.
 const CONSOLE_PORT = Number(process.env.DJ_CONSOLE_PORT ?? 3102);
@@ -115,7 +119,17 @@ const proxyToTranscode = {
   },
 };
 
-const proxies = { ...proxyToIngest, ...proxyToStation, ...proxyToTranscode };
+/** The Vectorize index writes/reads, token injected by this server. */
+const proxyToVectorize = {
+  "/vectorize": {
+    target: VECTORIZE_TARGET,
+    changeOrigin: true,
+    rewrite: (path: string) => path.replace(/^\/vectorize/, ""),
+    ...(INDEX_TOKEN ? { headers: { authorization: `Bearer ${INDEX_TOKEN}` } } : {}),
+  },
+};
+
+const proxies = { ...proxyToIngest, ...proxyToStation, ...proxyToTranscode, ...proxyToVectorize };
 
 
 export default defineConfig({

@@ -17,9 +17,15 @@
  */
 export interface Env {
   MEDIA: R2Bucket;
+  VECTORIZE: VectorizeIndex;
   ALLOWED_ORIGINS?: string;
   LIBRARY_TOKEN?: string;
+  /** Gate for the write endpoint `/index` (fail-closed when unset). */
+  INDEX_TOKEN?: string;
 }
+
+/** Must match `FEATURE_DIMENSIONS` in @ncsound/station-core. */
+const VECTOR_DIMENSIONS = 32;
 
 type Range = { offset?: number; length?: number; suffix?: number };
 
@@ -110,6 +116,39 @@ export default {
     const cors = corsHeaders(request.headers.get("Origin") ?? "", env);
 
     if (method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
+
+    // Write: upsert an audio-feature vector. The console publishes these after
+    // it analyses a track. Token-gated and fail-closed; never a public route.
+    if (url.pathname === "/index" && method === "POST") {
+      const token = (env.INDEX_TOKEN ?? "").trim();
+      if (!token) return json({ error: "indexing is not configured" }, 503, cors, method);
+      const auth = request.headers.get("authorization") ?? "";
+      const bearer = auth.toLowerCase().startsWith("bearer ") ? auth.slice(7).trim() : "";
+      if (!safeEqual(bearer, token)) return json({ error: "unauthorised" }, 401, cors, method);
+
+      const body = (await request.json().catch(() => null)) as
+        | { key?: unknown; vector?: unknown; metadata?: unknown }
+        | null;
+      const key = typeof body?.key === "string" ? body.key.trim() : "";
+      const vector = body?.vector;
+      if (!key) return json({ error: "key is required" }, 400, cors, method);
+      if (
+        !Array.isArray(vector) ||
+        vector.length !== VECTOR_DIMENSIONS ||
+        !vector.every((n) => typeof n === "number" && Number.isFinite(n))
+      ) {
+        return json({ error: `vector must be ${VECTOR_DIMENSIONS} finite numbers` }, 400, cors, method);
+      }
+      const metadata: Record<string, string | number | boolean> = {};
+      if (body?.metadata && typeof body.metadata === "object") {
+        for (const [k, v] of Object.entries(body.metadata as Record<string, unknown>)) {
+          if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") metadata[k] = v;
+        }
+      }
+      await env.VECTORIZE.upsert([{ id: key, values: vector as number[], metadata }]);
+      return json({ ok: true, key, dimensions: VECTOR_DIMENSIONS }, 200, cors, method);
+    }
+
     if (method !== "GET" && method !== "HEAD") return json({ error: "method not allowed" }, 405, cors, method);
 
     if (url.pathname === "/health") {
@@ -122,6 +161,22 @@ export default {
       headers.set("www-authenticate", "Bearer");
       headers.set("content-type", "application/json; charset=utf-8");
       return new Response(method === "HEAD" ? null : JSON.stringify({ error: "unauthorised" }), { status: 401, headers });
+    }
+
+    if (url.pathname === "/similar" || url.pathname === "/similar/") {
+      const key = (url.searchParams.get("key") ?? "").trim();
+      if (!key) return json({ error: "key is required" }, 400, cors, method);
+      const topK = Math.min(20, Math.max(1, Number(url.searchParams.get("top") ?? 8) || 8));
+      // The bound type is the legacy VectorizeIndex (no queryById), so fetch the
+      // vector, then query by value. +1 so we can drop the query vector itself.
+      const [self] = await env.VECTORIZE.getByIds([key]);
+      if (!self) return json({ error: "not indexed", key }, 404, cors, method);
+      const res = await env.VECTORIZE.query(self.values, { topK: topK + 1, returnMetadata: "all" });
+      const matches = res.matches
+        .filter((m) => m.id !== key)
+        .slice(0, topK)
+        .map((m) => ({ key: m.id, score: m.score, metadata: m.metadata ?? null }));
+      return json({ key, topK, matches }, 200, cors, method);
     }
 
     if (url.pathname === "/library" || url.pathname === "/library/") {
