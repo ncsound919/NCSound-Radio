@@ -158,8 +158,8 @@ const EXTRA_ALLOWED_ORIGINS = new Set(
  * May a request carrying this `Origin` mutate the station?
  *
  * Binding to loopback stops other machines, not other web pages: any site open
- * in the operator's browser could POST to http://127.0.0.1:8099/command or
- * open ws://127.0.0.1:8099/ws (WebSockets ignore CORS), and with no token set
+ * in the operator's browser could POST to http://127.0.0.1:8137/command or
+ * open ws://127.0.0.1:8137/ws (WebSockets ignore CORS), and with no token set
  * that was enough to drive transport and the mix. Browsers always send
  * `Origin` on cross-origin POSTs and on WebSocket handshakes, so:
  *
@@ -1184,7 +1184,7 @@ station,
    * WebSocket clients get a ready frame, then every command result and stream
    * update, so the DJ console does not have to poll.
    */
-  listen(port = this.opts.port ?? 8099, host = this.opts.host ?? "127.0.0.1") {
+  listen(port = this.opts.port ?? 8137, host = this.opts.host ?? "127.0.0.1") {
     // Fail closed: an unauthenticated control plane is only tolerable on
     // loopback. Binding 0.0.0.0 without a token would expose transport, mix
     // and library commands to the network with no check at all.

@@ -7,7 +7,7 @@
 # on Windows, and talks to Icecast through the WSL localhost relay on :8010.
 
 param(
-  [int]$Port = 8099,
+  [int]$Port = 8137,
   [int]$TimeoutSec = 90
 )
 

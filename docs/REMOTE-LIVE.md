@@ -8,7 +8,7 @@ laptop browser ──► console server (vite, 127.0.0.1:3102, holds INGEST_TOKE
                          ▼
                  Cloudflare Tunnel  ingest.<your-domain>
                          │
-home PC          ingest 127.0.0.1:8099 ──► ffmpeg ──► Liquidsoap harbor "live" ──► Icecast
+home PC          ingest 127.0.0.1:8137 ──► ffmpeg ──► Liquidsoap harbor "live" ──► Icecast
 ```
 
 ## What protects it
@@ -50,7 +50,7 @@ home PC          ingest 127.0.0.1:8099 ──► ffmpeg ──► Liquidsoap har
    credentials-file: C:\Users\User\.cloudflared\<tunnel-UUID>.json
    ingress:
      - hostname: ingest.<your-domain>
-       service: http://127.0.0.1:8099
+       service: http://127.0.0.1:8137
      - service: http_status:404
    ```
    Run it with `cloudflared tunnel run ncsound-ingest`, or install it as a service with `cloudflared service install`. WebSockets pass through Cloudflare by default.
@@ -75,7 +75,7 @@ Workers VPC (beta, free) lets a Worker bind to a **private** host:port through a
 Cloudflare Tunnel (or Mesh/WAN), HTTP or raw TCP. That removes the need to give
 ingest a **public** `ingest.<domain>` hostname:
 
-- Register the home ingest (`127.0.0.1:8099`) as a **VPC Service**; a Worker
+- Register the home ingest (`127.0.0.1:8137`) as a **VPC Service**; a Worker
   (e.g. `ncsound-api`) reaches it via the binding with no public route.
 - The console and station-web then talk to that Worker, not to a public tunnel
   host — so there is no control hostname for an attacker to find, and **Cloudflare

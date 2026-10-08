@@ -5,7 +5,7 @@
 # notices only on the next write, and nothing ever re-opened the upload. The
 # engine kept reporting "playing" and Icecast kept serving its last buffered
 # audio, so the station was silent with no symptom anywhere in the status.
-param([int]$Port = 8099, [int]$TimeoutSec = 180)
+param([int]$Port = 8137, [int]$TimeoutSec = 180)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot

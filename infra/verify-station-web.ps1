@@ -8,7 +8,7 @@
 # reachable" rather than inventing a track and a listener count.
 
 param(
-  [int]$IngestPort = 8099,
+  [int]$IngestPort = 8137,
   # NOT 3000: Grafana already listens there on this machine and answers first,
   # so the app under test never gets the request.
   [int]$WebPort = 3100,

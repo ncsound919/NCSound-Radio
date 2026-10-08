@@ -27,7 +27,7 @@ set -e
 
 REPO_DIR=$(cd "$(dirname "$0")/.." && pwd)
 WINDOWS_BUN=/mnt/c/Users/User/.bun/bin/bun.exe
-PORT=8099
+PORT=8137
 LOG=/tmp/ingest.log
 
 # WSL interop has to be able to launch Windows binaries at all.

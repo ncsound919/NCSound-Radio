@@ -26,7 +26,7 @@ import { defineConfig } from "vite";
  * that is not loopback or listed. INGEST_TOKEN must be set on ingest or it will
  * not accept tunnelled requests at all.
  */
-const INGEST_TARGET = process.env.INGEST_URL ?? "http://127.0.0.1:8099";
+const INGEST_TARGET = process.env.INGEST_URL ?? "http://127.0.0.1:8137";
 const GUEST_PORT = Number(process.env.DJ_GUEST_PORT ?? 3104);
 // Loopback: a tunnel client (cloudflared) runs on this machine and connects locally.
 const GUEST_HOST = process.env.DJ_GUEST_HOST ?? "127.0.0.1";

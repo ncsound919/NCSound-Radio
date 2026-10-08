@@ -21,7 +21,7 @@
  * ingest through the tunnel.
  */
 
-const BASE = (process.env.INGEST_URL ?? "http://127.0.0.1:8099").replace(/\/+$/, "");
+const BASE = (process.env.INGEST_URL ?? "http://127.0.0.1:8137").replace(/\/+$/, "");
 const TOKEN = process.env.INGEST_TOKEN?.trim() || null;
 
 function parseWebhook(argv) {

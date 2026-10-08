@@ -134,7 +134,7 @@ Cloudflare Access facts this rests on (vendor primary docs, `cited`):
         │                            │                            │
         │  (L2) ingest session: role + slot window + canLive ───────┘
         ▼
-   ingest 127.0.0.1:8099  ──► ffmpeg ──► Liquidsoap "live" ──► Icecast
+   ingest 127.0.0.1:8137  ──► ffmpeg ──► Liquidsoap "live" ──► Icecast
         │
         └─ (L3) live key: single-use, 60 s, owner-bound, one live source at a time
              (L4) owner kill switch: /live/kill, /sessions/revoke -> off air + close socket

@@ -11,7 +11,7 @@ import { defineConfig } from "vite";
  * looked like a station backend and agreed only with itself. The engine is
  * packages/ingest, reached through the proxy below.
  */
-const INGEST_TARGET = process.env.INGEST_URL ?? "http://127.0.0.1:8099";
+const INGEST_TARGET = process.env.INGEST_URL ?? "http://127.0.0.1:8137";
 
 /**
  * The ingest control token, held by THIS server process, never by the page.

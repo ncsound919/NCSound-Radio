@@ -14,7 +14,7 @@ import { dirname, resolve } from "node:path";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const PORT = Number(process.env.INGEST_PORT ?? 8099);
+const PORT = Number(process.env.INGEST_PORT ?? 8137);
 const HOST = process.env.INGEST_HOST ?? "127.0.0.1";
 
 /** The real music library. Overridable for a different crate. */

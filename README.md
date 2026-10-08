@@ -42,7 +42,7 @@ localhost, so the engine ingests over `127.0.0.1:8008`.
 wsl -u root sh infra/station-up.sh
 
 # 2. The engine + control plane. THIS is the runner to use.
-bun run --cwd packages/ingest start          # :8099 HTTP + WS
+bun run --cwd packages/ingest start          # :8137 HTTP + WS
 
 # 3. Database (once, and after any schema change)
 cd apps/station-web && bun run db:generate && bun run db:push
@@ -92,7 +92,7 @@ studio crate, so a fresh checkout still broadcasts.
 | 8010 | Icecast (WSL) | `/live.mp3` 128k, `/mobile.mp3` 64k |
 | 8008 | Liquidsoap harbor (WSL) | where the engine pushes PCM |
 | 1234 | Liquidsoap telnet (WSL) | **unauthenticated** — loopback only |
-| 8099 | ingest | control plane; `listen()` refuses a non-loopback bind without `INGEST_TOKEN` |
+| 8137 | ingest | control plane; `listen()` refuses a non-loopback bind without `INGEST_TOKEN` |
 | 3100 | station-web | |
 | 3102 | dj-console | binds `127.0.0.1` by default |
 
