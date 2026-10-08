@@ -76,6 +76,26 @@ The stream host is therefore a **small VPS with Icecast over TLS**, on a
 
 ---
 
+## 0c. Finalize pass — player and distribution (2026-10-08)
+
+The zero-cost finalize changed the player decision and cut car + licensing out of
+scope. This **supersedes** the rows below; the rows stay as the record of why the
+earlier choices were made, not as current guidance.
+
+| Supersedes | Now |
+|---|---|
+| C1, C2, D2 — player = `@rntp/player@^5` | **`react-native-video` (MIT)**. v5 is commercially licensed (EUR 999/yr); v4.1.2 (`react-native-track-player`) needs three `patch-package` fixes on the New Architecture. `react-native-video` was already a dependency (the Watch screen), is MIT and New-Arch, so the swap removes the license with no new dependency. Implemented in `apps/listener-app/src/player/` (`engine.ts` facade, `PlaybackEngine.tsx` component mounted at the app root, `controller.ts` health policy, `live.ts`), `@rntp/player` removed. **Not yet confirmed on a device.** |
+| D6, D13 — car | **CarPlay and Android Auto are dropped**, not deferred. They shipped only with the paid player tier. v1 is phone-only. |
+| D20 — build = EAS | EAS needs Expo; this is bare RN. The release build is **Gradle `assembleRelease`** (`npm run android:release`), signing from `android/keystore.properties` when present. |
+| C2 — ICY → lock screen | react-native-video sets Now Playing metadata from `source.metadata` and surfaces ICY via `onTimedMetadata` where the platform does. The in-app title still polls `/api/nowplaying`. |
+| D8, D17 — push = RNFirebase | Never landed; push is APNs-direct on iOS (no Firebase) with FCM opt-in on Android outstanding. |
+
+Distribution: self-hosted **signed APK** (Android) + **web PWA** (iOS), $0 — no
+store accounts, no SoundExchange/PRO registration. That is the accepted risk in
+the finish plan, not an open task.
+
+---
+
 ## 1. Locked decisions
 
 | # | Decision | Rationale |
@@ -492,10 +512,12 @@ matches is a defect). What changed:
   service layer** (Cloudflare Stream `lifecycle` is server-side in `/api/video`);
   background jobs are idempotent (request dedupe and PlayLog `@@unique` already
   are). Money-in-cents is not applicable.
-- **Architecture decision (devbrain).** Unavailable (`:3450` down), so the matrix
-  could not run. Proceed with the planned stack: **React Navigation + TanStack
-  Query over the `@ncsound/station-client` singleton**, plus a thin Zustand for
-  player/prefs; now-playing polled only while foregrounded.
+- **Architecture decision (devbrain).** After DevBrain (`:3450`) was restarted,
+  `devbrain_decide` ran and returned **STRONGLY_RECOMMENDED** for **React
+  Navigation + TanStack Query over the `station-client` singleton** (LOW risk,
+  5.5x risk-adjusted ROI) — ranked *above* the thin-Zustand variant. So: no
+  Zustand layer; player UI state comes from `@rntp/player` events plus minimal
+  local state; now-playing is polled only while foregrounded.
 - **Infra state.** DevBrain down; Middle-Man registry reports only math-x
   healthy. Recorded in `fleet.md` (known-down dependencies).
 
@@ -504,7 +526,7 @@ New decisions (amend §1):
 | # | Decision |
 |---|---|
 | D21 | App design system = OG-Glass preset `ncsound-dark` (S/100); `docs/LISTENER-APP-DESIGN.md` is the contract, `src/ui/tokens.ts` implements it. |
-| D22 | Client stack = React Navigation + TanStack Query + `station-client` singleton + thin Zustand; poll now-playing only while foregrounded. |
+| D22 | Client stack = React Navigation + TanStack Query over the `station-client` singleton (devbrain_decide: STRONGLY_RECOMMENDED, LOW risk); no Zustand layer — player UI state from RNTP events + minimal local state; poll now-playing only while foregrounded. |
 | D23 | No PII in logs (`user_id` only); external calls stay server-side; no colours off the `ncsound-dark` palette. |
 
 ---

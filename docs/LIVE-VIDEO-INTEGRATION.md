@@ -21,7 +21,8 @@ breaking the audio experience.
   (uid `92f086306cebc22c7ce3a0e6d546db7f`): RTMPS
   `rtmps://live.cloudflare.com:443/live/`, SRT `srt://live.cloudflare.com:778`,
   HLS playback manifest (`docs/CLOUDFLARE-INTEGRATION.md:331`).
-- The audio app plan is separate: `@rntp/player` plays the Icecast mounts.
+- The audio app plan is separate: `react-native-video` plays the Icecast mounts
+  (the audio engine; see `apps/listener-app/src/player/`).
 
 So the **ingest is already chosen and half-built**. The gaps are: delivery
 surfacing (an API the app can read), app playback, and audio/video coexistence.
@@ -105,8 +106,8 @@ console. So there is no second audio source to sync — the rule is:
 
 | State | Plays |
 |---|---|
-| Watch screen, foreground | **video** (its own audio); `@rntp/player` paused |
-| Listen (no video), or video not live | **audio** (Icecast, `@rntp/player`) |
+| Watch screen, foreground | **video** (its own audio); audio engine paused |
+| Listen (no video), or video not live | **audio** (Icecast, `react-native-video`) |
 | App backgrounded / locked while watching | **audio** (Icecast) — video cannot play without PiP; optionally PiP keeps the video |
 
 This avoids the two failures that plague radio+video apps: **double audio**
