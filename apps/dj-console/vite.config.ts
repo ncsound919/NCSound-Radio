@@ -1,4 +1,15 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
+
+/**
+ * Vite does not expose `.env` files to the config's `process.env`; load them so
+ * the owner console can read INGEST_URL / INGEST_TOKEN from
+ * `apps/dj-console/.env` (previously only shell exports worked).
+ */
+for (const [key, value] of Object.entries(
+  loadEnv(process.env.NODE_ENV ?? "development", process.cwd(), ""),
+)) {
+  if (process.env[key] === undefined) process.env[key] = value;
+}
 
 /**
  * The console runs a LOCAL browser Mixer so an operator can rehearse and
