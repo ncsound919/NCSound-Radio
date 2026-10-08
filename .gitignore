@@ -53,5 +53,13 @@ apps/station-web/db/
 # decoded-analysis cache: regenerated from the library, never committed
 .ncsound-cache/
 
+# infra/backup-state.mjs output: runtime snapshots, never source. Anchored so a
+# same-named source directory elsewhere is not swallowed.
+/backups/
+
+# Python bytecode caches (analysis/ scripts)
+__pycache__/
+*.pyc
+
 # wrangler/miniflare local state
 .wrangler/

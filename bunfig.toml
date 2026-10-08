@@ -1,0 +1,5 @@
+[install]
+# React Native and Metro expect hoisted node_modules; bun installs isolated by
+# default, which breaks RN resolution. See docs/MOBILE-LISTENER-APP-IMPLEMENTATION.md
+# (D15). Applies on the next `bun install`.
+linker = "hoisted"
