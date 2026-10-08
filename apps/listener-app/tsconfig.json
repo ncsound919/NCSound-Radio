@@ -1,0 +1,12 @@
+{
+  "extends": "@react-native/typescript-config",
+  "compilerOptions": {
+    "paths": {
+      // The base config sets customConditions:["react-native"], which makes TS
+      // resolve @rntp/player to its un-typecheckable source. Point the import at
+      // the package's published declarations instead. (No baseUrl: paths are
+      // resolved relative to this file, and baseUrl is deprecated in TS 6.)
+      "@rntp/player": ["../../node_modules/@rntp/player/lib/typescript/src/index.d.ts"]
+    }
+  }
+}
