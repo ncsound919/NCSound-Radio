@@ -29,6 +29,7 @@ export function startPlaybackHealth(handlers: PlaybackHealth = {}): () => void {
   let lastPos = 0;
   let lastAt = Date.now();
   let recovering = false;
+  let recoverTimer: ReturnType<typeof setTimeout> | null = null;
 
   const unsubscribe = subscribeEngine((event) => {
     if (event.type === 'state') {
@@ -56,8 +57,18 @@ export function startPlaybackHealth(handlers: PlaybackHealth = {}): () => void {
 
     if (event.type === 'progress') {
       const now = Date.now();
+      // Only judge a stall while actually playing. Hardcoding `playing: true`
+      // meant a frozen position while paused (or buffering) looked like a stall
+      // and `jumpToLive()` restarted audio the listener had deliberately paused.
+      const playing = engine.state() === 'playing';
+      if (!playing) {
+        // Re-baseline so the pause duration is not later counted as an 8s stall.
+        lastPos = event.positionSec;
+        lastAt = now;
+        return;
+      }
       const stalled = isStalled({
-        playing: true,
+        playing,
         positionSec: event.positionSec,
         lastPositionSec: lastPos,
         elapsedMs: now - lastAt,
@@ -67,7 +78,8 @@ export function startPlaybackHealth(handlers: PlaybackHealth = {}): () => void {
       if (stalled && !recovering) {
         recovering = true;
         engine.jumpToLive();
-        setTimeout(() => {
+        if (recoverTimer) clearTimeout(recoverTimer);
+        recoverTimer = setTimeout(() => {
           recovering = false;
         }, 3000);
       }
@@ -83,6 +95,7 @@ export function startPlaybackHealth(handlers: PlaybackHealth = {}): () => void {
     unsubscribe();
     unsubscribeNet();
     if (retryTimer) clearTimeout(retryTimer);
+    if (recoverTimer) clearTimeout(recoverTimer);
   };
 }
 

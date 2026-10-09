@@ -38,9 +38,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const linkSub = Linking.addEventListener('url', ({ url }) => {
       void handleAuthUrl(url);
     });
-    void Linking.getInitialURL().then((url) => {
-      if (url) void handleAuthUrl(url);
-    });
+    void Linking.getInitialURL()
+      .then((url) => {
+        if (url) void handleAuthUrl(url);
+      })
+      .catch(() => {
+        /* no initial URL, or the platform could not read it */
+      });
 
     return () => {
       sub.subscription.unsubscribe();

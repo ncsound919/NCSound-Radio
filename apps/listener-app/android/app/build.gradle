@@ -125,8 +125,13 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            // AndroidManifest references ${usesCleartextTraffic}. Without a
+            // value for it the manifest merger fails, so the app never builds.
+            // Dev may talk plain HTTP to a local Icecast; release must not.
+            manifestPlaceholders = [usesCleartextTraffic: "true"]
         }
         release {
+            manifestPlaceholders = [usesCleartextTraffic: "false"]
             // A real keystore if android/keystore.properties exists; otherwise the
             // debug key, so a local release smoke test still builds. Generate one:
             //   keytool -genkeypair -v -storetype PKCS12 -keystore ncsound-release.keystore \
