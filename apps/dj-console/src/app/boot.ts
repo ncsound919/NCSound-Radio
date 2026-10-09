@@ -232,7 +232,11 @@ export function boot(root: HTMLElement): ConsoleAudio {
   // Closing the tab while live drops the station to autopilot; ask first.
   window.addEventListener("beforeunload", (e) => {
     const p = live.state.phase;
-    if (p === "armed" || p === "on_air" || p === "countdown" || p === "connecting") e.preventDefault();
+    if (p === "armed" || p === "on_air" || p === "countdown" || p === "connecting") {
+      e.preventDefault();
+      // Some browsers require returnValue to be set for the confirmation to show.
+      e.returnValue = "";
+    }
   });
 
   // Browsers keep audio suspended until a gesture; any click or key wakes it.
@@ -254,13 +258,19 @@ export function boot(root: HTMLElement): ConsoleAudio {
     ];
     const slot = audible.update(performance.now(), levels);
     const t = slot != null ? audio.tracks[slot] : null;
+    const store = consoleStore.get();
+    // Real on-air, not a hardcoded null: only claim it in radio mode, and only
+    // when ingest actually answered (`connected`). A disconnected link leaves
+    // it null (unknown) rather than showing the overlay a green dot for a
+    // station that may be off air.
+    const link = broadcastLink.status;
     publishNowPlaying({
       slot,
       title: t?.title ?? "",
       artist: t?.artist ?? "",
-      djName: consoleStore.get().djName,
-      mode: consoleStore.get().mode,
-      onAir: null,
+      djName: store.djName,
+      mode: store.mode,
+      onAir: store.mode === "radio" && link.connected ? link.broadcast.onAir : null,
       at: Date.now(),
     });
   };

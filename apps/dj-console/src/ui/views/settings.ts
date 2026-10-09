@@ -180,8 +180,10 @@ export function settingsPanel(audio: ConsoleAudio, obs: ObsService, opts: { rest
       return;
     }
     persistStream();
-    await obs.setStreamService(server, key);
-    streamNote.textContent = "Sent. Start streaming from the Visuals tab (Go live).";
+    const sent = await obs.setStreamService(server, key);
+    streamNote.textContent = sent
+      ? "Sent. Start streaming from the Visuals tab (Go live)."
+      : "OBS rejected the stream settings — see the OBS status message above.";
   });
 
   /* DJ name for the OBS overlay */

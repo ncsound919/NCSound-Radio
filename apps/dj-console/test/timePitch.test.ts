@@ -15,13 +15,19 @@ sync = pickExactSyncRate(128, 125);
 close(sync.rate, 1.024);
 close(sync.effBpm, 128);
 
-// Half-time tempo lock: 140 target, 70 native -> rate = (140 * 0.5) / 70 = 1.0 -> effBpm = 70.0 (or straight 140/70 = 2.0)
+// Half-time tempo lock: 140 target, 70 native -> the 0.5 multiplier wins
+// (distance 0 vs the straight multiplier's 1), so rate = 1.0 and the effective
+// tempo is the native 70. Asserting the exact choice, not "either value".
 sync = pickExactSyncRate(140, 70);
-assert.ok(sync.effBpm === 70 || sync.effBpm === 140);
+close(sync.rate, 1);
+assert.equal(sync.multiplier, 0.5);
+close(sync.effBpm, 70);
 
-// Double-time tempo lock: 70 target, 140 native -> rate = (70 * 2) / 140 = 1.0
+// Double-time tempo lock: 70 target, 140 native -> the 2x multiplier wins.
 sync = pickExactSyncRate(70, 140);
-assert.ok(sync.effBpm === 70 || sync.effBpm === 140);
+close(sync.rate, 1);
+assert.equal(sync.multiplier, 2);
+close(sync.effBpm, 140);
 
 // Wide tempo stretch: 128 target, 174 native -> rate = 128/174 = 0.7356 -> effBpm = 128.0 (exact match)
 sync = pickExactSyncRate(128, 174);

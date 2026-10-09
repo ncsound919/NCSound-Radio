@@ -10,7 +10,7 @@
     "guest:dev": "vite --config vite.guest.config.ts",
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit",
-    "test": "tsx test/analysis.test.ts && tsx test/sync.test.ts && tsx test/sentence.test.ts && tsx test/timePitch.test.ts && tsx test/dj_mixer.test.ts && tsx test/marathon_crate.test.ts && tsx test/mpd226.test.ts && tsx test/shortcutScope.test.ts && tsx test/library.test.ts && tsx test/audibleDeck.test.ts && tsx test/liveClient.test.ts && tsx test/station.test.ts && tsx test/r2.test.ts && tsx test/remap.test.ts",
+    "test": "tsx test/analysis.test.ts && tsx test/sync.test.ts && tsx test/sentence.test.ts && tsx test/timePitch.test.ts && tsx test/dj_mixer.test.ts && tsx test/marathon_crate.test.ts && tsx test/mpd226.test.ts && tsx test/shortcutScope.test.ts && tsx test/library.test.ts && tsx test/audibleDeck.test.ts && tsx test/liveClient.test.ts && tsx test/station.test.ts && tsx test/r2.test.ts && tsx test/remap.test.ts && tsx test/broadcastLink.test.ts",
     "screenshot": "node scripts/screenshot.mjs",
     "ui-audit": "node scripts/audit-ui.mjs",
     "mix-check": "node scripts/mix-check.mjs",

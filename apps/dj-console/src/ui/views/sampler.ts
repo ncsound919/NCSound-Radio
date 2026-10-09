@@ -159,7 +159,13 @@ export function samplerView(audio: ConsoleAudio): HTMLElement {
   }
 
   async function loadFile(b: number, p: number, file: File): Promise<void> {
-    const bytes = await file.arrayBuffer();
+    let bytes: ArrayBuffer;
+    try {
+      bytes = await file.arrayBuffer();
+    } catch {
+      consoleStore.set({ status: `Couldn't read ${file.name}.` });
+      return;
+    }
     let decoded: AudioBuffer;
     try {
       decoded = await audio.mixer.ctx.decodeAudioData(bytes.slice(0));
@@ -172,7 +178,14 @@ export function samplerView(audio: ConsoleAudio): HTMLElement {
     const config = sampler.getPad(b, p);
     const rec: StoredPad = { id: padId(b, p), bank: b, pad: p, name, type: file.type, bytes, config };
     stored.set(rec.id, rec);
-    await savePad(rec);
+    try {
+      // IndexedDB can reject (quota, private mode). The pad is loaded for this
+      // session regardless, so say what did not persist instead of throwing an
+      // unhandled rejection from the `void loadFile(...)` callers.
+      await savePad(rec);
+    } catch {
+      consoleStore.set({ status: "Pad loaded for this session, but it couldn't be saved to browser storage." });
+    }
     if (b === bank) { renderPads(); renderEditor(); }
     void refreshUsage();
   }
@@ -182,7 +195,11 @@ export function samplerView(audio: ConsoleAudio): HTMLElement {
     sampler.setBuffer(b, p, null, "");
     sampler.setPad(b, p, { name: "" });
     stored.delete(padId(b, p));
-    await deletePad(b, p);
+    try {
+      await deletePad(b, p);
+    } catch {
+      consoleStore.set({ status: "Pad cleared for this session, but the saved copy couldn't be removed." });
+    }
     if (b === bank) { renderPads(); renderEditor(); }
     void refreshUsage();
   }

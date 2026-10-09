@@ -128,6 +128,9 @@ export class LibraryController {
     const fresh: LibraryTrack[] = [];
     for (const { track, file } of added) {
       if (existing.has(track.id)) continue;
+      // Mark it seen as we go: without this, two files that derive the same id
+      // in one drop both pass the check and the library renders a duplicate.
+      existing.add(track.id);
       fresh.push(track);
       void putTrackBlob(track.id, file).catch(() => undefined);
       void putTrack(track).catch(() => undefined);

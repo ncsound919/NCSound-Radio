@@ -1,4 +1,9 @@
 const CACHE = "ncsound-console-v1";
+// Caches this worker owns and may evict. The offline R2 audio cache
+// ("ncsound-r2-audio-v1") is deliberately NOT under this prefix: it holds
+// downloads the DJ explicitly pinned, and an unrelated app-deployed update
+// must never wipe them.
+const MANAGED_PREFIX = "ncsound-console-";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
@@ -7,7 +12,9 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k)))
+      Promise.all(
+        keys.filter((k) => k.startsWith(MANAGED_PREFIX) && k !== CACHE).map((k) => caches.delete(k))
+      )
     ).then(() => self.clients.claim())
   );
 });

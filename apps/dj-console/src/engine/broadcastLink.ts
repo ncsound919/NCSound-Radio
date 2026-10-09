@@ -138,7 +138,7 @@ async function getJson<T>(path: string, timeoutMs = 2500): Promise<T | null> {
   }
 }
 
-function toStatus(doc: {
+export function toStatus(doc: {
   engine: {
     state: string;
     autopilot: { crateSize: number; enabled?: boolean };

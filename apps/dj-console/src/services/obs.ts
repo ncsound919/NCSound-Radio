@@ -209,15 +209,21 @@ export class ObsService {
    * live-input key). OBS must be connected. This only writes settings; the
    * existing Start/Stop stream control then goes live on them.
    */
-  async setStreamService(server: string, key: string): Promise<void> {
-    if (!this.connected) return;
-    await this.guard(async () => {
+  async setStreamService(server: string, key: string): Promise<boolean> {
+    if (!this.connected) return false;
+    try {
       await this.obs.call("SetStreamServiceSettings", {
         streamServiceType: "rtmp_custom",
         streamServiceSettings: { server, key },
       });
       this.patch({ message: "Sent the stream server and key to OBS." });
-    });
+      return true;
+    } catch (e) {
+      // Report the failure to the caller as well as the status line: the caller
+      // used to print "Sent." unconditionally while OBS had rejected it.
+      this.patch({ message: describe(e) });
+      return false;
+    }
   }
 
   /** Read back what OBS is configured to stream to, if connected. */

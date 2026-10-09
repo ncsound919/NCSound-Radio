@@ -196,13 +196,29 @@ mixer.triggerStutterRoll(0, 0.5);  // 1/8th stutter roll on Deck A
 mixer.triggerGaterEffect(0, 4);    // 4-step gater pattern on Deck A
 
 // 8. Auto-Scratch Pattern Triggering
+// Real pattern ids, with a word from the pattern's actual name. The old list
+// ("baby-1b", "spinback-whip", …) contained no real id, so `triggerAutoscratch`
+// silently fell back to Baby Scratch and the old `typeof ok === "boolean"`
+// assertion passed for every one of them. The message now names the pattern
+// that ran, which catches the fallback.
 const scratchPatterns = [
-  "baby-1b", "chirp-1b", "transformer-8th", "flare-orbit", "spinback-whip"
+  { id: "baby", word: "Baby" },
+  { id: "chirp", word: "Chirp" },
+  { id: "transformer", word: "Transformer" },
+  { id: "flare", word: "Flare" },
+  { id: "crab", word: "Crab" },
+  { id: "backspin", word: "Backspin" },
+  { id: "uzis", word: "Laser" },
+  { id: "tear", word: "Tear" },
 ] as const;
 
-for (const pattern of scratchPatterns) {
-  const result = mixer.triggerAutoscratch(pattern);
-  assert.ok(typeof result.ok === "boolean", `Triggering autoscratch ${pattern} returned status`);
+for (const { id, word } of scratchPatterns) {
+  const result = mixer.triggerAutoscratch(id);
+  assert.equal(result.ok, true, `autoscratch "${id}" should succeed`);
+  assert.ok(
+    result.message.includes(word),
+    `autoscratch "${id}" should run its own pattern, but ran: ${result.message}`,
+  );
 }
 
 // 9. Phase Difference & Pocket Information

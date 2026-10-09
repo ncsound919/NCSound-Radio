@@ -30,5 +30,9 @@ if (overlayRequested) {
 
 // Installable PWA: caches the UI shell so a venue Wi-Fi drop doesn't kill the console.
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
-  window.addEventListener("load", () => void navigator.serviceWorker.register("/sw.js"));
+  window.addEventListener("load", () => {
+    // Registration can reject (private mode, insecure origin). It must not
+    // surface as an unhandled rejection; the console works without the cache.
+    void navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+  });
 }
