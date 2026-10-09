@@ -1,0 +1,5 @@
+# Vite build output and electron-builder output are artifacts, never committed.
+dist/
+release/
+release-beta/
+*.tsbuildinfo
