@@ -193,7 +193,18 @@ export const nowPlayingSchema = z
     streamUrl: z.string().nullable(),
     serverTime: z.string(),
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((v, ctx) => {
+    // `mode` and `current` were validated independently, so `{mode:"offline",
+    // current:{…}}` and `{mode:"live", current:null}` both passed — two states
+    // the UI cannot render honestly. Tie them together here.
+    if (v.mode === "offline" && v.current !== null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "mode 'offline' requires current=null" });
+    }
+    if (v.mode === "live" && v.current === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "mode 'live' requires a current track" });
+    }
+  });
 
 // --- GET /api/schedule -----------------------------------------------------
 

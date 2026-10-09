@@ -197,4 +197,24 @@ describe("envelope", () => {
     });
     expect(r.success).toBe(false);
   });
+
+  test("accepts a host/guest actor envelope (role table authorizes them)", () => {
+    for (const role of ["host", "guest"] as const) {
+      const r = commandEnvelopeSchema.safeParse({
+        id: "cmd-1",
+        issuedAt: "2026-01-01T00:00:00.000Z",
+        actor: { id: "sess-1", role, label: role },
+        command: { type: "transport.play" },
+      });
+      expect(r.success).toBe(true);
+    }
+  });
+
+  test("a transition preset style outside the union is rejected", () => {
+    const r = djCommandSchema.safeParse({
+      type: "library.setPreset",
+      preset: { id: "x", name: "X", bars: 2, curve: "linear", style: "not-a-style" },
+    });
+    expect(r.success).toBe(false);
+  });
 });

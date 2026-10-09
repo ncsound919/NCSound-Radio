@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { COMMAND_TYPES } from "../contract/control";
+import { TRANSITION_STYLES } from "../contract/track";
 
 export const elementKindSchema = z.enum(["MUSIC", "STATION_ID", "AD_SPOT", "TALK"]);
 
@@ -25,7 +26,10 @@ export const scratchPatternIdSchema = z.enum([
 
 export const actorSchema = z.object({
   id: z.string().min(1).max(128),
-  role: z.enum(["ops", "console", "automation", "system"]),
+  // Must match `ActorRole` in contract/control.ts. It previously omitted
+  // host/guest, so `commandEnvelopeSchema` rejected a valid host/guest envelope
+  // that ingest's permission table already authorizes.
+  role: z.enum(["ops", "console", "automation", "system", "host", "guest"]),
   label: z.string().min(1).max(128),
 });
 
@@ -48,7 +52,9 @@ export const transitionPresetSchema = z.object({
   curve: z.enum(["equal-power", "linear", "cut"]),
   filterSweep: z.boolean().optional(),
   bassSwap: z.boolean().optional(),
-  style: z.string().optional(),
+  // Enum, not a bare string: the contract type is a fixed union, and a bare
+  // string let `"vinyl-brake"` sit beside values the mixer can never honour.
+  style: z.enum(TRANSITION_STYLES).optional(),
 });
 
 const unit = z.number().min(0).max(1);

@@ -59,16 +59,19 @@ export type CrossfaderCurve = "blend" | "dip" | "cut";
 
 export type PitchFaderRange = 4 | 8 | 16 | 50;
 
-export type TransitionStyle =
-  | "auto"
-  | "drop-cut"
-  | "bass-swap"
-  | "filter-riser"
-  | "vinyl-brake"
-  | "backspin"
-  | "echo-out"
-  | "spin-whip"
-  | "blend";
+export const TRANSITION_STYLES = [
+  "auto",
+  "drop-cut",
+  "bass-swap",
+  "filter-riser",
+  "vinyl-brake",
+  "backspin",
+  "echo-out",
+  "spin-whip",
+  "blend",
+] as const;
+
+export type TransitionStyle = (typeof TRANSITION_STYLES)[number];
 
 export type TransitionPreset = {
   id: string;
