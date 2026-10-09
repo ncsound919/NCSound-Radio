@@ -13,7 +13,7 @@
   },
   "scripts": {
     "typecheck": "bun run --filter='@ncsound/*' typecheck",
-    "test": "bun run --filter='@ncsound/*' test",
+    "test": "bun run --filter='@ncsound/*' --sequential test",
     "test:core": "bun test ./packages/station-core/test/contract.test.ts",
     "build:web": "bun run --filter='@ncsound/station-web' build",
     "db:generate": "bun run --filter='@ncsound/station-web' db:generate"

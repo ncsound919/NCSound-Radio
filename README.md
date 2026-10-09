@@ -59,7 +59,7 @@ ingest environment:
 | `INGEST_TOKEN` | unset | Bearer token. Required before ingest will bind a non-loopback host. |
 | `NCSOUND_LIBRARY` | `C:/Users/User/Music/music` | The engine crate. |
 | `NCSOUND_JINGLES` | `<library>/../jingles` | Station imaging for `imaging.play`. |
-| `NCSOUND_STATION_DB` | unset | Station SQLite, for the listener request queue. Without it `/requests` reports *unavailable*, not *empty*. |
+| `NCSOUND_STATION_DB` | unset | Station **Postgres** URL (Supabase), for the listener request queue. `SUPABASE_DB_URL`/`DATABASE_URL` also work. Without it `/requests` reports *unavailable*, not *empty*. |
 | `LIQUIDSOAP_HOST` / `LIQUIDSOAP_PORT` | `127.0.0.1` / `1234` | The off-air switch. Telnet is unauthenticated - keep it on loopback. |
 | `NCSOUND_PUBLISH` | `1` | Set `0` for a second instance that does not contend for the Liquidsoap harbor. |
 
@@ -289,8 +289,14 @@ each carrying an envelope id for correlation and replay protection.
   name exist"). `scratch-agent` was on `^18` while `station-web` is on `^19`; both
   are pinned to `^19` and the root `overrides` block guards it.
 - `apps/station-web/.env` is **no longer tracked** (it was, and it held a
-  hardcoded absolute path). It remains on disk, untracked. Next.js needs
-  `DATABASE_URL` pointed at a Windows path, e.g. `file:./db/custom.db`.
+  hardcoded absolute path). It remains on disk, untracked. The station database
+  is **Postgres (Supabase in production)**; set `DATABASE_URL` (pooled, port
+  6543) and `DIRECT_URL` (direct, port 5432) — see `apps/station-web/.env.example`.
+  Local dev/test: `docker run -d --name ncsound-pg -e POSTGRES_PASSWORD=postgres
+  -e POSTGRES_DB=ncsound -p 5433:5432 postgres:15`, then `bun run --cwd
+  apps/station-web db:push`. `packages/ingest` reads the listener request queue
+  from Postgres too (set `NCSOUND_STATION_DB` to the same Postgres URL; see
+  `packages/ingest/src/requests.ts`).
 - Liquidsoap and Icecast are **Linux-native** and run in WSL2 Ubuntu, not Windows.
 - `apps/station-web` has no test suite yet; `bun run test` covers the other three.
 

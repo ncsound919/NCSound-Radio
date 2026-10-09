@@ -220,3 +220,49 @@ Zero-cost finalize of the app + site.
 - **Still needs you (free):** confirm the home IP is public (not CGNAT); pick the
   stream subdomain; rotate the OBS password + Stream key (E6); generate the
   release keystore.
+
+## Data layer: SQLite -> Supabase Postgres (2026-10-08)
+
+station-web's 10 Prisma models moved from a local SQLite file to Postgres, so the
+station DB and the identity DB are one Supabase project (`xczjyhsibnjbjhpvtotx`).
+
+- `prisma/schema.prisma` is `provider = "postgresql"` with `url = DATABASE_URL`
+  (pooled) + `directUrl = DIRECT_URL` (migrations). Old SQLite migrations parked
+  in `prisma/migrations.sqlite-backup/`; a fresh Postgres baseline is
+  `prisma/migrations/20261008234839_init/`.
+- `scripts/migrate-sqlite-to-pg.ts` copied the real rows (66 Track, 88 PlayLog,
+  7 Submission, 9 StationSetting); idempotent (`skipDuplicates`), converts
+  Prisma's SQLite integer-ms DateTime and 0/1 Boolean.
+- **Verified:** local Postgres (Docker `ncsound-pg` on :5433) migrated + seeded;
+  the standalone server returns `/api/tracks` 200 with real rows; station-web now
+  has **54 tests** (37 pure + 12 admin-auth + 5 ops-command), all green; full
+  `bun run typecheck` + `bun run test` green.
+- **Fixed en route:** the standalone server nests at
+  `.next/standalone/apps/station-web/server.js` in this monorepo, but `start` and
+  `scripts/copy-standalone.mjs` pointed at the standalone root — static assets
+  shipped one level too high and `start` was a MODULE_NOT_FOUND. Both corrected.
+- **Applied to Supabase (2026-10-08):** the NCSound project
+  (`xczjyhsibnjbjhpvtotx`) now holds the 10 station tables (plus the 4 identity
+  tables) and the migrated rows: **66 Track, 88 PlayLog, 7 Submission, 9
+  StationSetting**. `/api/tracks` returned 200 from Supabase.
+  - Credentials: `~/.config/ncsound/supabase.txt` (DB password + management PAT).
+    The file's stored passwords were **stale** (`28P01`); the PAT still worked.
+  - Applied via a dedicated **`prisma` role** (Supabase-recommended, `bypassrls
+    createdb`), created over the management API; its generated password is in
+    `apps/station-web/.env` (`DATABASE_URL`/`DIRECT_URL`, session pooler
+    `aws-0-us-east-1.pooler.supabase.com:5432`). **Add it to Keywire** — the vault
+    still only has the placeholder `SUPABASE_SRK_NCSOUND`.
+  - `prisma migrate deploy` refused (P3005, non-empty `public` schema), so the
+    baseline was applied as SQL via the management API and recorded with
+    `prisma migrate resolve --applied 20261008234839_init`; `migrate status` is
+    now "up to date". **Never run `migrate dev`/`db push` here** — the `db-guard`
+    enforces it.
+- **Tests are isolated:** `.env` now points at Supabase, so `test/setup.ts` forces
+  the DB-backed suites to a local `ncsound_test` (Docker `ncsound-pg`, :5433).
+  They skip visibly when it is down. `ncsound_test` needs the schema:
+  `bunx prisma migrate deploy` with `DATABASE_URL=…/ncsound_test`.
+- **Done (ingest request queue):** `packages/ingest/src/requests.ts` reads the
+  queue from Postgres via `pg` (async `recent`/`resolveToCrateId`; env
+  `NCSOUND_STATION_DB` / `SUPABASE_DB_URL` / `DATABASE_URL`; `main.ts` logs the
+  host). `server.ts` `listenerRequests`/`defaultCueRequest` are async. Tests run
+  against local `ncsound_test` (skip when absent); ingest 126 pass.
