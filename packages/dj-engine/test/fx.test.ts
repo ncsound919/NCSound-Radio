@@ -4,8 +4,10 @@
  * Every effect asserts a measurable change in the rendered samples, not that a
  * node exists: echo energy lands at the delay time, reverb rings after the input
  * stops, the flanger modulates a steady tone, the gater closes at the division
- * rate, bitcrush changes the waveform. Tails are tested by switching the send
- * off mid-render (OfflineAudioContext.suspend) and showing the sound continues.
+ * rate, bitcrush changes the waveform. Tails are tested by scheduling the send
+ * off mid-render (FxUnit.setOn(on, when)) and showing the sound continues.
+ * OfflineAudioContext.suspend is not implemented by node-web-audio-api, so the
+ * switch-off time is scheduled rather than applied by callback.
  */
 import { describe, expect, test } from "bun:test";
 import { OfflineAudioContext } from "node-web-audio-api";
@@ -120,8 +122,9 @@ describe("fx: tails", () => {
     unit.setOn(true);
     impulse(ctx, 0.1).connect(unit.input);
     unit.output.connect(ctx.destination);
-    // Turn the unit off after the first two repeats have been fed.
-    ctx.suspend(0.7).then(() => { unit.setOn(false); void ctx.resume(); });
+    // Schedule the send closed at 0.7 s, after the first two repeats are fed.
+    // OfflineAudioContext has no suspend(), so this is scheduled, not callbacked.
+    unit.setOn(false, 0.7);
     const d = (await ctx.startRendering()).getChannelData(0);
 
     // Repeats at 0.35, 0.6 are fed before off; 0.85, 1.1 are pure tail.

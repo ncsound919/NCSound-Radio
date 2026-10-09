@@ -11,7 +11,7 @@
 import { createEffect, type FxEffect, type FxParams } from "./effects";
 import { FX_DIVISIONS, type FxDivision, type FxKind, type FxState, type FxTarget } from "./types";
 
-const ramp = (p: AudioParam, v: number, ctx: BaseAudioContext, tau = 0.01) => p.setTargetAtTime(v, ctx.currentTime, tau);
+const ramp = (p: AudioParam, v: number, ctx: BaseAudioContext, tau = 0.01, when = ctx.currentTime) => p.setTargetAtTime(v, when, tau);
 
 export class FxUnit {
   readonly input: GainNode;
@@ -63,8 +63,8 @@ export class FxUnit {
     this.buildEffect(kind);
   }
 
-  private buildEffect(kind: FxKind): void {
-    this.send.gain.setValueAtTime(0, this.ctx.currentTime);
+  private buildEffect(kind: FxKind, when = this.ctx.currentTime): void {
+    this.send.gain.setValueAtTime(0, when);
     if (this.effect) {
       try { this.send.disconnect(this.effect.input); } catch { /* already detached */ }
       this.effect.dispose();
@@ -74,13 +74,19 @@ export class FxUnit {
     this.effect.output.connect(this.wetGain);
     this.applyParams();
     // Restore the send without a click; only if it was open.
-    ramp(this.send.gain, this.on ? 1 : 0, this.ctx, 0.01);
+    ramp(this.send.gain, this.on ? 1 : 0, this.ctx, 0.01, when);
   }
 
-  setOn(on: boolean): void {
+  /**
+   * Open or close the send. `when` schedules the change instead of applying it
+   * at `currentTime`, which lets an offline render (and a test) switch the unit
+   * off mid-render: OfflineAudioContext has no `suspend`, so scheduling is the
+   * only way to assert that tails ring out after switch-off (plan 3B.3).
+   */
+  setOn(on: boolean, when = this.ctx.currentTime): void {
     this.on = on;
-    if (on && !this.effect) this.buildEffect(this.kind);
-    this.applyGains();
+    if (on && !this.effect) this.buildEffect(this.kind, when);
+    this.applyGains(when);
   }
 
   setWet(wet: number): void {
@@ -110,13 +116,13 @@ export class FxUnit {
     this.effect?.update(p);
   }
 
-  private applyGains(): void {
+  private applyGains(when = this.ctx.currentTime): void {
     const serial = this.effect?.serial ?? false;
     const dryTarget = serial ? (this.on ? 1 - this.wetAmount : 1) : 1;
-    ramp(this.dry.gain, dryTarget, this.ctx, 0.01);
-    ramp(this.wetGain.gain, this.wetAmount, this.ctx, 0.01);
+    ramp(this.dry.gain, dryTarget, this.ctx, 0.01, when);
+    ramp(this.wetGain.gain, this.wetAmount, this.ctx, 0.01, when);
     // Off closes the send, never the output: tails ring out.
-    ramp(this.send.gain, this.on ? 1 : 0, this.ctx, 0.01);
+    ramp(this.send.gain, this.on ? 1 : 0, this.ctx, 0.01, when);
   }
 
   dispose(): void {
