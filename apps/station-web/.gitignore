@@ -47,7 +47,8 @@ local-*
 *.log
 dev.log
 dev.out.log
-test
+# NB: a bare `test` used to be listed here, which ignored the app's own `test/`
+# directory (the bun suite). No scratch file by that name exists, so it is gone.
 prompt
 
 server.log

@@ -5,8 +5,13 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
+  // Runtime connection. On Supabase this is the Supavisor pooler (port 6543,
+  // `?pgbouncer=true`); locally it is the plain Postgres server.
   url      = env("DATABASE_URL")
+  // Migrations and `prisma db pull` need a direct (non-pooled) connection.
+  // Supabase: port 5432. Locally it is the same as DATABASE_URL.
+  directUrl = env("DIRECT_URL")
 }
 
 model Artist {

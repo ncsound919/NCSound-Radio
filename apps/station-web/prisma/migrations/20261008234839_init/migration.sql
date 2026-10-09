@@ -1,0 +1,182 @@
+-- CreateTable
+CREATE TABLE "Artist" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "email" TEXT,
+    "city" TEXT,
+    "state" TEXT,
+    "instagram" TEXT,
+    "soundcloud" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Artist_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Submission" (
+    "id" TEXT NOT NULL,
+    "artistName" TEXT NOT NULL,
+    "email" TEXT NOT NULL,
+    "trackTitle" TEXT NOT NULL,
+    "genre" TEXT NOT NULL,
+    "explicit" BOOLEAN NOT NULL DEFAULT false,
+    "city" TEXT,
+    "state" TEXT,
+    "socials" TEXT,
+    "fileName" TEXT,
+    "fileSize" INTEGER,
+    "notes" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'PENDING',
+    "agreementVersion" TEXT NOT NULL DEFAULT 'v1.1',
+    "agreementAcceptedAt" TIMESTAMP(3),
+    "agreementIp" TEXT,
+    "reviewNotes" TEXT,
+    "reviewedAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Submission_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Sponsor" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "contact" TEXT NOT NULL,
+    "tier" TEXT NOT NULL,
+    "monthlyRate" INTEGER NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "startAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "endAt" TIMESTAMP(3),
+
+    CONSTRAINT "Sponsor_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Campaign" (
+    "id" TEXT NOT NULL,
+    "sponsorId" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "spotsPerDay" INTEGER NOT NULL DEFAULT 6,
+    "creativeName" TEXT NOT NULL,
+    "startAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "endAt" TIMESTAMP(3),
+    "active" BOOLEAN NOT NULL DEFAULT true,
+
+    CONSTRAINT "Campaign_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "AdPlay" (
+    "id" TEXT NOT NULL,
+    "campaignId" TEXT NOT NULL,
+    "playedAt" TIMESTAMP(3) NOT NULL,
+    "source" TEXT NOT NULL DEFAULT 'program-clock',
+
+    CONSTRAINT "AdPlay_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Show" (
+    "id" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "slug" TEXT NOT NULL,
+    "description" TEXT NOT NULL,
+    "host" TEXT NOT NULL,
+    "dayOfWeek" INTEGER NOT NULL,
+    "startHour" INTEGER NOT NULL,
+    "startMinute" INTEGER NOT NULL DEFAULT 0,
+    "durationMin" INTEGER NOT NULL,
+    "explicit" BOOLEAN NOT NULL DEFAULT false,
+    "kind" TEXT NOT NULL DEFAULT 'PLAYLIST',
+    "accent" TEXT NOT NULL DEFAULT 'amber',
+    "active" BOOLEAN NOT NULL DEFAULT true,
+
+    CONSTRAINT "Show_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Track" (
+    "id" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "artist" TEXT NOT NULL,
+    "album" TEXT,
+    "durationSec" INTEGER NOT NULL,
+    "explicit" BOOLEAN NOT NULL DEFAULT false,
+    "playlist" TEXT NOT NULL,
+    "bpm" INTEGER,
+    "isrc" TEXT,
+    "label" TEXT,
+    "seedOrder" INTEGER NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "Track_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "PlayLog" (
+    "id" TEXT NOT NULL,
+    "trackId" TEXT NOT NULL,
+    "playedAt" TIMESTAMP(3) NOT NULL,
+    "source" TEXT NOT NULL DEFAULT 'AUTODJ',
+
+    CONSTRAINT "PlayLog_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "TrackRequest" (
+    "id" TEXT NOT NULL,
+    "trackId" TEXT NOT NULL,
+    "listenerName" TEXT NOT NULL,
+    "userId" TEXT,
+    "note" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "TrackRequest_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "StationSetting" (
+    "key" TEXT NOT NULL,
+    "value" TEXT NOT NULL,
+
+    CONSTRAINT "StationSetting_pkey" PRIMARY KEY ("key")
+);
+
+-- CreateIndex
+CREATE INDEX "Submission_status_idx" ON "Submission"("status");
+
+-- CreateIndex
+CREATE INDEX "AdPlay_playedAt_idx" ON "AdPlay"("playedAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "AdPlay_campaignId_playedAt_key" ON "AdPlay"("campaignId", "playedAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Show_slug_key" ON "Show"("slug");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Track_seedOrder_key" ON "Track"("seedOrder");
+
+-- CreateIndex
+CREATE INDEX "PlayLog_playedAt_idx" ON "PlayLog"("playedAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "PlayLog_trackId_playedAt_key" ON "PlayLog"("trackId", "playedAt");
+
+-- CreateIndex
+CREATE INDEX "TrackRequest_createdAt_idx" ON "TrackRequest"("createdAt");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "TrackRequest_trackId_listenerName_key" ON "TrackRequest"("trackId", "listenerName");
+
+-- AddForeignKey
+ALTER TABLE "Campaign" ADD CONSTRAINT "Campaign_sponsorId_fkey" FOREIGN KEY ("sponsorId") REFERENCES "Sponsor"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AdPlay" ADD CONSTRAINT "AdPlay_campaignId_fkey" FOREIGN KEY ("campaignId") REFERENCES "Campaign"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PlayLog" ADD CONSTRAINT "PlayLog_trackId_fkey" FOREIGN KEY ("trackId") REFERENCES "Track"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "TrackRequest" ADD CONSTRAINT "TrackRequest_trackId_fkey" FOREIGN KEY ("trackId") REFERENCES "Track"("id") ON DELETE RESTRICT ON UPDATE CASCADE;

@@ -5,13 +5,15 @@
   "scripts": {
     "dev": "next dev -p 3100",
     "build": "next build && node scripts/copy-standalone.mjs",
-    "start": "node .next/standalone/server.js",
+    "start": "node .next/standalone/apps/station-web/server.js",
     "lint": "eslint .",
+    "test": "bun test --max-concurrency 1 ./test/",
     "typecheck": "tsc --noEmit",
-    "db:push": "prisma db push --accept-data-loss",
+    "db:push": "node scripts/db-guard.mjs db:push && prisma db push --accept-data-loss",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
-    "db:reset": "prisma migrate reset"
+    "db:migrate": "node scripts/db-guard.mjs db:migrate && prisma migrate dev",
+    "db:reset": "node scripts/db-guard.mjs db:reset && prisma migrate reset",
+    "db:deploy": "prisma migrate deploy"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

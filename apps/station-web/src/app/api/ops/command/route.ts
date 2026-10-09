@@ -90,6 +90,9 @@ export async function POST(request: Request) {
       ? (body.command as { presetId?: unknown } | undefined)?.presetId
       : undefined
   const command: Record<string, unknown> = { type }
+  // transport.onAir requires `enabled` in the engine schema. It was omitted, so
+  // the engine rejected the command and the "take on air" button never worked.
+  if (type === 'transport.onAir') command.enabled = true
   if (type === 'mix.mixNext' && typeof presetId === 'string' && presetId.length > 0) {
     command.presetId = presetId.slice(0, 64)
   }

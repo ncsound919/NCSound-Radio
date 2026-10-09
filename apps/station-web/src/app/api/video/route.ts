@@ -70,7 +70,10 @@ export async function GET() {
     {
       configured,
       live,
-      inputId: INPUT_ID,
+      // The Cloudflare live-input identifier is not needed by any client (the
+      // player/HLS/DASH URLs are built here) and this route is public, so do not
+      // hand it out. `inputId` stays in the contract as a nullable field.
+      inputId: null,
       videoId: life.videoId,
       hls: live && base ? `${base}/manifest/video.m3u8` : null,
       dash: live && base ? `${base}/manifest/video.mpd` : null,
