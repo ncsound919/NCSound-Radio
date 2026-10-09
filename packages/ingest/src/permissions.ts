@@ -27,8 +27,21 @@ const HOST_COMMANDS: ReadonlySet<string> = new Set([
 /** Guest DJ: imaging and listener requests only. */
 const GUEST_COMMANDS: ReadonlySet<string> = new Set(["imaging.play", "cue.request"]);
 
+/**
+ * Reads a session may not reach through the command channel.
+ *
+ * A blanket `query.*` grant let a host/guest pull `query.crate` (the whole
+ * library) and `query.setlist` (play history), which `SESSION_READS` deliberately
+ * denies them over HTTP. The command channel must not be a wider door than the
+ * GET path.
+ */
+const SESSION_DENIED_QUERIES: ReadonlySet<string> = new Set(["query.crate", "query.setlist"]);
+
 export function rolePermits(role: ActorRole, commandType: string): boolean {
-  if (commandType.startsWith("query.")) return true;
+  if (commandType.startsWith("query.")) {
+    if ((role === "host" || role === "guest") && SESSION_DENIED_QUERIES.has(commandType)) return false;
+    return true;
+  }
   switch (role) {
     case "ops":
     case "console":

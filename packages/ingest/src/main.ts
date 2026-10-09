@@ -49,34 +49,42 @@ const CACHE_DIR =
  *
  * The value is never logged or returned. Only its origin is reported.
  */
-function resolveHarborPassword(): { password: string; source: string } {
-  const fromEnv = process.env.HARBOR_PASSWORD;
-  if (fromEnv) return { password: fromEnv, source: "HARBOR_PASSWORD" };
+const ICECAST_ENV_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../infra/icecast/.env");
 
-  const envPath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../infra/icecast/.env");
+/** Read one credential from the environment, then from infra/icecast/.env. */
+function readIcecastCredential(name: string): { value: string; source: string } | null {
+  const fromEnv = process.env[name];
+  if (fromEnv) return { value: fromEnv, source: name };
+
   try {
-    const text = readFileSync(envPath, "utf8");
+    const text = readFileSync(ICECAST_ENV_PATH, "utf8");
+    const re = new RegExp(`^\\s*${name}\\s*=\\s*(.*)$`);
     for (const line of text.split(/\r?\n/)) {
-      const m = /^\s*HARBOR_PASSWORD\s*=\s*(.*)$/.exec(line);
+      const m = re.exec(line);
       if (m) {
         const value = m[1].trim().replace(/^["']|["']$/g, "");
-        if (value) return { password: value, source: "infra/icecast/.env" };
+        if (value) return { value, source: "infra/icecast/.env" };
       }
     }
   } catch {
-    /* fall through to the refusal below */
+    /* not present; caller decides whether that is fatal */
   }
+  return null;
+}
 
-  /**
-   * Refuse rather than fall back to a default.
-   *
-   * A default credential here is what produced a silent station: the engine
-   * authenticated with a password nobody was listening for, got a 401, and every
-   * other field kept reporting health. Starting without the credential fails
-   * loudly instead.
-   */
+/**
+ * Refuse rather than fall back to a default.
+ *
+ * A default credential here is what produced a silent station: the engine
+ * authenticated with a password nobody was listening for, got a 401, and every
+ * other field kept reporting health. Starting without the credential fails
+ * loudly instead.
+ */
+function resolveHarborPassword(): { password: string; source: string } {
+  const cred = readIcecastCredential("HARBOR_PASSWORD");
+  if (cred) return { password: cred.value, source: cred.source };
   throw new Error(
-    `HARBOR_PASSWORD is not set and ${envPath} has no HARBOR_PASSWORD entry. ` +
+    `HARBOR_PASSWORD is not set and ${ICECAST_ENV_PATH} has no HARBOR_PASSWORD entry. ` +
       `The engine cannot upload to Liquidsoap without it. Set HARBOR_PASSWORD in the ` +
       `environment, or add it to infra/icecast/.env (see infra/station-up.sh).`,
   );
@@ -85,6 +93,38 @@ function resolveHarborPassword(): { password: string; source: string } {
 const harborCredential = resolveHarborPassword();
 const harborPassword = harborCredential.password;
 console.log(`  harbor password: from ${harborCredential.source}`);
+
+/**
+ * The console-live harbor password, from the same file Liquidsoap reads.
+ *
+ * The live bridge defaulted to `process.env.LIVE_HARBOR_PASSWORD ?? ""` and this
+ * process normally has no such variable, so every live session built the URL
+ * `icecast://live:@…/live` and Liquidsoap refused it — the same class of silent
+ * 401 as the engine harbor, on the go-live path. Not fatal when absent (a
+ * station with no console-live use is fine), so it is a warning, not a throw.
+ */
+const liveHarborCredential = readIcecastCredential("LIVE_HARBOR_PASSWORD");
+console.log(
+  liveHarborCredential
+    ? `  live harbor password: from ${liveHarborCredential.source}`
+    : "  live harbor password: not set — console go-live will fail until LIVE_HARBOR_PASSWORD is provided",
+);
+
+/**
+ * The station database, for the listener request queue.
+ *
+ * A Postgres URL now (the station DB moved off SQLite). Optional: without it the
+ * queue reports "unavailable", not "empty". Only the host is logged.
+ */
+const stationDbUrl =
+  process.env.NCSOUND_STATION_DB ?? process.env.SUPABASE_DB_URL ?? process.env.DATABASE_URL;
+if (stationDbUrl && /^postgres(ql)?:\/\//.test(stationDbUrl)) {
+  let host = "configured";
+  try { host = new URL(stationDbUrl).host; } catch { /* keep the label */ }
+  console.log(`  station db: ${host} (listener request queue)`);
+} else {
+  console.log("  station db: not set — /requests will report unavailable (set NCSOUND_STATION_DB)");
+}
 
 // The off-air switch. Liquidsoap's telnet server is unauthenticated and must
 // stay on loopback; this only ever dials 127.0.0.1.
@@ -133,6 +173,9 @@ const service = new IngestService({
     tls: process.env.ICECAST_STATUS_TLS === "1",
   },
   station,
+  // The console go-live bridge. Its password must match the `live` harbor in
+  // ncsound.liq; without it every live session 401s (see above).
+  live: liveHarborCredential ? { harbor: { password: liveHarborCredential.value } } : undefined,
 });
 
 // Required before commands run: without it `imaging.play` can only report that

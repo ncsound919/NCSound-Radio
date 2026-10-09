@@ -26,7 +26,7 @@ import { HeadlessEngine, type HeadlessEngineOptions } from "@ncsound/dj-engine";
 
 import { CommandDispatcher, type DispatcherDeps } from "./commands";
 import { createImagingPlayer, listImaging } from "./imaging";
-import { RequestStore } from "./requests";
+import { RequestStore, type RequestRow } from "./requests";
 import type { BroadcastState } from "@ncsound/station-core";
 import { CrateAudio } from "./crate-audio";
 import { MountWatchdog } from "./mount-watchdog";
@@ -116,6 +116,14 @@ const IDempotencyTTL_MS = 5 * 60_000;
 /** Loopback names/addresses that are safe to bind without a token. */
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
+/**
+ * True only for a literal IPv4 loopback address — not a DNS name that merely
+ * starts with "127.". `new URL("http://127.0.0.1.evil.com").hostname` is
+ * `127.0.0.1.evil.com`, which a bare `startsWith("127.")` wrongly treated as
+ * loopback, letting an attacker-registered `127.*` domain drive the station.
+ */
+const isLoopbackV4 = (host: string): boolean => /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+
 /** Attached to every upgraded socket so the live path can be routed. */
 type LiveSocketData = {
   /** Set on a control socket once a session token has been presented on it. */
@@ -174,7 +182,7 @@ export function originAllowed(origin: string | null): boolean {
   if (EXTRA_ALLOWED_ORIGINS.has(origin.replace(/\/$/, ""))) return true;
   try {
     const host = new URL(origin).hostname.replace(/^\[|\]$/g, "");
-    return LOOPBACK_HOSTS.has(host) || host.startsWith("127.");
+    return LOOPBACK_HOSTS.has(host) || isLoopbackV4(host);
   } catch {
     return false;
   }
@@ -295,7 +303,7 @@ equestIP member is not optional: without it the crate-audio route
    * directly; returns null — never a guess — when the request is unknown, the
    * station database is absent, or the requested track is not in the crate.
    */
-  private readonly defaultCueRequest = (requestId: string): string | null => {
+  private readonly defaultCueRequest = async (requestId: string): Promise<string | null> => {
     return this.requestStore.resolveToCrateId(
       requestId,
       this.engine.library.map((t) => ({ id: t.id, title: t.title, artist: t.artist })),
@@ -303,9 +311,9 @@ equestIP member is not optional: without it the crate-audio route
   };
 
   /** Newest listener requests, newest first. Empty when unavailable. */
-  listenerRequests(limit = 20): { requests: ReturnType<RequestStore["recent"]>; reason: string | null } {
+  async listenerRequests(limit = 20): Promise<{ requests: RequestRow[]; reason: string | null }> {
     return {
-      requests: this.requestStore.recent(limit),
+      requests: await this.requestStore.recent(limit),
       reason: this.requestStore.unavailableReason,
     };
   }
@@ -522,15 +530,45 @@ equestIP member is not optional: without it the crate-audio route
     return this.watchdog?.status ?? null;
   }
 
-  /** Push an event to every connected client. */
+  /** Push an event to every connected client entitled to see it. */
   broadcast(event: ServerEvent): void {
     const payload = JSON.stringify(event);
     for (const ws of this.sockets) {
+      // `command.result` is one principal's command outcome. A host/guest
+      // socket must not receive the owner's results (they can carry crate and
+      // status payloads the read policy denies a guest) — a session already
+      // gets its own result as a direct reply.
+      if (event.type === "command.result" && ws.data?.sessionId) continue;
       try {
         ws.send(payload);
       } catch {
         this.sockets.delete(ws);
       }
+    }
+  }
+
+  /**
+   * Admit a control socket to the broadcast set: register it and send the
+   * ready banner plus the current stream status.
+   *
+   * Called at `open()` only when the upgrade already proved identity, otherwise
+   * from `message()` once a valid token arrives in the first frame. A socket is
+   * never registered before it authenticates, so an unauthenticated client
+   * cannot read the owner's broadcast traffic.
+   */
+  private registerControlSocket(ws: Bun.ServerWebSocket<LiveSocketData>): void {
+    if (this.sockets.has(ws)) return;
+    this.sockets.add(ws);
+    ws.send(
+      JSON.stringify({
+        type: "connection.ready",
+        at: new Date().toISOString(),
+        actor: { id: "console", role: "console", label: "dj console" },
+      } satisfies ServerEvent),
+    );
+    const stream = this.icecast.status;
+    if (stream) {
+      ws.send(JSON.stringify({ type: "stream.status", at: new Date().toISOString(), status: stream } satisfies ServerEvent));
     }
   }
 
@@ -542,10 +580,14 @@ equestIP member is not optional: without it the crate-audio route
    * promises. Without this, every id was minted server-side and a retried
    * request was indistinguishable from a new one.
    */
-  private async submit(command: unknown, actor: Actor, id?: string): Promise<CommandResult> {
+  private async submit(command: unknown, actor: Actor, id?: string, scope = "anon"): Promise<CommandResult> {
     const envelopeId = id && id.length > 0 && id.length <= 128 ? id : crypto.randomUUID();
+    // The replay cache is keyed by principal too: keyed on the envelope id
+    // alone, one caller could read another's stored result by reusing its id,
+    // and a guest could pre-poison an id an owner later used.
+    const key = `${scope}:${envelopeId}`;
 
-    const replay = this.seen.get(envelopeId);
+    const replay = this.seen.get(key);
     if (replay) return replay.result;
 
     const envelope: CommandEnvelope = {
@@ -555,7 +597,7 @@ equestIP member is not optional: without it the crate-audio route
       command: command as never,
     };
     const result = await this.dispatcher.dispatch(envelope);
-    this.remember(envelopeId, result);
+    this.remember(key, result);
     this.broadcast({ type: "command.result", at: new Date().toISOString(), result });
     return result;
   }
@@ -590,7 +632,7 @@ equestIP member is not optional: without it the crate-audio route
       // report it). Fail closed: this route hands out audio files.
       return false;
     }
-    return LOOPBACK_HOSTS.has(ip) || ip === "::ffff:127.0.0.1" || ip.startsWith("127.");
+    return LOOPBACK_HOSTS.has(ip) || ip === "::ffff:127.0.0.1" || isLoopbackV4(ip);
   }
 
   /**
@@ -755,7 +797,13 @@ equestIP member is not optional: without it the crate-audio route
     // included: /requests carries listener names and /status the station's
     // internals. Local reads stay open; mutations always need the token.
     const principal = this.principal(req);
-    if (viaProxy(req) && path !== "/health" && !principal) {
+    // Reads need the token too, not only when the request is tunnelled: an
+    // ingest bound to a non-loopback host with INGEST_TOKEN set was serving
+    // /status, /requests (listener names) and /crate to any LAN client that
+    // simply omitted the proxy headers. `remote` is true for a proxy call and
+    // for any caller that is not on loopback.
+    const remote = viaProxy(req) || !this.isLoopbackCall(req);
+    if (path !== "/health" && !principal && remote) {
       return this.json(
         { error: this.opts.token ? "unauthorized" : "remote access needs INGEST_TOKEN set on ingest" },
         401,
@@ -774,7 +822,10 @@ equestIP member is not optional: without it the crate-audio route
           // here knows the process is listening; only ready:true means the
           // engine has a crate loaded and is actually broadcasting.
           const engine = this.engine.status;
-          const ready = engine.state === "playing" || engine.state === "idle";
+          // "ready" means able to broadcast: the engine is running AND a crate
+          // is loaded. Reporting ready for an idle, empty engine contradicted
+          // the field's own contract.
+          const ready = (engine.state === "playing" || engine.state === "idle") && engine.autopilot.crateSize > 0;
           const harbor = this.engine.harbor?.status ?? null;
           return this.json({
             ok: true,
@@ -907,7 +958,7 @@ station,
           // it cannot so the console can say "unavailable" rather than
           // "no requests" — the two are very different to a DJ waiting on a
           // listener.
-          return this.json(this.listenerRequests(20));
+          return this.json(await this.listenerRequests(20));
         case "/imaging":
           // The jingle/sweeper ids the console can fire with `imaging.play`.
           return this.json(await listImaging(this.imagingDir));
@@ -1171,7 +1222,7 @@ station,
       // A session's identity is its credential. Whatever actor the body claims
       // is ignored, so a guest cannot send {role:"ops"} and be believed.
       const effectiveActor = principal.kind === "session" ? this.sessionActor(principal.session) : actor.data;
-      const result = await this.submit(body.command, effectiveActor, id);
+      const result = await this.submit(body.command, effectiveActor, id, principal ? principalId(principal) : "anon");
       return this.json(result, result.ok ? 200 : 400);
     }
 
@@ -1239,24 +1290,12 @@ station,
         open(ws) {
           // An audio socket is not a control client: no banner, no broadcasts.
           if (ws.data?.live) return;
-          service.sockets.add(ws);
-          ws.send(
-            JSON.stringify({
-              type: "connection.ready",
-              at: new Date().toISOString(),
-              actor: { id: "console", role: "console", label: "dj console" },
-            } satisfies ServerEvent),
-          );
-          const stream = service.icecast.status;
-          if (stream) {
-            ws.send(
-              JSON.stringify({
-                type: "stream.status",
-                at: new Date().toISOString(),
-                status: stream,
-              } satisfies ServerEvent),
-            );
-          }
+          // A socket that proved identity at the upgrade (the owner console
+          // behind its token-injecting proxy, or a no-token local console) is
+          // admitted now. One that must present a token in its first frame is
+          // admitted by `message()` once that token checks out, so it cannot
+          // read broadcasts while unauthenticated.
+          if (!service.opts.token || ws.data?.tokenOk) service.registerControlSocket(ws);
         },
         close(ws) {
           if (ws.data?.live) {
@@ -1268,12 +1307,14 @@ station,
         async message(ws, raw) {
           if (ws.data?.live) return service.handleLiveFrame(ws, raw);
           const frame = tryParse(raw);
+          let sessionActor: Actor | null = null;
           if (service.opts.token && !ws.data?.tokenOk) {
             // A browser can't set headers on a WebSocket upgrade, so a client
             // without a proxy presents the token in each frame. The console's
             // own server proxy adds `Authorization` to the upgrade instead,
             // which is how the token stays out of the browser (tokenOk).
-            if (!frame || !service.resolveToken(frame.token)) {
+            const p = frame ? service.resolveToken(frame.token) : null;
+            if (!p) {
               ws.send(
                 JSON.stringify({
                   type: "command.result",
@@ -1283,14 +1324,12 @@ station,
               );
               return;
             }
-          }
-          let sessionActor: Actor | null = null;
-          if (service.opts.token && !ws.data?.tokenOk && frame) {
-            const p = service.resolveToken(frame.token);
-            if (p?.kind === "session") {
+            if (p.kind === "session") {
               sessionActor = service.sessionActor(p.session);
               if (ws.data) ws.data.sessionId = p.session.id;
             }
+            // Identity is proven now; admit the socket to broadcasts.
+            service.registerControlSocket(ws);
           }
           if (!frame?.command) {
             ws.send(
@@ -1330,6 +1369,7 @@ station,
             frame.command,
             sessionActor ?? candidate.data,
             typeof frame.id === "string" ? frame.id : undefined,
+            ws.data?.sessionId ?? "master",
           );
           ws.send(JSON.stringify({ type: "command.result", at: new Date().toISOString(), result } satisfies ServerEvent));
         },
@@ -1506,9 +1546,7 @@ station,
     }
     this.sockets.clear();
     this.server?.stop(true);
-    // Windows holds a lock on the SQLite file while a handle is open, which
-    // blocks the station app from migrating or vacuuming it.
-    this.requestStore.close();
+    await this.requestStore.close();
     await this.engine.close();
   }
 }

@@ -7,12 +7,14 @@
  * a station that comes back up by itself after a deliberate stop is a station
  * nobody can turn off.
  *
- * ffmpeg is not stubbed. `sample()` is exercised against the real mount so the
- * parsing of `volumedetect` output is verified rather than assumed.
+ * ffmpeg is not stubbed in the "real measurement" test, so the parsing of
+ * `volumedetect` output is verified rather than assumed. The decision tests do
+ * stub `sample()`, and the silence classification they used to re-implement is
+ * now `classifyLevel`, tested on its own below.
  */
 
 import { describe, expect, test } from "bun:test";
-import { MountWatchdog, type WatchdogSample } from "../src/mount-watchdog";
+import { classifyLevel, MountWatchdog, type WatchdogSample } from "../src/mount-watchdog";
 
 const MOUNT = process.env.NCSOUND_TEST_MOUNT ?? "http://127.0.0.1:8010/live.mp3";
 
@@ -130,19 +132,16 @@ describe("mount watchdog", () => {
     }
   });
 
-  test("classifies measured audio against the silence floor", async () => {
-    // The classification rule, on values taken from the real outage (-91) and a
-    // real live capture (-13.1).
+  test("classifies measured audio against the silence floor", () => {
+    // The classification rule itself, on values taken from the real outage
+    // (-91) and a real live capture (-13.1). Asserting the exported function —
+    // not a re-implementation fed to a stubbed sample() — means inverting the
+    // rule now fails this test.
     const floor = -55;
-    for (const [meanDb, expected] of [
-      [-91, "silent"],
-      [-13.1, "audible"],
-    ] as const) {
-      const { watchdog } = makeWatchdog({ intent: () => true });
-      forceSample(watchdog, meanDb <= floor ? "silent" : "audible", meanDb);
-      await watchdog.tick();
-      expect(watchdog.status.last?.verdict).toBe(expected);
-    }
+    expect(classifyLevel(-91, floor)).toBe("silent");
+    expect(classifyLevel(-55, floor)).toBe("silent"); // at the floor counts as silent
+    expect(classifyLevel(-54.9, floor)).toBe("audible");
+    expect(classifyLevel(-13.1, floor)).toBe("audible");
   });
 
   test("never recovers while the operator has the station off air", async () => {

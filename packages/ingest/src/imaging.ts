@@ -43,6 +43,10 @@ export type ImagingOptions = {
 };
 
 /** Returns the handler to hand to `IngestService` as `playImaging`. */
+/** Decoded jingles are cached, but a directory of many sweepers must not grow
+ * the cache without bound for the life of the process. */
+const MAX_IMAGING_CACHE_ENTRIES = 24;
+
 export function createImagingPlayer(opts: ImagingOptions): (jingleId: string) => Promise<void> {
   const dir = resolve(opts.dir);
   const buffers = new Map<string, AudioBuffer>();
@@ -63,7 +67,13 @@ export function createImagingPlayer(opts: ImagingOptions): (jingleId: string) =>
         readTags: false,
       })).buffer;
     if (!buffer) throw new CommandFailure("INTERNAL", `could not decode imaging file ${path}`);
-    if (!cached) buffers.set(path, buffer);
+    if (!cached) {
+      if (buffers.size >= MAX_IMAGING_CACHE_ENTRIES) {
+        const oldest = buffers.keys().next().value;
+        if (oldest !== undefined) buffers.delete(oldest);
+      }
+      buffers.set(path, buffer);
+    }
 
     const fired = opts.engine.mixer.playJingle(buffer);
     if (!fired.ok) throw new CommandFailure("INTERNAL", fired.message);

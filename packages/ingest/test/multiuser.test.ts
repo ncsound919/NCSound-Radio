@@ -73,6 +73,14 @@ describe("role permissions (deny by default)", () => {
     }
     expect(rolePermits("guest", "imaging.play")).toBe(true);
     expect(rolePermits("guest", "query.status")).toBe(true);
+    expect(rolePermits("guest", "query.queue")).toBe(true);
+    // The library and history are not readable by a session over HTTP; they must
+    // not be reachable through the command channel either.
+    expect(rolePermits("guest", "query.crate")).toBe(false);
+    expect(rolePermits("guest", "query.setlist")).toBe(false);
+    expect(rolePermits("host", "query.crate")).toBe(false);
+    // The owner keeps them.
+    expect(rolePermits("console", "query.crate")).toBe(true);
   });
 
   test("a host can steer the rotation but cannot stop the station", () => {
@@ -265,6 +273,10 @@ describe("multi-user over the service", () => {
     expect(gw.role).toBe("guest");
     expect(gw.commands).toContain("imaging.play");
     expect(gw.commands).not.toContain("transport.stop");
+    // The command channel must not be a wider door than the GET path: a guest
+    // cannot read /crate, so `query.crate` (and history) must be denied too.
+    expect(gw.commands).not.toContain("query.crate");
+    expect(gw.commands).not.toContain("query.setlist");
     expect(gw.reads).not.toContain("/requests");
     const hw = (await (await get("/whoami", h.token)).json()) as { reads: string[]; commands: string[] };
     expect(hw.reads).toContain("/requests");

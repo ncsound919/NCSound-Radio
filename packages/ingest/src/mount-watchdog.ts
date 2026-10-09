@@ -121,6 +121,17 @@ export type MountWatchdogOptions = {
   log?: (message: string) => void;
 };
 
+/**
+ * The silence rule, in one place and exported so it can be tested directly.
+ *
+ * It lived inline in `sample()`, and the test that "verified" it re-implemented
+ * the comparison and fed the result to a stubbed `sample()` — so the rule could
+ * have been inverted and the test still passed.
+ */
+export function classifyLevel(meanDb: number, silenceFloorDb: number): "silent" | "audible" {
+  return meanDb <= silenceFloorDb ? "silent" : "audible";
+}
+
 /** Parse ffmpeg's volumedetect summary from stderr. */
 function parseVolumes(stderr: string): { meanDb: number | null; peakDb: number | null } {
   const pick = (label: string): number | null => {
@@ -213,6 +224,14 @@ export class MountWatchdog {
 
     const raw = await new Promise<{ code: number | null; stderr: string }>((resolve) => {
       let stderr = "";
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const finish = (code: number | null) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        resolve({ code, stderr });
+      };
       const child = spawn(
         FFMPEG,
         [
@@ -241,14 +260,22 @@ export class MountWatchdog {
         ],
         { stdio: ["ignore", "ignore", "pipe"] },
       );
+      // Hard deadline. Without one, a wedged read (ffmpeg never closing) left
+      // `sampling` true forever, so every later tick returned early and the
+      // silence watchdog was dead while /status still reported it enabled.
+      timer = setTimeout(() => {
+        try { child.kill(); } catch { /* already gone */ }
+        base.error = `ffmpeg produced no measurement within ${seconds + 5}s`;
+        finish(null);
+      }, (seconds + 5) * 1000);
       child.stderr?.on("data", (c: Buffer) => {
         stderr += c.toString();
       });
       child.on("error", (err) => {
         base.error = err.message;
-        resolve({ code: null, stderr });
+        finish(null);
       });
-      child.on("close", (code) => resolve({ code, stderr }));
+      child.on("close", (code) => finish(code));
     });
 
     if (raw.code !== 0) {
@@ -266,7 +293,7 @@ export class MountWatchdog {
     }
 
     return {
-      verdict: meanDb <= this.opts.silenceFloorDb ? "silent" : "audible",
+      verdict: classifyLevel(meanDb, this.opts.silenceFloorDb),
       meanDb,
       peakDb,
       mount,

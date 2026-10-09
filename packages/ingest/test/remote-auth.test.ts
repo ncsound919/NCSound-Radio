@@ -9,7 +9,7 @@
  * has to reach the browser.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { IngestService } from "../src/server";
+import { IngestService, originAllowed } from "../src/server";
 
 class FakeProc {
   written = 0;
@@ -40,6 +40,18 @@ function makeService(port: number, token?: string) {
 }
 
 const TUNNEL = { "cf-connecting-ip": "203.0.113.9", "cf-ray": "abc" };
+
+describe("origin allowlist", () => {
+  test("a hostname that merely starts with 127. is not treated as loopback", () => {
+    expect(originAllowed("http://127.0.0.1")).toBe(true);
+    expect(originAllowed("http://localhost:3102")).toBe(true);
+    expect(originAllowed("http://127.0.0.1.evil.com")).toBe(false);
+    expect(originAllowed("https://evil.com")).toBe(false);
+    expect(originAllowed("null")).toBe(false);
+    // No Origin at all is a non-browser caller (script/server), not a page.
+    expect(originAllowed(null)).toBe(true);
+  });
+});
 
 function openLive(port: number, headers: Record<string, string> = {}) {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/live`, { headers } as never);
@@ -140,6 +152,61 @@ describe("token configured", () => {
     c.ws.send(JSON.stringify({ type: "live.end" }));
     c.ws.close();
     await c.until(() => svc.live.available);
+  });
+
+  test("an unauthenticated control socket is never subscribed to broadcasts", async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
+    const frames: string[] = [];
+    await new Promise<boolean>((res) => {
+      ws.onopen = () => res(true);
+      ws.onerror = () => res(false);
+    });
+    ws.onmessage = (e) => frames.push(String(e.data));
+    // The owner runs a command; the broadcast must not reach this socket.
+    const r = await fetch(`http://127.0.0.1:${PORT}/command`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ id: "owner-bc", actor: { id: "console", role: "console", label: "dj" }, command: { type: "mix.setCrossfader", position: 0.1 } }),
+    });
+    expect(r.status).toBe(200);
+    await Bun.sleep(300);
+    expect(frames.some((f) => f.includes("owner-bc"))).toBe(false);
+    // It was not even greeted: registration is deferred until a token arrives.
+    expect(frames.some((f) => f.includes("connection.ready"))).toBe(false);
+    ws.close();
+  });
+
+  test("a guest socket receives its own result but not the owner's", async () => {
+    const issue = await fetch(`http://127.0.0.1:${PORT}/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ role: "guest", label: "Socket Guest", ttlMin: 30 }),
+    });
+    expect(issue.status).toBe(200);
+    const { token } = (await issue.json()) as { token: string };
+    const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
+    const frames: string[] = [];
+    await new Promise<boolean>((res) => {
+      ws.onopen = () => res(true);
+      ws.onerror = () => res(false);
+    });
+    ws.onmessage = (e) => frames.push(String(e.data));
+    ws.send(JSON.stringify({ token, id: "g-1", actor: { id: "g", role: "guest", label: "g" }, command: { type: "query.status" } }));
+    const until = async (pred: () => boolean, ms = 3000) => {
+      const end = Date.now() + ms;
+      while (!pred() && Date.now() < end) await Bun.sleep(20);
+      return pred();
+    };
+    expect(await until(() => frames.some((f) => f.includes("g-1")))).toBe(true);
+
+    await fetch(`http://127.0.0.1:${PORT}/command`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ id: "owner-secret", actor: { id: "console", role: "console", label: "dj" }, command: { type: "query.crate" } }),
+    });
+    await Bun.sleep(300);
+    expect(frames.some((f) => f.includes("owner-secret"))).toBe(false);
+    ws.close();
   });
 
   test("no bearer and no token in the frame is closed 4401", async () => {
