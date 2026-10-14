@@ -73,6 +73,16 @@
     </change-owner>
   </security>
 
+  <!--
+    Raised above Icecast's 10s default. measured 2026-10-11: Liquidsoap's clock
+    intermittently fell behind (root cause: the WSL2 guest clock ran fast — see
+    Coding lessons/2026-10-11-ncsound-radio-onsair-wsl2-clock-catchup.md), and the
+    default 10s source-timeout closed the source on every stall: the mount flapped
+    connect -> broken pipe -> reconnect and listeners got 119 bytes of nothing.
+    A timeout above the observed stall keeps the mount up while it catches up.
+  -->
+  <source-timeout>60</source-timeout>
+
   <!-- Primary mount: 128 kbps from Liquidsoap. -->
   <mount type="normal">
     <mount-name>/live.mp3</mount-name>

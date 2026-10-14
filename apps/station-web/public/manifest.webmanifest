@@ -1,16 +1,17 @@
 {
-  "name": "WAVC 91.3 FM — Carolina Waves",
-  "short_name": "WAVC 91.3",
+  "name": "NCSound Radio",
+  "short_name": "NCSound",
   "description": "The Carolinas' independent hip-hop signal. Live stream, request line, and rights-cleared artist submissions.",
   "start_url": "/",
+  "scope": "/",
+  "id": "/",
   "display": "standalone",
   "background_color": "#16130f",
   "theme_color": "#16130f",
   "icons": [
-    {
-      "src": "/station-logo.png",
-      "sizes": "1024x1024",
-      "purpose": "any"
-    }
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/station-logo.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" }
   ]
 }

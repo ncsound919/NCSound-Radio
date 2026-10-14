@@ -6,7 +6,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, "..", "..");
 
 const nextConfig: NextConfig = {
-  output: "standalone",
+  // Self-host uses a standalone server (`start` runs .next/standalone/...).
+  // On Vercel that output is ignored and can confuse its build, so disable it
+  // there. See apps/station-web/vercel.json for the deploy settings.
+  output: process.env.VERCEL ? undefined : "standalone",
   transpilePackages: ["@ncsound/station-core"],
   turbopack: {
     root: repoRoot,

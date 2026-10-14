@@ -28,6 +28,12 @@ settings.server.telnet.bind_addr := "127.0.0.1"
 settings.server.telnet.port := 1234
 settings.server.socket := false
 
+# Best practice (docs: harbor input): the harbor server performs a reverse DNS
+# lookup per client by default, and on Liquidsoap 2.2.x source callbacks are
+# SYNCHRONOUS — a blocking lookup runs inside the streaming loop and stalls the
+# clock. Nothing here needs hostnames, so turn it off.
+settings.harbor.reverse_dns := false
+
 # ---- ingest: the DJ engine --------------------------------------------
 # Passwords come from the environment, populated by infra/station-up.sh from
 # infra/icecast/.env. They were previously hardcoded here,
@@ -84,6 +90,13 @@ dj_source = input.harbor(
   #
   # Now-playing titles reach listeners through the output.icecast `icy_song`
   # callback instead, which reads whatever the engine last published.
+  #
+  # icy=true was tried (2026-10-11) to read the engine's `icy-name` header, both
+  # alone and with the engine's ICY framing on (HARBOR_ICY=1). Neither surfaced
+  # the track title, and the framing half risked the WAV desync recorded in the
+  # lessons. Reverted to false. Public now-playing is served by the site's
+  # /api/nowplaying (which reads the engine's real now-playing), so listeners on
+  # the site/app see the track; only third-party ICY players do not.
   icy=false,
 )
 
@@ -141,23 +154,48 @@ dj_live = input.harbor(
 # listeners stay connected instead of being dropped mid-track.
 library = playlist(mode="randomize", "/srv/ncsound/library")
 filler = fallback(track_sensitive=false, [library, blank()])
-# Priority: console live, then engine/autopilot, then the library. BOTH harbor
-# mounts are raw here. mksafe makes a source infallible (always ready), and
-# fallback selects the first ready child — so an mksafe'd source ahead of filler
-# would win forever and the library would never play when the engine drops. With
-# both mounts raw, each is ready only while its source is connected, so a dead
-# engine falls through to the library as the dead-air policy intends.
+# Priority: console live, then engine/autopilot, then the library. The two live
+# sources are reached only through their connection flags, and the library is the
+# fallback. Why the `switch` and not a bare `fallback([dj_live, dj_source, filler])`:
+#
+# Measured 2026-10-11. With the raw harbors directly in the fallback, every cycle
+# stalled the main clock for the harbor's own `timeout` and Icecast dropped the
+# source: the log read "We must catchup 17.20 seconds!" every ~15-30s
+# (15s == the engine harbor's timeout) and the mount flapped connect -> broken
+# pipe -> reconnect, so listeners got nothing but reconnects. A harbor with no
+# connected client is not instantly "not ready" — it holds for its timeout — and
+# `fallback` waits on it before moving to the next child.
+#
+# `harbor_source_connected` / `live_harbor_connected` are the `on_connect` /
+# `on_disconnect` flags set above. When neither is true, the inner `switch` has no
+# satisfied condition, so it is not ready *immediately* and the fallback takes the
+# library with no harbor wait. A live console still wins the moment it connects.
 normal = fallback(
   track_sensitive=false,
-  [dj_live, dj_source, filler],
-  transitions=[
-    fun (a, b) -> cross.simple(fade_in=0.5, fade_out=0.5, a, b),
-    fun (a, b) -> cross.simple(fade_in=0.5, fade_out=0.5, a, b),
-    fun (a, b) -> cross.simple(fade_in=0.5, fade_out=0.5, a, b),
+  [
+    switch(
+      track_sensitive=false,
+      [
+        (live_harbor_connected, dj_live),
+        (harbor_source_connected, dj_source),
+      ],
+    ),
+    filler,
   ],
 )
 on_air = interactive.bool("on_air", true)
 radio = switch(track_sensitive=false, [(on_air, normal), ({true}, blank())])
+
+# Decouple the Icecast outputs from the streaming clock.
+#
+# Docs (latency_control / FAQ): "a slow connection to an Icecast server can
+# cause the output to stall, making the clock fall behind" and the clock then
+# logs "We must catchup X seconds" and, when it accumulates, resets outputs.
+# Measured 2026-10-11: exactly that here — clock catchup of ~17.2s every ~15-30s
+# and Icecast dropping the source ("Broken pipe"). A `buffer()` between the
+# program and the encoder gives the Icecast socket a queue to absorb, so a slow
+# or resetting mount no longer back-pressures `radio` or the clock.
+radio_out = buffer(buffer=2., max=30., radio)
 
 # NOTE: `interactive.persistent()` was tried here and is deliberately NOT used.
 # It reads and writes an undocumented internal format that
@@ -206,7 +244,7 @@ output.icecast(
   # stop instead, which is both truthful and what a listener's player expects when
   # a station goes off.
   fallible=true,
-  radio,
+  radio_out,
 )
 
 output.icecast(
@@ -221,7 +259,7 @@ name="NCSound Radio (mobile)",
   public=true,
   icy_song=station_title,
   fallible=true,
-  radio,
+  radio_out,
 )
 
 

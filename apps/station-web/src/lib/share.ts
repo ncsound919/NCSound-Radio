@@ -3,7 +3,11 @@
 import type { ShareResult } from '@/lib/station-types'
 
 export const STATION_NAME = 'NCSound Radio'
-export const STATION_URL = 'https://ncsound.fm'
+/**
+ * Public site URL used in share text. Driven by `NEXT_PUBLIC_SITE_URL` so the
+ * deploy sets the real domain; the fallback is a placeholder, not a decision.
+ */
+export const STATION_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://ncsound.fm'
 
 /**
  * Share the station via the Web Share API when available (mobile), falling
