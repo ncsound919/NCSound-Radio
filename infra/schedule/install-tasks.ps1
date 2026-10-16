@@ -18,6 +18,19 @@ $health = Join-Path $here "health.cmd"
 
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew
 
+# Ingest control plane. Monitoring-only: NCSOUND_PUBLISH=0 (set in the wrapper)
+# keeps the harbor silent while /status stays answerable, so NCSound Health reports
+# "not on air" (1) instead of "unreachable" (2). Non-elevated fallback: a Startup
+# folder entry ("NCSound Ingest.cmd") was installed 2026-10-14 offload plan phase 0.
+$ingest = Join-Path $here "ingest-start.cmd"
+
+Register-ScheduledTask -TaskName "NCSound Ingest" `
+  -Action (New-ScheduledTaskAction -Execute $ingest) `
+  -Trigger (New-ScheduledTaskTrigger -AtLogOn) `
+  -Settings $settings `
+  -Description "NCSound ingest control plane (monitoring-only, NCSOUND_PUBLISH=0)." `
+  -Force | Out-Null
+
 Register-ScheduledTask -TaskName "NCSound Backup" `
   -Action (New-ScheduledTaskAction -Execute $backup) `
   -Trigger (New-ScheduledTaskTrigger -Daily -At 4:00AM) `
