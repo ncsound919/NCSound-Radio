@@ -10,10 +10,11 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/*.test.ts"
+    "test": "bun test test/"
   },
   "comments": {
-    "dependencies": "None on purpose: this client is dependency-free at runtime. station-core is a type/test-only dependency (the schema key type and the contract test's injected validator)."
+    "dependencies": "None on purpose: this client is dependency-free at runtime. station-core is a type/test-only dependency (the schema key type and the contract test's injected validator).",
+    "test": "Deliberately `bun test`, not `node --test`: `bun run` puts a `node`->`bun` shim on PATH, so a `node --test ...` script executes as `bun --test ...`, which is not the test runner, and every node:test import dies with \"Cannot use test outside of the test runner\". That made `bun run test` at the repo root fail on this package."
   },
   "devDependencies": {
     "@ncsound/station-core": "workspace:*"
