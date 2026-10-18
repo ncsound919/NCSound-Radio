@@ -154,3 +154,27 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+/**
+ * Honour the promise made in the signing comment above: when a release is built
+ * without a real keystore, say so out loud. Silence here is exactly how an
+ * unshippable, debug-signed APK reaches a listener believing it was a release
+ * build. Checked against the task graph so a debug build is never nagged.
+ */
+gradle.taskGraph.whenReady { graph ->
+    if (hasReleaseKeystore) return
+    def buildingRelease = graph.allTasks.any { it.name.toLowerCase().contains('release') }
+    if (!buildingRelease) return
+    logger.warn(
+        "\n" +
+        "**********************************************************************\n" +
+        "* NCSOUND: android/keystore.properties was not found.\n" +
+        "* The release APK just built is signed with the DEBUG key and must\n" +
+        "* NOT be distributed to listeners. To ship it:\n" +
+        "*   cp android/keystore.properties.example android/keystore.properties\n" +
+        "*   keytool -genkeypair -v -storetype PKCS12 -keystore ncsound-release.keystore \\\n" +
+        "*     -alias ncsound -keyalg RSA -keysize 2048 -validity 10000\n" +
+        "* then fill in android/keystore.properties and rebuild.\n" +
+        "**********************************************************************\n"
+    )
+}

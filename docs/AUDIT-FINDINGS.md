@@ -37,6 +37,18 @@ bun run test          # all packages
 | F9 | — | Note | Skipped tests are unverified surface, not passes: `dj-engine` 9 skip, `ingest` 6 skip. Known cause for at least one `ingest` skip: `watchdog.test.ts` spawns a bare `ffmpeg`, and `tools/ffmpeg/` contains only a `.gitignore` — the binary is not fetched. | `bun run test` summary lines | **Open** |
 | F10 | C | Medium | The DJ console's honest weak point, per its own checklist, is that correctness has never been demonstrated on real hardware (MPD226, OBS, mic, headphone cue, 2-hour soak). `docs/READINESS-CHECKLIST.md` marks all of sections A/B/C unticked. | Readiness checklist | **[H]/[D]** — see below |
 
+### W2 — listener app
+
+| # | Class | Severity | Finding | Evidence | Status |
+|---|-------|----------|---------|----------|--------|
+| F11 | C | Medium | `android/app/build.gradle` says a release built without `keystore.properties` "falls back to the debug key … and the build says so". **Nothing says so.** There is no `logger`, `println` or `GradleException` anywhere under `android/`, so a debug-signed release is produced silently — the exact silent-failure class the repo warns about elsewhere. | `Select-String -Pattern 'logger\.\|println\|GradleException'` over `android/**/*.gradle` → no matches | **Fixed in code, unverified** — see F17 |
+| F12 | C | Medium | `src/config/env.ts` falls back to `http://127.0.0.1:3100` / `:8010` whenever `react-native-config` is blank, with no `__DEV__` guard. A release APK built with missing `.env` values silently targets localhost instead of failing loudly, so a misconfigured build looks like a broken app. | `env.ts:17-19` | **Open** (W2) |
+| F13 | C | Low | `SessionProvider` starts `getSession()` and registers `onAuthStateChange` in the same effect. The promise can resolve *after* an auth event and overwrite a newer session with a stale (possibly `null`) snapshot — the classic Supabase ordering footgun. | `auth/session.tsx:27-35` | **Open** (W2) |
+| F14 | C | Low | `<PlaybackEngine />` is rendered as a **sibling before** `<ErrorBoundary>`, so a render-time failure in it is not caught — despite the boundary documenting its job as "a crash does not white-screen the app". May be deliberate (the engine must survive a boundary reset), but it is unstated. | `App.tsx:42-43` | **Open** (W2) |
+| F15 | C | Low | The reconnect path reports through `onReconnecting` (Sentry breadcrumbs), but the **stall** path calls `engine.jumpToLive()` directly with no callback, so stall-driven recoveries are invisible in telemetry. | `player/controller.ts:78-85` vs `:51` | **Open** (W2) |
+| F16 | — | Note | Accessibility props are present in 8 of 12 `src/**/*.tsx` files. The remaining files need checking against the written AA contract in `docs/LISTENER-APP-DESIGN.md`. | `Select-String` over `src/**/*.tsx` | **Open** (W2/W4) |
+| F17 | E/H | Blocker | **The Android release APK cannot be built on this machine.** There is no JDK (`JAVA_HOME` unset, `java` absent from PATH, no JDK under `Program Files\Java` / `Eclipse Adoptium` / Android Studio) and no Android SDK (`ANDROID_HOME` / `LOCALAPPDATA\Android\Sdk` absent; only `~/.android`, which is AVD data). `gradlew.bat` exists but has nothing to run on. This gates the entire "downloadable phone app" goal. Note `.planning/STATE.md` (2026-10-07) claims "Toolchain present: bun, Android SDK" — that is no longer true. | `java -version` → not found; SDK path probes → absent | **Open** — recommend building in GitHub Actions (`setup-java` + `android-actions/setup-android`), which also removes the Windows-specific risk from the release path |
+
 ## Corrections to the record
 
 Two documents describe the app's audio stack and disagree. `.planning/STATE.md`
