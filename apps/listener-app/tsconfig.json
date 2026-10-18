@@ -1,6 +1,10 @@
 {
   "extends": "@react-native/typescript-config",
   "compilerOptions": {
+    // The base config pins `types` to ["jest"], so @types/node is not picked
+    // up even when it is installed. test/*.test.ts import node:test and
+    // node:assert/strict; without "node" here `tsc --noEmit` fails on them.
+    "types": ["jest", "node"],
     "paths": {
       // The base config sets customConditions:["react-native"], which makes TS
       // resolve @rntp/player to its un-typecheckable source. Point the import at
