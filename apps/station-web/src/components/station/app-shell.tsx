@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useCallback, useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Keyboard, Radio, MapPin } from 'lucide-react'
@@ -96,6 +97,14 @@ export function AppShell({ initialTab }: { initialTab?: TabId } = {}) {
               <li>
                 Listen: <code className="font-mono">/live.mp3</code> (128 kbps) or{' '}
                 <code className="font-mono">/mobile.mp3</code> (64 kbps)
+              </li>
+              <li>
+                <Link
+                  href="/download"
+                  className="text-primary underline-offset-4 hover:underline"
+                >
+                  Get the phone app
+                </Link>
               </li>
               <li>&copy; {new Date().getFullYear()} NCSound Radio. All bars reserved.</li>
             </ul>

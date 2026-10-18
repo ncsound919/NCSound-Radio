@@ -2,6 +2,13 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Vercel's Node runtime is Amazon Linux, which Prisma does not treat as
+  // "native". Without the rhel target the deployed function builds fine and
+  // then throws "Query engine library for current platform
+  // rhel-openssl-3.0.x could not be found" on the first query. `native` stays
+  // so local dev keeps working. If a future Vercel runtime needs a different
+  // target, the error message names it exactly — add it here.
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {

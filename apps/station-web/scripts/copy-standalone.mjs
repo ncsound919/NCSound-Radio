@@ -11,6 +11,20 @@ import { cpSync, existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+/**
+ * On Vercel there is no standalone output to copy.
+ *
+ * `next.config.ts` disables `output: "standalone"` when VERCEL is set, and the
+ * platform does its own bundling. This script exists for the self-host path, so
+ * on Vercel it must exit successfully without copying anything — otherwise the
+ * `next build && node scripts/copy-standalone.mjs` chain fails the deploy after
+ * a perfectly good build, on the "standalone output missing" guard below.
+ */
+if (process.env.VERCEL) {
+  console.log('VERCEL is set: standalone output is not produced; nothing to copy.')
+  process.exit(0)
+}
+
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const standalone = join(root, '.next', 'standalone')
 
